@@ -1,6 +1,6 @@
 # Tradeo frontend
 
-Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Upcoming modules have labeled placeholder pages.
+Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Upcoming modules have labeled placeholder pages.
 
 ## Local development
 
@@ -24,6 +24,8 @@ In **Auto Trading**, assign a strategy while the paper engine is idle. Start or 
 
 The [proposed paper automation contract](../contracts/auto-trading.openapi.yaml) documents the mock snapshot and commands. A backend integration would require authenticated sessions, server-side risk checks and durable append-only audit records.
 
+In **Brokers**, filter Zerodha and Fyers by connection status, check masked account details, and try connect, reconnect, sync or disconnect. The demo clock advances with each action, and the activity log stays available after disconnect. State lives in memory for the current page visit. The [proposed broker preview contract](../contracts/brokers.openapi.yaml) documents the demo adapter. Real integrations require provider authorization, secure server-side token storage and separate backend work.
+
 ## Verification
 
 ```sh
@@ -35,7 +37,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets and Auto Trading screenshots in the ignored `screenshots/` directory.
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading and Brokers screenshots in the ignored `screenshots/` directory.
 
 Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
 

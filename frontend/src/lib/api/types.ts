@@ -1,5 +1,6 @@
 import type { MarketDataClient } from "./market-types";
 import type { PaperTradingClient } from "./auto-trading-types";
+import type { BrokerClient } from "./broker-types";
 
 // Keep the DTOs and client interface independent of the mock transport.
 // A future OpenAPI adapter can map generated DTOs and errors to this contract.
@@ -41,6 +42,6 @@ export type DashboardResult =
   | { status: "ready" | "stale"; data: DashboardSnapshot }
   | { status: "empty" };
 
-export interface TradeoClient extends MarketDataClient, PaperTradingClient {
+export interface TradeoClient extends MarketDataClient, PaperTradingClient, BrokerClient {
   getDashboard(options?: { signal?: AbortSignal }): Promise<DashboardResult>;
 }

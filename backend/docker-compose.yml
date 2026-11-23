@@ -1,0 +1,67 @@
+# Local development stack: PostgreSQL, Redis, a one-shot migration job, and the API.
+#   cp .env.example .env   # then set real passwords
+#   docker compose up --build
+# Ports bind to 127.0.0.1 only.
+
+name: tradeo-backend
+
+x-api-env: &api-env
+  APP_ENV: development
+  LOG_FORMAT: json
+  DATABASE_URL: postgresql+asyncpg://tradeo:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/tradeo
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+  ALLOWED_HOSTS: localhost,127.0.0.1
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tradeo
+      POSTGRES_DB: tradeo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeo -d tradeo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    build: .
+    environment: *api-env
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+volumes:
+  postgres-data:
+  redis-data:

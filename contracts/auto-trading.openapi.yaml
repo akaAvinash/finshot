@@ -1,0 +1,199 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Paper Automation API Proposal
+  version: 0.3.0
+  description: >
+    Proposed interface for the Phase 3 simulator. The frontend supplies all
+    responses locally. A future adapter must enforce authorization, CSRF
+    protection, server-side risk gates and durable append-only audit storage.
+tags:
+  - name: Paper automation
+paths:
+  /api/v1/auto-trading/paper:
+    get:
+      tags: [Paper automation]
+      operationId: getPaperTrading
+      summary: Read the current paper workspace
+      responses:
+        '200':
+          description: Workspace snapshot or empty result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/auto-trading/paper/commands:
+    post:
+      tags: [Paper automation]
+      operationId: sendPaperCommand
+      summary: Apply a paper engine or strategy command
+      description: >
+        A future server must authorize the current user, require available and
+        fresh risk state, and record the resulting event. The halt command
+        cancels pending paper orders. Reset clears a halt into idle. This API
+        represents paper controls and contains no live or broker actions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaperCommand'
+      responses:
+        '200':
+          description: Updated paper snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperSnapshot'
+        '400':
+          description: Invalid command or parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The command conflicts with the current engine or risk state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  responses:
+    Forbidden:
+      description: Access to the paper workspace or command is denied.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+    Unavailable:
+      description: Paper automation is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+  schemas:
+    PaperError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+    PaperCommand:
+      oneOf:
+        - type: object
+          required: [action, strategyId]
+          additionalProperties: false
+          properties:
+            action: { const: assign }
+            strategyId: { type: string }
+        - type: object
+          required: [action]
+          additionalProperties: false
+          properties:
+            action: { enum: [start, pause, reset] }
+        - type: object
+          required: [action, confirmation]
+          additionalProperties: false
+          properties:
+            action: { const: halt }
+            confirmation: { const: STOP }
+    PaperResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/PaperSnapshot' }
+        - type: object
+          required: [status]
+          properties:
+            status: { const: empty }
+    PaperSnapshot:
+      type: object
+      required: [source, environment, asOf, engine, strategies, strategyId, agent, risk, orders, trades, events]
+      properties:
+        source: { const: demo }
+        environment: { const: PAPER }
+        asOf: { type: string, format: date-time }
+        engine: { enum: [idle, running, halted] }
+        strategies:
+          type: array
+          items: { $ref: '#/components/schemas/PaperStrategy' }
+        strategyId: { type: [string, 'null'] }
+        agent:
+          type: object
+          required: [name, ready]
+          properties:
+            name: { type: string }
+            ready: { type: boolean }
+        risk:
+          $ref: '#/components/schemas/PaperRisk'
+        orders:
+          type: array
+          items: { $ref: '#/components/schemas/PaperOrder' }
+        trades:
+          type: array
+          items: { $ref: '#/components/schemas/PaperTrade' }
+        events:
+          type: array
+          description: Append-only history in chronological order.
+          items: { $ref: '#/components/schemas/PaperEvent' }
+    PaperRisk:
+      type: object
+      required: [status, dailyLossPaise, lossLimitPaise, tradesToday, tradeLimit]
+      properties:
+        status: { enum: [approved, blocked] }
+        dailyLossPaise: { $ref: '#/components/schemas/NonnegativePaise' }
+        lossLimitPaise: { $ref: '#/components/schemas/NonnegativePaise' }
+        tradesToday: { type: integer, minimum: 0 }
+        tradeLimit: { type: integer, minimum: 1 }
+    PaperStrategy:
+      type: object
+      required: [id, name, instrument]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        instrument: { type: string }
+    PaperOrder:
+      type: object
+      required: [id, instrument, side, quantity, limitPaise, approval, status]
+      properties:
+        id: { type: string }
+        instrument: { type: string }
+        side: { enum: [Buy, Sell] }
+        quantity: { type: integer, minimum: 1 }
+        limitPaise: { $ref: '#/components/schemas/NonnegativePaise' }
+        approval: { enum: [approved, pending] }
+        status: { enum: [queued, held, cancelled] }
+    PaperTrade:
+      type: object
+      required: [id, instrument, side, quantity, fillPaise, pnlPaise, filledAt]
+      properties:
+        id: { type: string }
+        instrument: { type: string }
+        side: { enum: [Buy, Sell] }
+        quantity: { type: integer, minimum: 1 }
+        fillPaise: { $ref: '#/components/schemas/NonnegativePaise' }
+        pnlPaise:
+          type: integer
+          description: Signed amount in INR minor units (paise).
+        filledAt: { type: string, format: date-time }
+    PaperEvent:
+      type: object
+      required: [id, at, message]
+      properties:
+        id: { type: string }
+        at: { type: string, format: date-time }
+        message: { type: string }
+    NonnegativePaise:
+      type: integer
+      minimum: 0
+      description: Nonnegative amount in INR minor units (paise).

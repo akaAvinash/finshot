@@ -2,9 +2,9 @@ import { Bell, ChartNoAxesCombined, ClipboardList, FlaskConical, Layers, LayoutD
 
 export const dashboardRoute = { slug: "dashboard", title: "Dashboard", icon: LayoutDashboard };
 export const marketRoute = { slug: "markets", title: "Markets", icon: ChartNoAxesCombined };
+export const autoTradingRoute = { slug: "auto-trading", title: "Auto Trading", icon: Zap };
 
 export const sections = [
-  { slug: "auto-trading", title: "Auto Trading", icon: Zap, description: "Automation controls and trading activity.", empty: "Automation is unavailable in the frontend preview." },
   { slug: "brokers", title: "Brokers", icon: Plug, description: "Broker accounts and connection status.", empty: "There are no connected brokers in this preview." },
   { slug: "strategies", title: "Strategies", icon: Layers, description: "Manage trading strategies and review their performance.", empty: "Strategy creation and management are unavailable in this preview." },
   { slug: "backtesting", title: "Backtesting", icon: FlaskConical, description: "Review historical strategy simulations.", empty: "There are no backtest results in this preview." },
@@ -14,4 +14,4 @@ export const sections = [
   { slug: "settings", title: "Settings", icon: Settings, description: "Workspace preferences and account settings.", empty: "Account settings become available when real authentication is connected." },
 ] as const;
 
-export const workspaceRoutes = [dashboardRoute, marketRoute, ...sections];
+export const workspaceRoutes = [dashboardRoute, marketRoute, autoTradingRoute, ...sections];

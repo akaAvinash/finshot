@@ -74,3 +74,22 @@
     @apply bg-primary text-primary-foreground;
   }
 }
+
+@layer components {
+  .paper-progress {
+    @apply block h-1.5 w-full overflow-hidden rounded-full bg-surface-raised;
+    appearance: none;
+  }
+
+  .paper-progress::-webkit-progress-bar {
+    @apply rounded-full bg-surface-raised;
+  }
+
+  .paper-progress::-webkit-progress-value {
+    @apply rounded-full bg-primary;
+  }
+
+  .paper-progress::-moz-progress-bar {
+    @apply rounded-full bg-primary;
+  }
+}

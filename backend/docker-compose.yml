@@ -11,6 +11,12 @@ x-api-env: &api-env
   DATABASE_URL: postgresql+asyncpg://tradeo:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/tradeo
   REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
   ALLOWED_HOSTS: localhost,127.0.0.1
+  AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY in .env (openssl rand -hex 32)}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3000}
+  # The console OTP provider needs an interactive terminal, which a container
+  # does not have, so it stays disabled here. Run the API from a terminal with
+  # OTP_PROVIDER=console to receive codes locally.
+  OTP_PROVIDER: disabled
   CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
 
 services:

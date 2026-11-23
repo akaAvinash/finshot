@@ -42,6 +42,7 @@ def test_hsts_only_in_production(make_settings: SettingsFactory) -> None:
         database_url="postgresql+asyncpg://u:pw@db/tradeo",
         redis_url="redis://:pw@cache:6379/0",
         allowed_hosts=["testserver"],
+        public_origin="https://testserver",
     )
     with TestClient(create_app(settings)) as client:
         headers = client.get("/health/live").headers
@@ -65,6 +66,7 @@ def test_docs_disabled_in_production(make_settings: SettingsFactory) -> None:
         database_url="postgresql+asyncpg://u:pw@db/tradeo",
         redis_url="redis://:pw@cache:6379/0",
         allowed_hosts=["testserver"],
+        public_origin="https://testserver",
     )
     with TestClient(create_app(settings)) as client:
         for path in ("/docs", "/redoc", "/openapi.json"):
@@ -112,7 +114,17 @@ def test_no_order_routes_exist(client: TestClient) -> None:
     """Live order placement is out of scope for this foundation."""
     paths = client.get("/openapi.json").json()["paths"]
     assert not [p for p in paths if "order" in p.lower()]
-    assert set(paths) == {"/health/live", "/health/ready"}
+    assert set(paths) == {
+        "/health/live",
+        "/health/ready",
+        "/api/v1/auth/csrf",
+        "/api/v1/auth/otp/request",
+        "/api/v1/auth/otp/verify",
+        "/api/v1/auth/me",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/logout-all",
+        "/api/v1/auth/sessions",
+    }
 
 
 def test_access_log_is_json_with_request_id(

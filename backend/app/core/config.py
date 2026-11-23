@@ -10,7 +10,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
+from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -69,6 +69,41 @@ class Settings(BaseSettings):
 
     health_check_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
 
+    # --- Authentication (Phase A) -------------------------------------------
+    # Master secret for HMAC keys (OTP digests, session digests, CSRF tokens).
+    # Required, no default. Generate with: openssl rand -hex 32
+    auth_secret_key: SecretStr = Field(min_length=32)
+    # The browser-facing origin of the web app, e.g. https://app.example.com.
+    # Used for the Origin check on state-changing requests.
+    public_origin: str
+
+    # "disabled": no SMS is sent, OTP requests return 503.
+    # "console": development only; prints the code to an interactive terminal.
+    # Real SMS providers arrive in a later phase.
+    otp_provider: Literal["disabled", "console"] = "disabled"
+    otp_ttl_seconds: int = Field(default=300, ge=30, le=300)
+    otp_max_attempts: int = Field(default=5, ge=1, le=5)
+    otp_resend_cooldown_seconds: int = Field(default=30, ge=0, le=600)
+
+    session_idle_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
+    session_absolute_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
+    csrf_pre_login_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
+
+    # Rate limits (fixed windows, counted in Redis). Exceeding one returns 429.
+    rate_limit_otp_request_per_phone: int = Field(default=5, ge=1)
+    rate_limit_otp_request_per_ip: int = Field(default=20, ge=1)
+    rate_limit_otp_request_per_context: int = Field(default=5, ge=1)
+    rate_limit_otp_request_window_seconds: int = Field(default=3600, ge=1)
+    rate_limit_otp_verify_per_ip: int = Field(default=30, ge=1)
+    rate_limit_otp_verify_window_seconds: int = Field(default=900, ge=1)
+    rate_limit_csrf_per_ip: int = Field(default=60, ge=1)
+    rate_limit_csrf_window_seconds: int = Field(default=60, ge=1)
+
+    # How many reverse proxies sit in front of the API and append to
+    # X-Forwarded-For. 0 trusts only the socket peer. Behind the Next.js
+    # proxy set this to 1, otherwise every user shares one rate-limit bucket.
+    trusted_proxy_hops: int = Field(default=0, ge=0, le=5)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:
@@ -93,6 +128,28 @@ class Settings(BaseSettings):
                 )
         return value
 
+    @field_validator("public_origin")
+    @classmethod
+    def _validate_public_origin(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")) or value.endswith("/") or "?" in value:
+            raise ValueError("PUBLIC_ORIGIN must be scheme://host[:port] with no trailing slash")
+        return value
+
+    @field_validator("auth_secret_key")
+    @classmethod
+    def _reject_placeholder_secret(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value().lower()
+        if "change-me" in raw or "change_me" in raw or len(set(raw)) < 8:
+            raise ValueError("AUTH_SECRET_KEY looks like a placeholder; generate a real secret")
+        return value
+
+    @model_validator(mode="after")
+    def _enforce_otp_provider_rules(self) -> Self:
+        # The console provider prints codes. It must never exist outside local dev.
+        if self.otp_provider == "console" and self.app_env != Environment.DEVELOPMENT:
+            raise ValueError("OTP_PROVIDER=console is only allowed when APP_ENV=development")
+        return self
+
     @model_validator(mode="after")
     def _enforce_deployed_rules(self) -> Self:
         if not self.app_env.is_deployed:
@@ -113,6 +170,8 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL must include a password")
         if not self.redis_url.password:
             problems.append("REDIS_URL must include a password")
+        if not self.public_origin.startswith("https://"):
+            problems.append("PUBLIC_ORIGIN must use https")
         for origin in self.cors_allowed_origins:
             if origin.startswith("http://"):
                 problems.append(f"CORS origin {origin!r} must use https")

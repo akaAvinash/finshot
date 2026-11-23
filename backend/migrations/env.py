@@ -9,10 +9,9 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.auth.models  # noqa: F401  (registers tables on Base.metadata)
 from app.core.config import get_settings
 from app.db.base import Base
-
-# Import model modules here as they are added so autogenerate sees them.
 
 config = context.config
 if config.config_file_name is not None:

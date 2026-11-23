@@ -1,6 +1,10 @@
 import { createMockClient, type PreviewScenario } from "./mock";
+import { createMarketMock, type MarketChartScenario } from "./market-mock";
 import type { TradeoClient } from "./types";
 
-export function createTradeoClient(options: { previewScenario?: PreviewScenario } = {}): TradeoClient {
-  return createMockClient(options.previewScenario);
+export function createTradeoClient(options: {
+  previewScenario?: PreviewScenario;
+  marketChartScenario?: MarketChartScenario;
+} = {}): TradeoClient {
+  return { ...createMockClient(options.previewScenario), ...createMarketMock(options.marketChartScenario) };
 }

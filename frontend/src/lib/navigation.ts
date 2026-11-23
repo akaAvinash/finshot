@@ -1,9 +1,9 @@
 import { Bell, ChartNoAxesCombined, ClipboardList, FlaskConical, Layers, LayoutDashboard, Network, Plug, Settings, Zap } from "lucide-react";
 
 export const dashboardRoute = { slug: "dashboard", title: "Dashboard", icon: LayoutDashboard };
+export const marketRoute = { slug: "markets", title: "Markets", icon: ChartNoAxesCombined };
 
 export const sections = [
-  { slug: "markets", title: "Markets", icon: ChartNoAxesCombined, description: "Quotes, charts and watchlists for Indian instruments.", empty: "A market data feed will populate this page. Preview quotes are available on the dashboard." },
   { slug: "auto-trading", title: "Auto Trading", icon: Zap, description: "Automation controls and trading activity.", empty: "Automation is unavailable in the frontend preview." },
   { slug: "brokers", title: "Brokers", icon: Plug, description: "Broker accounts and connection status.", empty: "There are no connected brokers in this preview." },
   { slug: "strategies", title: "Strategies", icon: Layers, description: "Manage trading strategies and review their performance.", empty: "Strategy creation and management are unavailable in this preview." },
@@ -14,4 +14,4 @@ export const sections = [
   { slug: "settings", title: "Settings", icon: Settings, description: "Workspace preferences and account settings.", empty: "Account settings become available when real authentication is connected." },
 ] as const;
 
-export const workspaceRoutes = [dashboardRoute, ...sections];
+export const workspaceRoutes = [dashboardRoute, marketRoute, ...sections];

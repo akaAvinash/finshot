@@ -1,14 +1,54 @@
 openapi: 3.1.0
 info:
-  title: Tradeo Markets API Proposal
-  version: 0.2.0
+  title: Tradeo API Proposal
+  version: 0.3.0
   description: >
-    Proposed read-only contract for Phase 2 market data. The frontend uses
-    deterministic demo responses in development. This contract describes
-    future endpoints and does not declare a deployed backend.
+    Proposed contract for Phase 2 market data (read-only) and Phase A
+    authentication. The frontend uses deterministic demo responses in
+    development. This contract describes future endpoints and does not declare
+    a deployed backend. No endpoint here places, modifies or cancels orders.
 tags:
   - name: Markets
     description: NSE instrument reference data, quotes and historical candles.
+  - name: Auth
+    description: |
+      Phone OTP sign-in with server-side sessions.
+
+      **Same-origin only.** The browser calls `/api/v1/*` on the web
+      application's own origin; Next.js proxies these requests to the API. The
+      API is not called cross-origin from the browser, so it needs no CORS for
+      these endpoints.
+
+      **Cookies.** Both cookies are host-only (no `Domain` attribute), with
+      `Path=/`, `Secure` and `SameSite=Lax`. The `__Host-` prefix makes
+      browsers enforce this.
+
+      | Cookie | Attributes | Purpose |
+      |---|---|---|
+      | `__Host-tradeo_session` | `HttpOnly; Secure; SameSite=Lax; Path=/` | Opaque random session identifier. The server stores only a digest. Session cookie (no `Max-Age`); server-side idle and absolute expiry are authoritative. |
+      | `__Host-tradeo_csrf` | `HttpOnly; Secure; SameSite=Lax; Path=/` | CSRF token for the double-submit check below. |
+
+      `Secure` cookies work on `http://localhost` in Chromium and Firefox but not
+      in Safari. Local development in Safari needs HTTPS.
+
+      **CSRF.** Every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`)
+      under `/api/v1/auth/` must send an `X-CSRF-Token` header equal to the
+      value of the `__Host-tradeo_csrf` cookie (double submit, compared in
+      constant time). Clients obtain the token from `GET /api/v1/auth/csrf` and
+      keep it in memory; it is also returned by a successful OTP verification.
+      If an `Origin` header is present it must match the application origin.
+      Failures return `403 CSRF_FAILED`. The session and CSRF cookies are
+      replaced on login so a pre-login session identifier is never reused.
+
+      **Errors.** Auth errors use `{code, message}` with an optional
+      `requestId` and, for `429`, `retryAfterSeconds`. The same request ID is
+      returned in the `X-Request-ID` response header.
+
+      **Rate limits.** Limits apply per phone number, per client IP and per
+      device. Exceeding one returns `429 RATE_LIMITED` with a `Retry-After`
+      header. The numeric limits are server configuration, not part of this
+      contract. The contract does fix: an OTP lives at most 5 minutes, is
+      single use, and allows at most 5 verification attempts per challenge.
 paths:
   /api/v1/market/instruments:
     get:
@@ -79,8 +119,335 @@ paths:
           $ref: '#/components/responses/UnknownInstrument'
         '503':
           $ref: '#/components/responses/MarketDataUnavailable'
+  /api/v1/auth/csrf:
+    get:
+      operationId: getCsrfToken
+      tags: [Auth]
+      summary: Get the CSRF token for state-changing requests
+      description: >
+        Returns the current CSRF token, creating one (and setting the
+        `__Host-tradeo_csrf` cookie) if the client has none. Safe to call on
+        every page load. Does not require a session.
+      responses:
+        '200':
+          description: CSRF token. Send it as the `X-CSRF-Token` header.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+  /api/v1/auth/otp/request:
+    post:
+      operationId: requestOtp
+      tags: [Auth]
+      summary: Send a one-time code to a phone number
+      description: >
+        Creates a challenge and asks the SMS provider to deliver a random
+        six-digit code. The response is identical for every well-formed phone
+        number, whether or not an account exists, so it cannot be used to
+        discover accounts. Codes are never returned by this API and never
+        written to application or shared logs. In local development only, a
+        separately enabled console provider can display the code outside the
+        application logs.
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpRequest'
+      responses:
+        '202':
+          description: A challenge was created and delivery was requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpChallenge'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+        '503':
+          $ref: '#/components/responses/AuthOtpDeliveryUnavailable'
+  /api/v1/auth/otp/verify:
+    post:
+      operationId: verifyOtp
+      tags: [Auth]
+      summary: Verify a one-time code and start a session
+      description: >
+        On success the account is created if needed, the challenge is consumed
+        atomically (a code works once), and new session and CSRF cookies are
+        set. A wrong, expired, already used or unknown code all return the same
+        `401 INVALID_OTP`, so the response does not reveal which. After 5 failed
+        attempts the challenge is dead and the client must request a new code.
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerify'
+      responses:
+        '200':
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          description: The code is not valid for this challenge.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+              example:
+                code: INVALID_OTP
+                message: The code is invalid or has expired.
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Auth]
+      summary: Get the signed-in user
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The user and session expiry. Activity extends the idle expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: End the current session
+      description: >
+        Revokes the current session server-side and clears both cookies.
+        Idempotent: succeeds with 204 even if the session already ended.
+      security:
+        - csrfHeader: []
+      responses:
+        '204':
+          description: Signed out.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags: [Auth]
+      summary: End every session for the signed-in user
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '204':
+          description: All sessions revoked and cookies cleared.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+  /api/v1/auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [Auth]
+      summary: List the signed-in user's active sessions
+      description: Only the caller's own, unexpired, unrevoked sessions are returned.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Active sessions, most recently used first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-tradeo_session
+      description: Opaque server-side session identifier. HttpOnly, never readable by scripts.
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Must equal the `__Host-tradeo_csrf` cookie value. Required on state-changing auth requests.
+  headers:
+    SetCookie:
+      description: >
+        Sets or clears `__Host-tradeo_session` and/or `__Host-tradeo_csrf`.
+        Attributes are always `Secure; Path=/; SameSite=Lax`, with `HttpOnly`,
+        and never a `Domain`. Clearing uses `Max-Age=0`.
+      schema:
+        type: string
   schemas:
+    CsrfToken:
+      type: object
+      required: [csrfToken]
+      properties:
+        csrfToken:
+          type: string
+          minLength: 32
+          maxLength: 128
+          description: Opaque random token. Hold it in memory; do not persist it.
+    Phone:
+      type: string
+      pattern: '^\+91[6-9][0-9]{9}$'
+      examples: ['+919876543210']
+      description: Indian mobile number in E.164 format. The client converts a 10-digit entry by prefixing +91.
+    OtpRequest:
+      type: object
+      required: [phone]
+      additionalProperties: false
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+    OtpChallenge:
+      type: object
+      required: [challengeId, expiresAt, resendAvailableAt]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+          description: At most 5 minutes after creation.
+        resendAvailableAt:
+          type: string
+          format: date-time
+          description: Earliest time another code can be requested for this phone.
+    OtpVerify:
+      type: object
+      required: [challengeId, code]
+      additionalProperties: false
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+    AuthUser:
+      type: object
+      required: [id, phoneMasked, displayName, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        phoneMasked:
+          type: string
+          description: Phone with the middle digits hidden, such as `+91******3210`. The full number is never returned.
+        displayName:
+          type: [string, 'null']
+          maxLength: 100
+        createdAt:
+          type: string
+          format: date-time
+    SessionExpiry:
+      type: object
+      required: [idleExpiresAt, expiresAt]
+      properties:
+        idleExpiresAt:
+          type: string
+          format: date-time
+          description: Session ends at this time without activity. Extended by activity, never past `expiresAt`.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Absolute end of the session.
+    AuthSession:
+      type: object
+      required: [user, session]
+      properties:
+        user:
+          $ref: '#/components/schemas/AuthUser'
+        session:
+          $ref: '#/components/schemas/SessionExpiry'
+        csrfToken:
+          type: string
+          description: Present on verify responses, where it replaces any earlier token.
+    SessionSummary:
+      type: object
+      required: [id, deviceLabel, createdAt, lastSeenAt, expiresAt, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque identifier. It is not the session secret and cannot authenticate a request.
+        deviceLabel:
+          type: [string, 'null']
+          maxLength: 100
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+          description: True for the session making this request.
+    SessionList:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionSummary'
+    AuthError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - INVALID_OTP
+            - CSRF_FAILED
+            - RATE_LIMITED
+            - OTP_DELIVERY_UNAVAILABLE
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: Safe to show to the user. Never contains codes, tokens or internal details.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header. Quote it when reporting a problem.
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          description: Only on 429. Matches the `Retry-After` header.
     InstrumentId:
       type: string
       pattern: '^NSE:[A-Z0-9_.&-]+$'
@@ -241,6 +608,58 @@ components:
         message:
           type: string
   responses:
+    AuthInvalidRequest:
+      description: The request body is missing, malformed or has an invalid field.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    AuthUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    AuthCsrfFailed:
+      description: The CSRF token is missing or wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: CSRF_FAILED
+            message: The request could not be verified. Reload and try again.
+    AuthRateLimited:
+      description: Too many requests for this phone number, IP address or device.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: RATE_LIMITED
+            message: Too many attempts. Try again later.
+            retryAfterSeconds: 60
+    AuthOtpDeliveryUnavailable:
+      description: The SMS provider is unavailable. No code was sent and the client may retry.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: OTP_DELIVERY_UNAVAILABLE
+            message: We could not send a code right now. Try again shortly.
     InvalidRequest:
       description: The request parameters are invalid.
       content:

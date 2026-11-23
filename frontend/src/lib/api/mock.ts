@@ -1,5 +1,6 @@
 import { dashboardFixture } from "./dashboard-fixture";
 import type { TradeoClient } from "./types";
+import { waitForMock } from "./mock-delay";
 
 export const previewScenarios = [
   { value: "ready", label: "Sample data" },
@@ -10,28 +11,7 @@ export const previewScenarios = [
 
 export type PreviewScenario = (typeof previewScenarios)[number]["value"];
 
-function waitForMock(signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, 420);
-
-    function onAbort() {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    }
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-export function createMockClient(scenario: PreviewScenario = "ready"): TradeoClient {
+export function createMockClient(scenario: PreviewScenario = "ready"): Pick<TradeoClient, "getDashboard"> {
   return {
     async getDashboard({ signal } = {}) {
       await waitForMock(signal);

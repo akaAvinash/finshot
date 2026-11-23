@@ -1,30 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
-
-async function requestCode(page: Page) {
-  await page.getByLabel("Mobile number").fill("98765 43210");
-  await page.getByRole("button", { name: "Get preview code" }).click();
-  await expect(page.getByLabel("One-time code")).toBeVisible();
-}
-
-async function openDashboard(page: Page) {
-  await page.goto("/login");
-  await requestCode(page);
-  await page.getByLabel("One-time code").fill("123456");
-  await page.getByRole("button", { name: "Open dashboard" }).click();
-  await expect(page.getByRole("heading", { name: "Trading overview" })).toBeVisible();
-  await expect(page.locator("canvas").first()).toBeVisible();
-}
-
-async function capture(page: Page, name: string) {
-  if (process.env.TRADEO_CAPTURE_SCREENSHOTS !== "1") return;
-
-  await mkdir("screenshots", { recursive: true });
-  await page.evaluate(() => document.fonts.ready);
-  await page.getByRole("img", { name: "Tradeo", exact: true }).filter({ visible: true }).first()
-    .evaluate((logo: HTMLImageElement) => logo.decode());
-  await page.screenshot({ path: `screenshots/${name}.png`, fullPage: true, animations: "disabled" });
-}
+import { expect, test } from "@playwright/test";
+import { capture, openDashboard, requestCode } from "./preview-helpers";
 
 test("protects routes and supports demo OTP validation, change number, and sign-out", async ({ page }) => {
   await page.goto("/strategies");
@@ -74,7 +49,7 @@ test("renders the chart and all placeholder routes, with persistent dark and lig
   await capture(page, "dashboard-desktop-light");
 
   const nav = page.getByRole("navigation", { name: "Workspace" });
-  for (const title of ["Markets", "Auto Trading", "Brokers", "Strategies", "Backtesting", "Reports", "Agents", "Alerts", "Settings"]) {
+  for (const title of ["Auto Trading", "Brokers", "Strategies", "Backtesting", "Reports", "Agents", "Alerts", "Settings"]) {
     await nav.getByRole("link", { name: title, exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     await expect(page.getByText("Placeholder", { exact: true })).toBeVisible();

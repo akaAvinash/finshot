@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Markets API Proposal
+  version: 0.2.0
+  description: >
+    Proposed read-only contract for Phase 2 market data. The frontend uses
+    deterministic demo responses in development. This contract describes
+    future endpoints and does not declare a deployed backend.
+tags:
+  - name: Markets
+    description: NSE instrument reference data, quotes and historical candles.
+paths:
+  /api/v1/market/instruments:
+    get:
+      operationId: getMarketInstruments
+      tags: [Markets]
+      summary: List or search the instrument catalog
+      parameters:
+        - name: query
+          in: query
+          description: Case-insensitive search by symbol, instrument ID, name or alias.
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: Matching instruments. An empty array indicates no matches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '503':
+          $ref: '#/components/responses/MarketDataUnavailable'
+  /api/v1/market/overview:
+    get:
+      operationId: getMarketOverview
+      tags: [Markets]
+      summary: Get a dated quote and exchange-session snapshot
+      responses:
+        '200':
+          description: Latest market snapshot for the available instrument catalog.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketOverview'
+        '503':
+          $ref: '#/components/responses/MarketDataUnavailable'
+  /api/v1/market/instruments/{instrumentId}/candles:
+    get:
+      operationId: getMarketCandles
+      tags: [Markets]
+      summary: Get recent OHLC candles for one instrument and timeframe
+      parameters:
+        - name: instrumentId
+          in: path
+          required: true
+          description: Stable exchange-qualified instrument identifier.
+          schema:
+            $ref: '#/components/schemas/InstrumentId'
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Timeframe'
+      responses:
+        '200':
+          description: >
+            Candles in ascending order with distinct timestamps. A valid selection
+            with no available history returns an empty array.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketCandles'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/UnknownInstrument'
+        '503':
+          $ref: '#/components/responses/MarketDataUnavailable'
+components:
+  schemas:
+    InstrumentId:
+      type: string
+      pattern: '^NSE:[A-Z0-9_.&-]+$'
+      examples: ['NSE:NIFTY50', 'NSE:RELIANCE']
+    Instrument:
+      type: object
+      required: [id, symbol, name, exchange, kind, currency, aliases]
+      properties:
+        id:
+          $ref: '#/components/schemas/InstrumentId'
+        symbol:
+          type: string
+        name:
+          type: string
+        exchange:
+          const: NSE
+        kind:
+          enum: [index, equity]
+        currency:
+          const: INR
+        aliases:
+          type: array
+          items:
+            type: string
+    InstrumentList:
+      type: object
+      required: [instruments]
+      properties:
+        instruments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instrument'
+    Source:
+      enum: [demo, market]
+      description: Origin of the response. Demo data must be labeled in the UI.
+    InstrumentQuote:
+      type: object
+      required: [instrumentId, price, previousClose, change, changePercent, open, high, low, volume, trend]
+      properties:
+        instrumentId:
+          $ref: '#/components/schemas/InstrumentId'
+        price:
+          type: number
+          minimum: 0
+        previousClose:
+          type: number
+          minimum: 0
+        change:
+          type: number
+          description: Signed difference from the previous close in INR.
+        changePercent:
+          type: number
+          description: Signed percentage points relative to the previous close.
+        open:
+          type: number
+          minimum: 0
+        high:
+          type: number
+          minimum: 0
+        low:
+          type: number
+          minimum: 0
+        volume:
+          $ref: '#/components/schemas/Volume'
+        trend:
+          enum: [up, down, flat]
+          description: Direction of the change versus the previous close.
+    Volume:
+      type: [integer, 'null']
+      minimum: 0
+      description: Shares traded in the session or candle. Null when unavailable, such as for a cash index.
+    MarketSession:
+      type: object
+      required: [exchange, status, timezone, opensAt, closesAt]
+      properties:
+        exchange:
+          const: NSE
+        status:
+          enum: [preopen, open, closed]
+          description: Exchange session state at the snapshot timestamp.
+        timezone:
+          const: Asia/Kolkata
+        opensAt:
+          type: string
+          format: date-time
+        closesAt:
+          type: string
+          format: date-time
+    MarketOverview:
+      type: object
+      required: [source, asOf, session, quotes]
+      properties:
+        source:
+          $ref: '#/components/schemas/Source'
+        asOf:
+          type: string
+          format: date-time
+        session:
+          $ref: '#/components/schemas/MarketSession'
+        quotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentQuote'
+    Timeframe:
+      enum: [1m, 5m, 15m, 30m, 1h, 1D]
+      description: >
+        Intraday bars are anchored to the session open. The final intraday bar
+        may have a shorter duration. A daily bar represents one trading session.
+    MarketCandle:
+      type: object
+      required: [time, open, high, low, close, volume]
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Candle opening instant in UTC.
+        open:
+          type: number
+          minimum: 0
+        high:
+          type: number
+          minimum: 0
+        low:
+          type: number
+          minimum: 0
+        close:
+          type: number
+          minimum: 0
+        volume:
+          $ref: '#/components/schemas/Volume'
+    MarketCandles:
+      type: object
+      required: [instrumentId, timeframe, source, asOf, freshness, candles]
+      properties:
+        instrumentId:
+          $ref: '#/components/schemas/InstrumentId'
+        timeframe:
+          $ref: '#/components/schemas/Timeframe'
+        source:
+          $ref: '#/components/schemas/Source'
+        asOf:
+          type: string
+          format: date-time
+          description: Timestamp of the history snapshot.
+        freshness:
+          enum: [fresh, stale]
+          description: Whether the response represents the latest expected snapshot or older data.
+        candles:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketCandle'
+    MarketError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          enum: [INVALID_REQUEST, UNKNOWN_INSTRUMENT, MARKET_DATA_UNAVAILABLE]
+        message:
+          type: string
+  responses:
+    InvalidRequest:
+      description: The request parameters are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MarketError'
+    UnknownInstrument:
+      description: The identifier is valid but absent from the catalog.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MarketError'
+    MarketDataUnavailable:
+      description: The requested market data is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MarketError'

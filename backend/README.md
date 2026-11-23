@@ -73,7 +73,7 @@ Redis URL has no password. Validation errors never echo the input values.
   and orchestrator probes can call the raw IP.
 - Headers: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
   `Cache-Control: no-store`, strict CSP on API responses, HSTS in production.
-- Unhandled errors return a generic 500 with the request ID; tracebacks only
+- Unhandled errors return a generic 500 (`INTERNAL_ERROR`) with the request ID; tracebacks only
   go to the logs. Log keys like `password`, `token`, `authorization` are redacted.
 - Docker image: multi-stage, runs as UID 10001, no server header, app files
   owned by root (read-only to the app). Compose runs the API with a read-only
@@ -92,5 +92,13 @@ ruff check . && ruff format --check . && mypy app
 
 ## API contract
 
-Business endpoints will be designed in the shared `contracts/openapi.yaml`
-first, then implemented here. That file does not exist yet.
+The shared contract is `contracts/openapi.yaml` (owned outside `backend/`; do
+not edit it from here). This service follows it:
+
+- Business routes live under `/api/v1` (`app/api/router.py`). None are
+  implemented yet; the contract's Markets endpoints come next.
+- Errors use the contract's shape: `{"code": "UPPER_SNAKE", "message": "..."}`,
+  plus `requestId` when available (`app/core/errors.py`). Invalid parameters
+  return **400 `INVALID_REQUEST`**, not FastAPI's default 422. Unhandled errors
+  return 500 `INTERNAL_ERROR`.
+- `/health/*` probes are infrastructure endpoints and are not in the contract.

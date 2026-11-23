@@ -101,11 +101,9 @@ def test_unhandled_errors_return_generic_500(make_settings: SettingsFactory) -> 
         response = client.get("/boom", headers={"X-Request-ID": "req-1"})
     assert response.status_code == 500
     assert response.json() == {
-        "error": {
-            "code": "internal_error",
-            "message": "Internal server error",
-            "request_id": "req-1",
-        }
+        "code": "INTERNAL_ERROR",
+        "message": "Internal server error",
+        "requestId": "req-1",
     }
     assert "hunter2" not in response.text
 
@@ -131,3 +129,21 @@ def test_access_log_is_json_with_request_id(
     assert entry["status"] == 200
     assert entry["level"] == "info"
     assert "timestamp" in entry
+
+
+def test_validation_errors_use_contract_shape(make_settings: SettingsFactory) -> None:
+    """contracts/openapi.yaml: bad parameters are 400 INVALID_REQUEST, not 422."""
+    app = create_app(make_settings())
+
+    @app.get("/needs-int")
+    async def needs_int(limit: int) -> dict[str, int]:
+        return {"limit": limit}
+
+    with TestClient(app) as client:
+        response = client.get("/needs-int?limit=abc", headers={"X-Request-ID": "req-2"})
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "The request parameters are invalid.",
+        "requestId": "req-2",
+    }

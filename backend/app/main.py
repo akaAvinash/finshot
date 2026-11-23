@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -15,6 +16,7 @@ from app.api.router import api_router
 from app.api.routes import health
 from app.cache.redis import create_redis
 from app.core.config import Environment, Settings, get_settings
+from app.core.errors import error_response
 from app.core.logging import configure_logging
 from app.core.middleware import (
     HostAllowlistMiddleware,
@@ -56,20 +58,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    # Error bodies follow the contract's error shape in contracts/openapi.yaml
+    # ({"code": UPPER_SNAKE, "message": str}). requestId is an extra field the
+    # contract permits, so clients can quote it when reporting a problem.
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # The contract uses 400 INVALID_REQUEST, not FastAPI's default 422.
+        return error_response(
+            request, 400, "INVALID_REQUEST", "The request parameters are invalid."
+        )
+
     @app.exception_handler(Exception)
     async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         # Log the traceback; never return it to the client.
         logger.exception("unhandled_exception", error_type=type(exc).__name__)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": {
-                    "code": "internal_error",
-                    "message": "Internal server error",
-                    "request_id": getattr(request.state, "request_id", None),
-                }
-            },
-        )
+        return error_response(request, 500, "INTERNAL_ERROR", "Internal server error")
 
     app.include_router(health.router)
     app.include_router(api_router)

@@ -1002,8 +1002,11 @@ paths:
         `listAgentEvents` for what each agent recorded.
 
         - `market-scanner` checks each replayed demo session of the caller's
-          assigned instrument and records `LARGE_MOVE` when the close moved
-          at least 3% from the previous session's close.
+          assigned instrument and records `LARGE_MOVE` when its
+          close-to-close move (in percent, either direction) is at least twice
+          the average of the five sessions before it. A session needs six
+          earlier closes to be checked. The threshold is relative because the
+          demo candles rarely move more than 1% a day.
         - `strategy-analyst` records `REPLAY_SUMMARY` when a replay
           finishes: the replay's fills, winning sells and realised P&L, linked to the replay.
         - `risk-explainer` explains deterministic risk outcomes that already

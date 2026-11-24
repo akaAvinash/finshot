@@ -339,8 +339,18 @@ def test_sync_for_a_different_account_is_not_recorded(make_broker_app: Any) -> N
     browser = make_broker_app(WrongAccountAdapter())
     browser.login()
     assert act(browser, "zerodha", "connect").status_code == 200
+
+    def broker_state() -> list[list[dict[str, Any]]]:
+        return [
+            db_rows(_db(), "SELECT * FROM broker_connections ORDER BY provider"),
+            db_rows(_db(), "SELECT * FROM broker_events ORDER BY seq"),
+            db_rows(_db(), "SELECT * FROM audit_events WHERE action LIKE 'broker.%' ORDER BY id"),
+        ]
+
+    before = broker_state()
     response = act(browser, "zerodha", "sync")
     assert response.status_code == 503
+    assert broker_state() == before
     assert account(browser.get(BASE).json()["data"], "zerodha")["lastSyncedAt"] is None
 
 
@@ -496,3 +506,26 @@ def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
     after = browser.get(BASE).json()["data"]
     assert account(after, "zerodha") is None
     assert [e["action"] for e in after["events"]] == ["connect", "disconnect"]
+
+
+def test_action_result_shows_changes_committed_after_it(browser: Browser) -> None:
+    """The result of an action is read fresh: a sync committed by another
+    request after this one must not be hidden by this request's own objects."""
+    browser.login()
+    act(browser, "zerodha", "connect")
+    service = browser.client.app.state.brokers  # type: ignore[attr-defined]
+    later = "2030-01-01T00:00:00+00:00"
+
+    def commit_later_sync() -> None:
+        sql = "UPDATE broker_connections SET last_synced_at = :t WHERE provider = 'zerodha'"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(db_rows, _db(), sql, t=datetime.fromisoformat(later)).result()
+
+    service._before_result_snapshot = commit_later_sync
+    try:
+        response = act(browser, "zerodha", "sync")
+    finally:
+        service._before_result_snapshot = None
+    assert response.status_code == 200
+    synced = account(response.json(), "zerodha")["lastSyncedAt"]
+    assert datetime.fromisoformat(synced.replace("Z", "+00:00")) == datetime.fromisoformat(later)

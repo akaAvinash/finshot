@@ -884,9 +884,10 @@ paths:
         - `status: empty` (with no `data`) when the caller has no paper fill
           at all and has never assigned a strategy. Otherwise `ready`.
         - `from` and `to` filter fills by session date, both inclusive. Each
-          is optional: a missing `from` means the earliest fill, a missing
-          `to` the latest. `period` echoes the dates applied; it is `null`
-          on a side the caller left open and the ledger has no fill to bound.
+          is optional; an open side is unbounded. `period` echoes the given
+          dates and fills an open side with the earliest (`from`) or latest
+          (`to`) fill date in the period, or `null` when the period has no
+          fill.
         - `summary`, `daily`, `strategies` and `journal` cover only fills in
           the period. `daily` lists only dates with at least one fill,
           oldest first. `journal` lists the period's fills newest first, at

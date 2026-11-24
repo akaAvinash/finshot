@@ -1,0 +1,137 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Reports Preview API Proposal
+  version: 0.7.0
+  description: >
+    Proposed read-only ledger contract for the frontend Reports preview. The
+    current adapter uses deterministic fictional fills and position marks.
+    CSV and PDF files are created locally from the selected report period.
+paths:
+  /api/v1/reports/preview:
+    get:
+      operationId: getReport
+      summary: Read a dated report ledger for a trailing period
+      description: >
+        The requested number of Asia/Kolkata calendar days ends on the snapshot
+        date, inclusive. Reconcile gross P&L from fill prices, quantity, and side,
+        then subtract the booked brokerage and taxes. Open marks may be absent.
+        Unrealized P&L excludes unincurred closing charges. Combined net P&L is
+        available when the open marks are available.
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/ReportPeriod' }
+      responses:
+        '200':
+          description: Dated ready or stale report, or an empty demo workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportResult' }
+        '400':
+          description: Unsupported report period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportError' }
+        '403':
+          description: Access to the report workspace denied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportError' }
+        '503':
+          description: The report ledger is temporarily unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportError' }
+components:
+  schemas:
+    ReportPeriod:
+      type: string
+      enum: [7d, 30d, 90d]
+    ReportResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/ReportSnapshot' }
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status: { const: empty }
+    ReportSnapshot:
+      type: object
+      required: [source, environment, currency, asOf, period, range, trades, marks]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        currency: { const: INR }
+        asOf: { type: string, format: date-time }
+        period: { $ref: '#/components/schemas/ReportPeriod' }
+        range:
+          type: object
+          required: [from, to]
+          additionalProperties: false
+          properties:
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+        trades:
+          type: array
+          maxItems: 2000
+          description: Closed fills within the range, newest first.
+          items: { $ref: '#/components/schemas/ReportTrade' }
+        marks:
+          oneOf:
+            - type: array
+              maxItems: 500
+              description: Open positions marked as of the report snapshot.
+              items: { $ref: '#/components/schemas/ReportMark' }
+            - type: 'null'
+              description: Open marks unavailable. An empty array means no open positions.
+    ReportTrade:
+      type: object
+      required: [id, symbol, broker, strategy, side, quantity, entryPaise, exitPaise, brokeragePaise, taxesPaise, closedAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        symbol: { type: string, minLength: 1 }
+        broker: { $ref: '#/components/schemas/ReportBroker' }
+        strategy: { type: string, minLength: 1 }
+        side: { enum: [long, short] }
+        quantity: { type: integer, minimum: 1, maximum: 10000 }
+        entryPaise: { $ref: '#/components/schemas/Paise' }
+        exitPaise: { $ref: '#/components/schemas/Paise' }
+        brokeragePaise: { $ref: '#/components/schemas/Paise' }
+        taxesPaise: { $ref: '#/components/schemas/Paise' }
+        closedAt: { type: string, format: date-time }
+    ReportMark:
+      type: object
+      required: [id, symbol, broker, strategy, side, quantity, entryPaise, markPaise]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        symbol: { type: string, minLength: 1 }
+        broker: { $ref: '#/components/schemas/ReportBroker' }
+        strategy: { type: string, minLength: 1 }
+        side: { enum: [long, short] }
+        quantity: { type: integer, minimum: 1, maximum: 10000 }
+        entryPaise: { $ref: '#/components/schemas/Paise' }
+        markPaise: { $ref: '#/components/schemas/Paise' }
+    ReportBroker:
+      type: string
+      enum: [Zerodha, Fyers]
+    Paise:
+      type: integer
+      minimum: 0
+      maximum: 100000000
+      description: INR value represented as whole paise.
+    ReportError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { enum: [INVALID_REQUEST, FORBIDDEN, UNAVAILABLE] }
+        message: { type: string }

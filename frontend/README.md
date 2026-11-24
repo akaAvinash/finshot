@@ -1,6 +1,6 @@
 # Tradeo frontend
 
-Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Backtesting previews a replay queue, holdout results and CSV exports. Upcoming modules have labeled placeholder pages.
+Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Backtesting previews a replay queue, holdout results and CSV exports. Reports includes a reconciled demo ledger and downloadable reports. Upcoming modules have labeled placeholder pages.
 
 ## Local development
 
@@ -30,6 +30,8 @@ In **Strategies**, search by name or instrument, filter by status or risk, and s
 
 In **Backtesting**, select a fixture strategy revision, instrument, date range and out-of-sample period. Set starting capital, per-fill fees and slippage, then queue a demo replay. The shared three-session trend rule uses completed daily candles, the selected revision's position size, and subsequent session opens for fills. Review equity, drawdown, performance metrics and closed trades, or export the trades as CSV. Runs reset on reload and cannot approve strategy revisions. The [proposed backtesting preview contract](../contracts/backtesting.openapi.yaml) documents the demo workspace and run states. Production backtests require a separate engine, durable jobs, approved market history and a reviewed fill model.
 
+In **Reports**, choose a 7-, 30-, or 90-day period, inspect realized and unrealized P&L, filter the trade journal by calendar day or outcome, and compare net realized P&L by broker and strategy. The sample ledger reconciles integer-paise fills, brokerage, and taxes. Combined net P&L includes the available open-position marks, which exclude future closing charges. CSV and PDF downloads use the selected period independently of journal filters. All amounts and fills are fictional. The [proposed reporting contract](../contracts/reports.openapi.yaml) describes the fixture adapter. Real reports require a reconciled execution ledger and verified fee, tax, and mark sources.
+
 ## Verification
 
 ```sh
@@ -41,7 +43,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies and Backtesting screenshots in the ignored `screenshots/` directory.
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies, Backtesting and Reports screenshots in the ignored `screenshots/` directory.
 
 Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
 

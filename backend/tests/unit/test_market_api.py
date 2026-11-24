@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,7 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.market.demo import DemoMarketDataProvider
-from app.market.schemas import TIMEFRAMES, Instrument, MarketCandle, MarketCandles
+from app.market.schemas import (
+    TIMEFRAMES,
+    Instrument,
+    InstrumentQuote,
+    MarketCandle,
+    MarketCandles,
+    MarketOverview,
+)
 from tests.conftest import SettingsFactory
 from tests.market_support import (
     MARKET,
@@ -421,3 +429,70 @@ def test_market_endpoints_are_read_only(client: TestClient) -> None:
     for url in ALL_ENDPOINTS:
         for method in ("POST", "PUT", "PATCH", "DELETE"):
             assert client.request(method, url).status_code == 405
+
+
+def _mutated_after_validation() -> MarketCandles:
+    history = _candles(candles=[_bar(19), _bar(20)])
+    history.candles.append(_bar(20))  # duplicate timestamp added after validation
+    return history
+
+
+def _constructed_without_validation() -> MarketCandles:
+    return MarketCandles.model_construct(
+        instrument_id="NSE:TCS",
+        timeframe="1D",
+        source="market",
+        as_of=datetime(2026, 11, 23, 10, tzinfo=UTC),
+        freshness="fresh",
+        candles=[_bar(20), _bar(19)],  # descending
+    )
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_mutated_after_validation, _constructed_without_validation, lambda: {"candles": "x"}],
+)
+def test_already_built_bad_history_is_503_not_500(
+    make_settings: SettingsFactory, build: Any
+) -> None:
+    """Data that skipped or outlived validation is re-checked inside the 503
+    boundary, so FastAPI's response validation never turns it into a 500."""
+    history = build()
+    provider = StubProvider(candles=lambda _i, _t: history)
+    with market_client(make_settings, provider) as client:
+        response = client.get(candles_url("NSE:TCS", "1D"))
+    assert_error(response, 503, "MARKET_DATA_UNAVAILABLE")
+
+
+def test_bad_overview_and_catalog_objects_are_503(make_settings: SettingsFactory) -> None:
+    broken_instrument = Instrument.model_construct(
+        id="tcs", symbol="TCS", name="TCS", kind="equity"
+    )
+    provider = StubProvider(
+        instruments=lambda: (broken_instrument,),
+        overview=lambda: None,  # type: ignore[arg-type,return-value]
+    )
+    with market_client(make_settings, provider) as client:
+        assert_error(client.get(f"{MARKET}/instruments"), 503, "MARKET_DATA_UNAVAILABLE")
+        assert_error(client.get(f"{MARKET}/overview"), 503, "MARKET_DATA_UNAVAILABLE")
+
+
+def test_bad_instrument_in_any_sequence_type_is_503(make_settings: SettingsFactory) -> None:
+    """Any list-like container is re-checked, not only list and tuple."""
+    broken = Instrument.model_construct(id="tcs", symbol="TCS", name="TCS", kind="equity")
+    provider = StubProvider(instruments=lambda: deque([broken]))
+    with market_client(make_settings, provider) as client:
+        assert_error(client.get(f"{MARKET}/instruments"), 503, "MARKET_DATA_UNAVAILABLE")
+
+
+def test_already_built_bad_overview_is_503(make_settings: SettingsFactory) -> None:
+    """An existing MarketOverview instance is dumped and re-validated."""
+    with market_client(make_settings) as client:
+        good = client.get(f"{MARKET}/overview").json()
+    overview = MarketOverview.model_validate(good)
+    overview.quotes[0] = InstrumentQuote.model_construct(
+        **{**overview.quotes[0].model_dump(), "high": -1.0}
+    )
+    provider = StubProvider(overview=lambda: overview)
+    with market_client(make_settings, provider) as client:
+        assert_error(client.get(f"{MARKET}/overview"), 503, "MARKET_DATA_UNAVAILABLE")

@@ -7,18 +7,19 @@ shared envelope: 400 INVALID_REQUEST, 404 UNKNOWN_INSTRUMENT,
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
-from typing import Annotated
+from collections.abc import Awaitable, Sequence
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, Path, Query, Request
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from app.core.errors import ApiError
 from app.market.provider import MarketDataProvider, MarketDataUnavailableError
 from app.market.schemas import (
     INSTRUMENT_ID_PATTERN,
     SEARCH_QUERY_MAX_LENGTH,
+    Instrument,
     InstrumentList,
     MarketCandles,
     MarketOverview,
@@ -49,13 +50,34 @@ def _unavailable() -> ApiError:
     )
 
 
-async def _call[T](request: Request, operation: str, awaitable: Awaitable[T]) -> T:
-    """Run a provider call. An outage, a timeout or data that fails the
-    response models' validation all become 503; details go to the log only."""
+def _plain(value: Any) -> Any:
+    """Dump models to plain data so validation runs again. Pydantic does not
+    re-validate an existing model instance, and an instance may have been
+    built with model_construct() or had a list mutated after validation."""
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_plain(item) for item in value]
+    return value
+
+
+_CATALOG = TypeAdapter(list[Instrument])
+_OVERVIEW = TypeAdapter(MarketOverview)
+_HISTORY = TypeAdapter(MarketCandles | None)
+
+
+async def _call[T](
+    request: Request, operation: str, awaitable: Awaitable[Any], adapter: TypeAdapter[T]
+) -> T:
+    """Run a provider call and re-validate its result against the response
+    models. An outage, a timeout or invalid data all become 503, so a provider
+    can never cause a 500 or reach a client with bad data. Details go to the
+    log only."""
     timeout = request.app.state.settings.market_data_timeout_seconds
     try:
         async with asyncio.timeout(timeout):
-            return await awaitable
+            result = await awaitable
+        return adapter.validate_python(_plain(result))
     except MarketDataUnavailableError:
         logger.warning("market_data_unavailable", operation=operation, reason="provider")
     except TimeoutError:
@@ -82,7 +104,7 @@ async def list_instruments(
         ),
     ] = None,
 ) -> InstrumentList:
-    catalog = await _call(request, "list_instruments", provider.list_instruments())
+    catalog = await _call(request, "list_instruments", provider.list_instruments(), _CATALOG)
     return InstrumentList(instruments=search_instruments(catalog, query))
 
 
@@ -93,7 +115,7 @@ async def list_instruments(
     responses={503: _ERROR_RESPONSES[503]},
 )
 async def get_overview(request: Request, provider: Provider) -> MarketOverview:
-    return await _call(request, "get_overview", provider.get_overview())
+    return await _call(request, "get_overview", provider.get_overview(), _OVERVIEW)
 
 
 @router.get(
@@ -118,7 +140,9 @@ async def get_candles(
     ],
     timeframe: Annotated[Timeframe, Query()],
 ) -> MarketCandles:
-    history = await _call(request, "get_candles", provider.get_candles(instrument_id, timeframe))
+    history = await _call(
+        request, "get_candles", provider.get_candles(instrument_id, timeframe), _HISTORY
+    )
     if history is None:
         raise ApiError(404, "UNKNOWN_INSTRUMENT", "No instrument has this identifier.")
     if history.instrument_id != instrument_id or history.timeframe != timeframe:

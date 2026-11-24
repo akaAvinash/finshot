@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.5.0
+  version: 0.6.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
-    authentication, the demo broker workspace (no real broker access) and
-    strategy versions (no execution). The frontend uses deterministic demo responses in
+    authentication, the demo broker workspace (no real broker access),
+    strategy versions (no execution) and demo backtest jobs (simulated data
+    only). The frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels orders.
 tags:
@@ -23,6 +24,13 @@ tags:
       server. No signals, orders or execution. Promoted from
       `contracts/strategies.openapi.yaml` with the same paths and shapes, plus
       session, CSRF and error semantics.
+  - name: Backtests
+    description: >
+      Per-user demo backtest runs over the server's synthetic daily candles,
+      queued and completed by a server-side worker. No market data provider,
+      broker or order is involved, and a completed run never certifies a
+      strategy for activation. Promoted from `contracts/backtesting.openapi.yaml`
+      with the same paths and shapes, plus session, CSRF and error semantics.
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -546,6 +554,128 @@ paths:
           $ref: '#/components/responses/StrategyConflict'
         '503':
           $ref: '#/components/responses/StrategyUnavailable'
+  /api/v1/backtests/preview:
+    get:
+      operationId: getBacktestWorkspace
+      tags: [Backtests]
+      summary: Read the demo backtest workspace
+      description: |
+        Returns the inputs a run can use and the caller's recent runs.
+
+        - `from` and `to` bound the demo daily history (inclusive).
+        - `strategies` has one entry per backtestable revision of the caller's
+          strategies: each activated version (`revision` = its number) and the
+          current draft (`revision: draft`), oldest strategy first. A revision
+          whose instrument has no demo history is omitted. Each `id` is opaque.
+        - `instruments` lists the instruments with demo daily history.
+        - `runs` holds the caller's 20 most recent runs, newest first. A new
+          user has none.
+
+        The demo source always returns `status: ready`; `stale` is reserved
+        and not emitted.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's backtest workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacktestWorkspaceResult'
+        '401':
+          $ref: '#/components/responses/BacktestUnauthenticated'
+        '503':
+          $ref: '#/components/responses/BacktestUnavailable'
+  /api/v1/backtests/preview/runs:
+    post:
+      operationId: startBacktest
+      tags: [Backtests]
+      summary: Queue a demo backtest
+      description: |
+        Queues one run for the caller and returns it with status `queued`. A
+        server-side worker moves it to `running`, then `completed` or
+        `failed`; poll `GET /api/v1/backtests/preview/runs/{runId}`.
+
+        Validation (`400` when any rule fails):
+        - `strategyId` and `instrumentId` must appear in the caller's workspace.
+        - Dates are calendar dates with `from` < `outOfSampleFrom` < `to`,
+          all within the workspace `from`..`to`.
+        - The window needs at least three warm-up sessions before
+          `outOfSampleFrom` and at least two sessions from it onwards.
+
+        Replay rules: a long signal is the last completed close above the
+        average of the previous three closes. Entries and exits fill at the
+        next session's open with adverse slippage; fees apply on both sides
+        and round up to whole paise. Position size is the revision's
+        `positionSizeBps` of available cash. Only sessions from
+        `outOfSampleFrom` contribute to results, and any open position exits
+        at the last session's open. The revision's parameters are copied when
+        the run is queued, so later draft edits do not change it.
+
+        A completed run does not change the strategy's `backtest` check:
+        activation stays blocked until a reviewed pass/fail policy exists.
+        At most three runs per user may be `queued` or `running`; another
+        start returns `409`. Requires a valid session and a `session` CSRF
+        token; a missing or stale session returns `401` before the CSRF check.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BacktestConfig'
+      responses:
+        '202':
+          description: The queued run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacktestRun'
+        '400':
+          $ref: '#/components/responses/BacktestInvalidRequest'
+        '401':
+          $ref: '#/components/responses/BacktestUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BacktestCsrfFailed'
+        '409':
+          $ref: '#/components/responses/BacktestConflict'
+        '503':
+          $ref: '#/components/responses/BacktestUnavailable'
+  /api/v1/backtests/preview/runs/{runId}:
+    get:
+      operationId: getBacktestRun
+      tags: [Backtests]
+      summary: Read one of the caller's runs
+      description: >
+        Returns the run's current status and, once completed, its result: one
+        equity point per out-of-sample session (oldest first) and the closed
+        trades in order. An unknown id, a malformed id, or a run that belongs
+        to another user returns `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      responses:
+        '200':
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacktestRun'
+        '401':
+          $ref: '#/components/responses/BacktestUnauthenticated'
+        '404':
+          $ref: '#/components/responses/BacktestNotFound'
+        '503':
+          $ref: '#/components/responses/BacktestUnavailable'
 components:
   securitySchemes:
     sessionCookie:
@@ -1110,6 +1240,258 @@ components:
         requestId:
           type: string
           description: Same value as the `X-Request-ID` response header.
+    BacktestWorkspaceResult:
+      type: object
+      required: [status, data]
+      additionalProperties: false
+      properties:
+        status:
+          enum: [ready, stale]
+        data:
+          $ref: '#/components/schemas/BacktestWorkspace'
+    BacktestWorkspace:
+      type: object
+      required: [source, environment, asOf, from, to, strategies, instruments, runs]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        asOf:
+          type: string
+          format: date-time
+        from:
+          type: string
+          format: date
+          description: First session of the demo daily history.
+        to:
+          type: string
+          format: date
+          description: Last session of the demo daily history.
+        strategies:
+          type: array
+          items:
+            $ref: '#/components/schemas/BacktestStrategy'
+        instruments:
+          type: array
+          items:
+            $ref: '#/components/schemas/BacktestInstrument'
+        runs:
+          type: array
+          maxItems: 20
+          description: The caller's most recent runs, newest first.
+          items:
+            $ref: '#/components/schemas/BacktestRun'
+    BacktestStrategy:
+      type: object
+      required: [id, name, revision, instrumentId, positionSizeBps]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Opaque identifier of one strategy revision.
+        name:
+          type: string
+          minLength: 1
+        revision:
+          oneOf:
+            - type: integer
+              minimum: 1
+            - const: draft
+        instrumentId:
+          $ref: '#/components/schemas/InstrumentId'
+        positionSizeBps:
+          type: integer
+          minimum: 1
+          maximum: 10000
+    BacktestInstrument:
+      type: object
+      required: [id, symbol]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/InstrumentId'
+        symbol:
+          type: string
+          minLength: 1
+    BacktestConfig:
+      type: object
+      required: [strategyId, instrumentId, from, to, outOfSampleFrom, capitalPaise, feeBps, slippageBps]
+      additionalProperties: false
+      properties:
+        strategyId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        instrumentId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        outOfSampleFrom:
+          type: string
+          format: date
+        capitalPaise:
+          type: integer
+          minimum: 100000
+          maximum: 1000000000
+        feeBps:
+          type: integer
+          minimum: 0
+          maximum: 500
+        slippageBps:
+          type: integer
+          minimum: 0
+          maximum: 500
+    BacktestRun:
+      type: object
+      required: [id, source, environment, asOf, queuedAt, config, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        asOf:
+          type: string
+          format: date-time
+          description: When the run last changed status.
+        queuedAt:
+          type: string
+          format: date-time
+        config:
+          $ref: '#/components/schemas/BacktestConfig'
+        status:
+          enum: [queued, running, completed, failed]
+        result:
+          $ref: '#/components/schemas/BacktestResult'
+        message:
+          type: string
+          description: Why the run failed. Safe to show to the user.
+      allOf:
+        - if:
+            properties:
+              status:
+                const: completed
+          then:
+            required: [result]
+          else:
+            not:
+              required: [result]
+        - if:
+            properties:
+              status:
+                const: failed
+          then:
+            required: [message]
+          else:
+            not:
+              required: [message]
+    BacktestResult:
+      type: object
+      required: [endingEquityPaise, netPnlPaise, returnBps, maxDrawdownBps, winRateBps, totalFeesPaise, points, trades]
+      additionalProperties: false
+      properties:
+        endingEquityPaise:
+          type: integer
+          minimum: 0
+        netPnlPaise:
+          type: integer
+        returnBps:
+          type: integer
+        maxDrawdownBps:
+          type: integer
+          maximum: 0
+        winRateBps:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 10000
+          description: Null when the run closed no trades.
+        totalFeesPaise:
+          type: integer
+          minimum: 0
+        points:
+          type: array
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/BacktestPoint'
+        trades:
+          type: array
+          items:
+            $ref: '#/components/schemas/BacktestTrade'
+    BacktestPoint:
+      type: object
+      required: [date, equityPaise, drawdownBps]
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+        equityPaise:
+          type: integer
+          minimum: 0
+        drawdownBps:
+          type: integer
+          maximum: 0
+    BacktestTrade:
+      type: object
+      required: [id, entryAt, exitAt, quantity, entryPaise, exitPaise, feesPaise, pnlPaise]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+        entryAt:
+          type: string
+          format: date-time
+        exitAt:
+          type: string
+          format: date-time
+        quantity:
+          type: integer
+          minimum: 1
+        entryPaise:
+          type: integer
+          minimum: 1
+        exitPaise:
+          type: integer
+          minimum: 1
+        feesPaise:
+          type: integer
+          minimum: 0
+        pnlPaise:
+          type: integer
+    BacktestError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - CSRF_FAILED
+            - BACKTEST_NOT_FOUND
+            - BACKTEST_CONFLICT
+            - BACKTEST_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     InstrumentId:
       type: string
       pattern: '^NSE:[A-Z0-9_.&-]+$'
@@ -1443,3 +1825,60 @@ components:
           example:
             code: STRATEGY_UNAVAILABLE
             message: Strategies are temporarily unavailable. Try again shortly.
+    BacktestInvalidRequest:
+      description: >
+        Malformed body, or a configuration the server cannot replay: an
+        unknown strategy revision or instrument, dates out of order or outside
+        the demo history, or too few warm-up or out-of-sample sessions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: INVALID_REQUEST
+            message: Choose at least three warm-up sessions and two out-of-sample sessions.
+    BacktestUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    BacktestCsrfFailed:
+      description: The CSRF token is missing or wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: CSRF_FAILED
+            message: The request could not be verified. Reload and try again.
+    BacktestNotFound:
+      description: No run with this id belongs to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: BACKTEST_NOT_FOUND
+            message: This backtest is not available.
+    BacktestConflict:
+      description: The caller already has three runs queued or running.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: BACKTEST_CONFLICT
+            message: Wait for a running backtest to finish before starting another.
+    BacktestUnavailable:
+      description: Backtests are disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: BACKTEST_UNAVAILABLE
+            message: Backtests are temporarily unavailable. Try again shortly.

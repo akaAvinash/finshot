@@ -788,7 +788,9 @@ paths:
           position, no orders, first session. Assigning the strategy that is
           already assigned is a no-op unless its replay has finished.
         - `start` needs the engine `idle`, an assigned strategy that is still
-          active, an unfinished replay and risk `status: approved`.
+          active and an unfinished replay. It does not depend on the session
+          risk counters: the next tick replays a new session, which starts
+          them from zero.
         - `pause` needs the engine `running`; it becomes `idle`. Queued orders
           are kept.
         - `halt` (kill switch) needs `confirmation: STOP` and the engine not
@@ -807,7 +809,9 @@ paths:
            slippage.
         3. At the close the signal is evaluated as in backtests: long when this
            session's close is above the average of the last three closes
-           (this one included). Long with no position and no queued order
+           (this one included). No signal is evaluated until the replay has
+           three closes, so the first two replayed sessions never queue an
+           order. Long with no position and no queued order
            queues a buy for the next open, if the risk engine allows it. Not
            long with an open position queues a sell for the next open.
         4. On the last session of the history any open position is sold at the
@@ -1938,7 +1942,12 @@ components:
           description: >
             `blocked` while the engine is halted, or the current session's
             realised loss has reached `lossLimitPaise`, or its fills have
-            reached `tradeLimit`.
+            reached `tradeLimit`. The current session is the last replayed
+            one; `dailyLossPaise` and `tradesToday` count only its fills and
+            start from zero when the next session is replayed. `halt`,
+            `reset` and `pause` do not clear them; `assign` starts a fresh
+            replay with no current session, so both are zero. `blocked` only
+            stops new buys from being queued; it never blocks a command.
         dailyLossPaise:
           $ref: '#/components/schemas/NonnegativePaise'
         lossLimitPaise:

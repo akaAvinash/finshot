@@ -603,14 +603,37 @@ paths:
         - The window needs at least three warm-up sessions before
           `outOfSampleFrom` and at least two sessions from it onwards.
 
-        Replay rules: a long signal is the last completed close above the
-        average of the previous three closes. Entries and exits fill at the
-        next session's open with adverse slippage; fees apply on both sides
-        and round up to whole paise. Position size is the revision's
-        `positionSizeBps` of available cash. Only sessions from
-        `outOfSampleFrom` contribute to results, and any open position exits
-        at the last session's open. The revision's parameters are copied when
-        the run is queued, so later draft edits do not change it.
+        The revision supplies only `positionSizeBps`. The request's
+        `instrumentId` chooses the candles, so it may differ from the
+        revision's instrument.
+
+        Replay rules, applied to each session from `outOfSampleFrom` to `to`
+        in order (amounts in whole paise):
+        - Signal: take the closes of the three sessions before the current
+          one. The signal is long when the last of them is above their
+          average (the average includes that close). The first out-of-sample
+          session uses the three warm-up sessions before it, so no extra
+          close is needed.
+        - Prices: the session's open is rounded to whole paise. Buys fill at
+          that open plus `slippageBps`, rounded up; sells fill at that open
+          minus `slippageBps`, rounded down. Notional and fees use these
+          rounded fill prices.
+        - Fees: `feeBps` of notional on each side, rounded up to whole paise.
+        - Exit: if a position is open and the signal is not long, or this is
+          the last session, sell the whole position at this session's open.
+        - Entry: if no position is open, the signal is long and this is not
+          the last session, buy at this session's open. The budget is
+          `positionSizeBps` of cash, rounded down. Quantity is the largest
+          whole number whose notional plus entry fee fits the budget, so the
+          entry debit never exceeds cash. A quantity of zero means no trade.
+        - At most one fill per session: a session with an exit has no entry,
+          and no entry happens at the last session's open, so every run ends
+          flat.
+        - Equity at each session is cash plus the open quantity at that
+          session's close (rounded to whole paise).
+
+        The revision's parameters are copied when the run is queued, so later
+        draft edits do not change it.
 
         A completed run does not change the strategy's `backtest` check:
         activation stays blocked until a reviewed pass/fail policy exists.
@@ -628,11 +651,17 @@ paths:
               $ref: '#/components/schemas/BacktestConfig'
       responses:
         '202':
-          description: The queued run.
+          description: The queued run. Its status is always `queued`.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BacktestRun'
+                allOf:
+                  - $ref: '#/components/schemas/BacktestRun'
+                  - type: object
+                    required: [status]
+                    properties:
+                      status:
+                        const: queued
         '400':
           $ref: '#/components/responses/BacktestInvalidRequest'
         '401':

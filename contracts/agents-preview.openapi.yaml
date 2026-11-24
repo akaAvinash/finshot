@@ -1,0 +1,145 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Agents Preview API Proposal
+  version: 0.8.0
+  description: >
+    Proposed DTOs for the frontend-only Agents preview. The current adapter
+    uses dated deterministic fixtures and in-memory advisory controls. Neither
+    observation nor acknowledgement grants approval to place an order.
+paths:
+  /api/v1/agents/preview:
+    get:
+      operationId: getAgents
+      summary: Read the demo observer roster and advisory timeline
+      responses:
+        '200':
+          description: Ready or stale snapshot, or an empty demo workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/agents/preview/commands:
+    post:
+      operationId: sendAgentCommand
+      summary: Act on a demo observer or advisory record
+      description: >
+        A pause only changes the demo observer. A review records that the
+        user acknowledged or dismissed a pending advisory item. These commands
+        require current demo data and never change an order or risk policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentCommand' }
+      responses:
+        '200':
+          description: Updated demo snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSnapshot' }
+        '400':
+          description: Invalid command or identifier.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Stale workspace, observer already in target state, or item no longer pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  responses:
+    Forbidden:
+      description: Access to the demo advisory workspace denied.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AgentError' }
+    Unavailable:
+      description: Demo advisory telemetry is temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AgentError' }
+  schemas:
+    AgentResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/AgentSnapshot' }
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status: { const: empty }
+    AgentSnapshot:
+      type: object
+      required: [source, environment, asOf, agents, events]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        agents:
+          type: array
+          items: { $ref: '#/components/schemas/AgentStatus' }
+        events:
+          type: array
+          description: Dated advisory items ordered newest first.
+          items: { $ref: '#/components/schemas/AgentEvent' }
+    AgentId:
+      type: string
+      enum: [scanner, strategy, risk, execution]
+    AgentReason:
+      type: string
+      enum: [MARKET_OBSERVED, SIGNAL_PROPOSED, RISK_BLOCKED, PAPER_STATE_OBSERVED, TELEMETRY_DELAYED, TELEMETRY_UNAVAILABLE, OBSERVER_PAUSED, OBSERVER_RESUMED]
+    AgentStatus:
+      type: object
+      required: [id, health, paused, lastSeenAt, latencyMs, failureCount, decision, reason]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/AgentId' }
+        health: { enum: [healthy, degraded, unavailable] }
+        paused: { type: boolean }
+        lastSeenAt: { type: [string, 'null'], format: date-time }
+        latencyMs: { type: [integer, 'null'], minimum: 0 }
+        failureCount: { type: [integer, 'null'], minimum: 0 }
+        decision: { type: string, minLength: 1 }
+        reason: { $ref: '#/components/schemas/AgentReason' }
+    AgentEvent:
+      type: object
+      required: [id, agentId, at, severity, reason, message, review]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        agentId: { $ref: '#/components/schemas/AgentId' }
+        at: { type: string, format: date-time }
+        severity: { enum: [info, warning, critical] }
+        reason: { $ref: '#/components/schemas/AgentReason' }
+        message: { type: string, minLength: 1 }
+        review: { enum: [none, pending, acknowledged, dismissed] }
+    AgentCommand:
+      oneOf:
+        - type: object
+          required: [kind, agentId]
+          additionalProperties: false
+          properties:
+            kind: { enum: [pause, resume] }
+            agentId: { $ref: '#/components/schemas/AgentId' }
+        - type: object
+          required: [kind, eventId]
+          additionalProperties: false
+          properties:
+            kind: { enum: [acknowledge, dismiss] }
+            eventId: { type: string, minLength: 1 }
+    AgentError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { enum: [INVALID_REQUEST, FORBIDDEN, CONFLICT, UNAVAILABLE] }
+        message: { type: string }

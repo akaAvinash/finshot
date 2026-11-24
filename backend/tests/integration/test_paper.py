@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,12 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.market.demo import DemoMarketDataProvider
 from app.paper import engine
-from app.paper import service as service_module
+from app.paper.models import PaperTrade
 from app.paper.service import PaperService
 from tests.support import OTHER_PHONE, Browser, FakeClock, db_rows
 
@@ -462,7 +465,9 @@ def test_assigned_strategy_keeps_its_pinned_version(client: TestClient, clock: F
     assert buy["quantity"] == pinned
 
 
-def test_contending_workers_replay_a_session_once(client: TestClient) -> None:
+def test_contending_workers_replay_a_session_once(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A worker skips an account another worker holds (SKIP LOCKED)."""
     browser = Browser(client)
     browser.login()
@@ -470,14 +475,30 @@ def test_contending_workers_replay_a_session_once(client: TestClient) -> None:
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
     paper = service(client)
+    real_replay = paper._replay_session
     results: list[bool] = []
 
     async def both() -> None:
-        results.extend(await asyncio.gather(paper.tick_once(), paper.tick_once()))
+        locked, release = asyncio.Event(), asyncio.Event()
+
+        async def held(*args: Any, **kwargs: Any) -> None:
+            locked.set()  # the first worker now holds the account row lock
+            await release.wait()
+            await real_replay(*args, **kwargs)
+
+        monkeypatch.setattr(paper, "_replay_session", held)
+        first = asyncio.create_task(paper.tick_once())
+        try:
+            await asyncio.wait_for(locked.wait(), timeout=5)
+            # Without SKIP LOCKED this call would block on the row and time out.
+            second = await asyncio.wait_for(paper.tick_once(), timeout=5)
+        finally:
+            release.set()
+        results.extend([await first, second])
 
     assert client.portal is not None
     client.portal.call(both)
-    assert sorted(results) == [False, True]
+    assert results == [True, False]
     (row,) = db_rows(_db(), "SELECT sessions_done FROM paper_accounts")
     assert row["sessions_done"] == 1
 
@@ -509,17 +530,24 @@ def test_failed_tick_leaves_no_partial_ledger(
         return (account, counts, statuses)
 
     before = snapshot()
-    real_step = service_module.rules.step
+    paper = service(client)
+    real_replay = paper._replay_session
+    staged: list[int] = []
 
-    def failing_step(*args: Any, **kwargs: Any) -> Any:
-        real_step(*args, **kwargs)  # stages fills and order changes
+    async def failing_replay(
+        db: AsyncSession, account: Any, symbols: dict[str, str], now: datetime
+    ) -> None:
+        await real_replay(db, account, symbols, now)
+        await db.flush()  # the ledger rows reach the database inside the transaction
+        staged.append(await db.scalar(select(func.count()).select_from(PaperTrade)) or 0)
         raise RuntimeError("replay failed after staging ledger writes")
 
-    monkeypatch.setattr(service_module.rules, "step", failing_step)
+    monkeypatch.setattr(paper, "_replay_session", failing_replay)
     with pytest.raises(RuntimeError):
         tick(client)
+    assert len(staged) == 1 and staged[0] > before[1][0], "expected a staged fill"
     assert snapshot() == before
-    monkeypatch.setattr(service_module.rules, "step", real_step)
+    monkeypatch.setattr(paper, "_replay_session", real_replay)
     assert tick(client)
     after = snapshot()
     assert after[0][0]["sessions_done"] == before[0][0]["sessions_done"] + 1

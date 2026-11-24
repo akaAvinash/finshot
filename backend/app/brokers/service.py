@@ -137,7 +137,8 @@ class BrokerService:
         if self._before_result_snapshot is not None:
             self._before_result_snapshot()
         async with self._factory() as fresh:
-            return await self._snapshot(fresh, user_id, now)
+            # asOf is when this result is read; the event keeps the action's time.
+            return await self._snapshot(fresh, user_id, self._clock())
 
     async def _perform(
         self,

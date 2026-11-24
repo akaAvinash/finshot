@@ -49,7 +49,7 @@ test("renders the chart and all placeholder routes, with persistent dark and lig
   await capture(page, "dashboard-desktop-light");
 
   const nav = page.getByRole("navigation", { name: "Workspace" });
-  for (const title of ["Backtesting", "Reports", "Agents", "Alerts", "Settings"]) {
+  for (const title of ["Reports", "Agents", "Alerts", "Settings"]) {
     await nav.getByRole("link", { name: title, exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     await expect(page.getByText("Placeholder", { exact: true })).toBeVisible();

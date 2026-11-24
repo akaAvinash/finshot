@@ -1043,18 +1043,25 @@ paths:
         user's paper data every few seconds; health is computed at read time
         from the last evaluation.
 
-        Per agent:
-        - `unavailable` with `NO_PAPER_ACTIVITY` when the caller has never
-          assigned a paper strategy. `lastRunAt` and `dataAsOf` are null.
-        - `unavailable` with `NOT_YET_EVALUATED` when the caller has paper
-          activity, the agent has not evaluated it yet, and the paper data
-          last changed less than `staleAfterSeconds` ago.
-        - `stale` with `DATA_STALE` when the paper data changed more than
-          `staleAfterSeconds` ago and the agent has not evaluated that change
-          (it is behind, or the worker is stopped). Its events may be
-          incomplete.
-        - Otherwise `ok` with `reasonCode: null`. An idle engine stays `ok`:
-          unchanged data does not go stale.
+        The paper data is *pending* when it changed after the change the
+        agent last evaluated, or the agent has never evaluated it. A worker
+        *pass* ends when the worker has evaluated every pending user; the
+        server records when the last pass ended.
+
+        Per agent, the first rule that applies wins:
+        1. `unavailable` with `NO_PAPER_ACTIVITY` when the caller has never
+           assigned a paper strategy. `lastRunAt` and `dataAsOf` are null.
+        2. `stale` with `DATA_STALE` when the data is pending and either it
+           last changed more than `staleAfterSeconds` ago, or no worker pass
+           has ended in the last `staleAfterSeconds` (the worker is stopped,
+           failing or behind). So a stopped worker reports `stale` within
+           `staleAfterSeconds` even while the paper data keeps changing. Its
+           events may be incomplete.
+        3. `unavailable` with `NOT_YET_EVALUATED` when the agent has never
+           evaluated the caller's data (and rule 2 does not apply).
+        4. Otherwise `ok` with `reasonCode: null`: the data is evaluated, or
+           pending for less than `staleAfterSeconds` with the worker running.
+           An idle engine stays `ok`: unchanged data does not go stale.
 
         `dataAsOf` is the time of the paper data the agent last evaluated
         (the paper account's last change), `lastRunAt` when it last did so.
@@ -2750,7 +2757,9 @@ components:
           items:
             $ref: '#/components/schemas/AgentEvent'
         nextCursor:
+          description: Null on the last page.
           type: [string, 'null']
+          minLength: 1
           maxLength: 128
     AgentEvent:
       type: object

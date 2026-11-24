@@ -1,6 +1,6 @@
 # Backend handoff
 
-Updated 2026-11-24 (UTC), with phase C3. The repository on `main` is the source of truth;
+Updated 2026-11-24 (UTC), with phase D (reports). The repository on `main` is the source of truth;
 the development kit is the roadmap.
 
 ## Ownership
@@ -20,12 +20,13 @@ the development kit is the roadmap.
 | B2: demo broker connections | #13 contract, #14 |
 | C1: strategy drafts and immutable versions | #15 contract, #16 |
 | C2: demo backtest jobs | #18 contract, #19 |
+| C3: paper trading and automatic checks | #20 contract, #21 |
 
 ## Open
 
 | Phase | PRs |
 |---|---|
-| C3: paper trading and automatic checks | #20 contract, implementation PR on `feat/paper-risk` (merge after #20) |
+| D: paper reports and reconciliation | #22 contract, implementation PR on `feat/reports` (merge after #22) |
 
 ## Merge policy
 
@@ -39,14 +40,34 @@ and live trading.
 ## Blockers
 
 - Frontend wiring (Next.js same-origin proxy, switching the broker,
-  strategy, backtest and paper clients from the mocks) is Codex's work and
+  strategy, backtest, paper and reports clients from the mocks) is Codex's work and
   is not done by the backend.
 
 ## Next backend task
 
-Reconciliation and reports (kit order after paper execution and risk:
-reconciliation and reports, agents, alerts, hardening). Needs its own
-contract PR first.
+Agents (kit order after reconciliation and reports: agents, alerts,
+hardening). Needs its own contract PR first. Agents may summarise and
+recommend only; no order tools, no secret access (kit
+`backend/03_TRADING_RISK_AGENTS.md`).
+
+## Reports (D) notes
+
+- `app/reports/service.py` derives every figure from the paper ledger in one
+  REPEATABLE READ transaction: `paper_trades` (fills), `paper_replays`
+  (which strategy version each replay used) and `paper_accounts` (open
+  position and reconciliation).
+- `paper_replays` (migration `0007`) is written by `assign` and is
+  append-only. The migration backfills each account's current replay;
+  fills of earlier replays stay unattributed (`strategy: null`).
+- Dates are IST session dates; the period filter runs in SQL on
+  `filled_at` bounds at IST midnight.
+- The open position is marked at the close of the last replayed demo
+  session. Reconciliation replays only the current replay's ledger from the
+  paper capital (cash and quantity).
+- The CSV export loads every fill in the period at once; fine for paper
+  ledgers, revisit (stream) before real ledgers.
+- There is no live broker, so there are no broker statements or tax fields.
+  Live reconciliation belongs to a later, separately approved phase.
 
 ## Automatic checks and paper trading (C3) notes
 

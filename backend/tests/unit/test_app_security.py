@@ -119,6 +119,11 @@ def test_openapi_documents_400_not_422(client: TestClient) -> None:
     assert "HTTPValidationError" not in document["components"]["schemas"]
     command = document["paths"]["/api/v1/auto-trading/paper/commands"]["post"]
     assert set(command["responses"]) == {"200", "400", "401", "403", "409", "503"}
+    for path in ("/api/v1/reports/paper", "/api/v1/reports/paper/trades.csv"):
+        assert set(document["paths"][path]) == {"get"}, path  # reports are read-only
+        assert set(document["paths"][path]["get"]["responses"]) == {"200", "400", "401", "503"}
+    csv_ok = document["paths"]["/api/v1/reports/paper/trades.csv"]["get"]["responses"]["200"]
+    assert set(csv_ok["content"]) == {"text/csv"}
 
 
 def test_no_order_routes_exist(client: TestClient) -> None:
@@ -147,6 +152,8 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/backtests/preview/runs/{runId}",
         "/api/v1/auto-trading/paper",
         "/api/v1/auto-trading/paper/commands",
+        "/api/v1/reports/paper",
+        "/api/v1/reports/paper/trades.csv",
     }
     # Market data is read-only.
     for path, operations in paths.items():

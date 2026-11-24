@@ -39,8 +39,9 @@ and live trading.
 
 - Strategy activation stays blocked (409). Backtest runs exist (C2) but a
   completed run does not set the strategy's `backtest` check: that needs a
-  reviewed pass/fail policy, decided with the risk phase. Who approves a risk review is deferred to the risk phase
-  (see #15); nothing can set `approved` until then.
+  reviewed pass/fail policy, decided with the risk phase. Who approves a
+  risk review is also deferred to the risk phase (see #15); nothing can set
+  `approved` until then.
 - Frontend wiring (Next.js same-origin proxy, switching the broker and
   strategy clients from the mocks) is Codex's work and is not done by the
   backend.

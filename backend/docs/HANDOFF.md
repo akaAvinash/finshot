@@ -22,12 +22,12 @@ the development kit is the roadmap.
 
 | PR | Branch | Base | Status |
 |---|---|---|---|
-| #13 Broker endpoints in the API contract | `feat/brokers-contract` | `main` | Contract-only. Awaiting owner review. |
-| #14 Phase B2 demo broker connections | `feat/backend-brokers` | `feat/brokers-contract` | Draft. Retarget to `main` after #13 merges. |
+| #13 Broker endpoints in the API contract | `feat/brokers-contract` | `main` | Contract-only. CodeRabbit findings fixed. Awaiting owner review. |
+| #14 Phase B2 demo broker connections | `feat/backend-brokers` | `feat/brokers-contract` | Draft. CodeRabbit's second round fixed in f910710 (fresh-session result read, stricter no-write test). Retarget to `main` after #13 merges. |
 | #15 Strategy endpoints in the API contract | `feat/strategies-contract` | `feat/backend-brokers` | Contract-only, draft (stacked to avoid `openapi.yaml` conflicts). Awaiting owner review. |
-| Phase C1 strategy drafts and versions | `feat/backend-strategies` | `feat/strategies-contract` | Draft. |
+| #16 Phase C1 strategy drafts and versions | `feat/backend-strategies` | `feat/strategies-contract` | Draft. Same fresh-session fix (82afaa1). |
 
-Merge order: #13 → #14 → #15 → C1. Retarget each to `main` after the one
+Merge order: #13 → #14 → #15 → #16. Retarget each to `main` after the one
 before it merges.
 
 ## Blockers

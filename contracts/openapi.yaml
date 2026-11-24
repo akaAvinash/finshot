@@ -1,15 +1,21 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.3.0
+  version: 0.4.0
   description: >
-    Proposed contract for Phase 2 market data (read-only) and Phase A
-    authentication. The frontend uses deterministic demo responses in
+    Proposed contract for Phase 2 market data (read-only), Phase A
+    authentication and the demo broker workspace (no real broker access). The frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels orders.
 tags:
   - name: Markets
     description: NSE instrument reference data, quotes and historical candles.
+  - name: Brokers
+    description: >
+      Demo broker connections stored per user on the server. No provider
+      requests, OAuth flows or broker credentials. Promoted from
+      `contracts/brokers.openapi.yaml` with the same paths and shapes, plus
+      session, CSRF and error semantics.
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -32,7 +38,7 @@ tags:
       in Safari. Local development in Safari needs HTTPS.
 
       **CSRF token binding.** Every state-changing request (`POST`, `PUT`,
-      `PATCH`, `DELETE`) under `/api/v1/auth/` must send an `X-CSRF-Token`
+      `PATCH`, `DELETE`) under `/api/v1/` must send an `X-CSRF-Token`
       header. A plain "header equals cookie" comparison is not enough. The
       token is a server-signed value (HMAC with a server-side secret; its
       format is opaque to clients) bound to a **context**:
@@ -376,6 +382,81 @@ paths:
                 $ref: '#/components/schemas/SessionList'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
+  /api/v1/brokers/preview:
+    get:
+      operationId: getBrokers
+      tags: [Brokers]
+      summary: Read the signed-in user's demo broker connections
+      description: >
+        Returns one entry per supported provider, in the order `zerodha`,
+        `fyers`. A provider the user has never connected, or has disconnected,
+        has `account: null`. A new user starts with every provider
+        disconnected and no events. The demo source always returns
+        `status: ready`; `stale` and `empty` are reserved for future
+        providers and are not emitted by the demo source.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's broker snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerResult'
+        '401':
+          $ref: '#/components/responses/BrokerUnauthenticated'
+        '503':
+          $ref: '#/components/responses/BrokerUnavailable'
+  /api/v1/brokers/preview/{provider}/actions:
+    post:
+      operationId: sendBrokerAction
+      tags: [Brokers]
+      summary: Apply a simulated broker account action
+      description: >
+        Applies one action to the caller's demo connection for `provider` and
+        returns the updated snapshot. `connect` requires a disconnected
+        account, `reconnect` requires an expired account, and `sync` and
+        `disconnect` require an account that is connected or expired
+        (`sync` only when connected). `connect` and `reconnect` create a
+        demo account that expires 8 hours later with `lastSyncedAt: null`.
+        `sync` sets `lastSyncedAt` to the server time. `disconnect` removes
+        the account and keeps the event log. Every successful action appends
+        one event. The actions perform no provider requests and no broker
+        credentials are involved. Requires a valid session and a `session`
+        CSRF token (see the Auth tag); a missing or stale session returns
+        `401` before the CSRF check.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/BrokerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrokerActionRequest'
+      responses:
+        '200':
+          description: Updated broker snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerSnapshot'
+        '400':
+          $ref: '#/components/responses/BrokerInvalidRequest'
+        '401':
+          $ref: '#/components/responses/BrokerUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerCsrfFailed'
+        '409':
+          $ref: '#/components/responses/BrokerActionConflict'
+        '503':
+          $ref: '#/components/responses/BrokerUnavailable'
 components:
   securitySchemes:
     sessionCookie:
@@ -597,6 +678,144 @@ components:
           type: integer
           minimum: 1
           description: Only on 429. Matches the `Retry-After` header.
+    BrokerId:
+      type: string
+      enum: [zerodha, fyers]
+    BrokerAction:
+      type: string
+      enum: [connect, reconnect, sync, disconnect]
+    BrokerActionRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          $ref: '#/components/schemas/BrokerAction'
+    BrokerResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status:
+              enum: [ready, stale]
+            data:
+              $ref: '#/components/schemas/BrokerSnapshot'
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status:
+              const: empty
+    BrokerSnapshot:
+      type: object
+      required: [source, environment, asOf, connections, events]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        asOf:
+          type: string
+          format: date-time
+          description: Server time the snapshot was built. Connection status is computed against it.
+        connections:
+          type: array
+          description: Exactly one entry per provider, in the order zerodha, fyers.
+          minItems: 2
+          maxItems: 2
+          prefixItems:
+            - allOf:
+                - $ref: '#/components/schemas/BrokerConnection'
+                - properties:
+                    provider:
+                      const: zerodha
+            - allOf:
+                - $ref: '#/components/schemas/BrokerConnection'
+                - properties:
+                    provider:
+                      const: fyers
+          items: false
+        events:
+          type: array
+          maxItems: 50
+          description: The caller's 50 most recent demo actions, oldest first.
+          items:
+            $ref: '#/components/schemas/BrokerEvent'
+    BrokerConnection:
+      type: object
+      required: [provider, account]
+      additionalProperties: false
+      properties:
+        provider:
+          $ref: '#/components/schemas/BrokerId'
+        account:
+          description: Null for a disconnected provider.
+          oneOf:
+            - $ref: '#/components/schemas/BrokerAccount'
+            - type: 'null'
+    BrokerAccount:
+      type: object
+      required: [maskedAccountId, connectedAt, expiresAt, lastSyncedAt, scopes]
+      additionalProperties: false
+      properties:
+        maskedAccountId:
+          type: string
+          pattern: '^•••• [0-9]{4}$'
+          examples: ['•••• 4821']
+          description: Demo label. Not a real broker account.
+        connectedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: The demo connection is expired at or after this instant.
+        lastSyncedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Null until the first sync for the current demo connection.
+        scopes:
+          type: array
+          uniqueItems: true
+          description: Tradeo demo labels for read-only access.
+          items:
+            type: string
+            enum: [profile_read, holdings_read, orders_read]
+    BrokerEvent:
+      type: object
+      required: [id, provider, action, at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Opaque, unique per event.
+        provider:
+          $ref: '#/components/schemas/BrokerId'
+        action:
+          $ref: '#/components/schemas/BrokerAction'
+        at:
+          type: string
+          format: date-time
+    BrokerError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - CSRF_FAILED
+            - BROKER_ACTION_CONFLICT
+            - BROKER_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     InstrumentId:
       type: string
       pattern: '^NSE:[A-Z0-9_.&-]+$'
@@ -827,3 +1046,48 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MarketError'
+    BrokerInvalidRequest:
+      description: Unknown provider, or a missing or invalid action.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    BrokerUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    BrokerCsrfFailed:
+      description: The CSRF token is missing or wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: CSRF_FAILED
+            message: The request could not be verified. Reload and try again.
+    BrokerActionConflict:
+      description: The action does not apply to the connection's current state, for example `sync` on an expired connection.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: BROKER_ACTION_CONFLICT
+            message: This broker account is not ready for that action.
+    BrokerUnavailable:
+      description: The broker workspace is disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: BROKER_UNAVAILABLE
+            message: Broker accounts are temporarily unavailable. Try again shortly.

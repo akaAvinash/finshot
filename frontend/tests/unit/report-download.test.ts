@@ -18,7 +18,7 @@ const pdf = vi.hoisted(() => {
     }),
     addPage: vi.fn(() => { page = ++pages; }),
     getNumberOfPages: vi.fn(() => pages),
-    setPage: vi.fn((next: number) => { page = next; return doc; }),
+    setPage: vi.fn(function (this: unknown, next: number) { page = next; return this; }),
     save: vi.fn(),
   };
   return { doc, calls };

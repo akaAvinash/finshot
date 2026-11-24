@@ -124,7 +124,8 @@ class StrategyService:
         if self._before_result_snapshot is not None:
             self._before_result_snapshot()
         async with self._factory() as fresh:
-            return await self._snapshot(fresh, user_id, now)
+            # asOf is when this result is read; audit rows keep the command time.
+            return await self._snapshot(fresh, user_id, self._clock())
 
     async def _create(
         self, db: AsyncSession, user_id: uuid.UUID, parameters: StrategyParameters, now: datetime

@@ -11,7 +11,7 @@ import json
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -520,3 +520,20 @@ def test_command_result_shows_changes_committed_after_it(browser: Browser) -> No
         service._before_result_snapshot = None
     assert response.status_code == 200, response.text
     assert find(response.json(), sid)["draft"]["parameters"]["name"] == "Saved elsewhere"
+
+
+def test_result_as_of_is_the_time_the_result_is_read(browser: Browser, clock: FakeClock) -> None:
+    """asOf describes when the returned snapshot was built, not when the
+    command started."""
+    browser.login()
+    service = browser.client.app.state.strategies  # type: ignore[attr-defined]
+    started = clock.now
+    service._before_result_snapshot = lambda: clock.advance(5)
+    try:
+        response = send(browser, {"action": "create", "parameters": PARAMS})
+    finally:
+        service._before_result_snapshot = None
+    assert response.status_code == 200, response.text
+    assert parse(response.json()["asOf"]) == started + timedelta(seconds=5)
+    audit = db_rows(_db(), "SELECT created_at FROM audit_events WHERE action = 'strategy.create'")
+    assert [row["created_at"] for row in audit] == [started]

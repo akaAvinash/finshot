@@ -109,9 +109,11 @@ class _Period:
 
     def where(self, user_id: uuid.UUID) -> list[ColumnElement[bool]]:
         clauses: list[ColumnElement[bool]] = [PaperTrade.user_id == user_id]
-        if self.start is not None:
+        # date.min and date.max bound nothing; skipping them also avoids
+        # building a datetime outside the supported range.
+        if self.start is not None and self.start > date.min:
             clauses.append(PaperTrade.filled_at >= datetime.combine(self.start, time(), IST))
-        if self.end is not None:
+        if self.end is not None and self.end < date.max:
             next_day = self.end + timedelta(days=1)
             clauses.append(PaperTrade.filled_at < datetime.combine(next_day, time(), IST))
         return clauses

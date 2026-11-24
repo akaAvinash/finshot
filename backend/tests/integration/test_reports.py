@@ -21,6 +21,7 @@ from app.reports import service as reports_module
 from app.reports.service import ist_date
 from tests.integration.test_paper import (
     PARAMS,
+    STRATEGY_COMMANDS,
     TICK,
     _alembic,
     _db,
@@ -278,6 +279,52 @@ def test_fills_are_attributed_per_replay(client: TestClient, clock: FakeClock) -
     assert data["strategies"][-1]["strategy"] is None
     assert data["strategies"][0]["strategy"]["id"] == second
     assert all(t["strategy"] is None for t in data["journal"] if t["replay"] == 1)
+
+
+def test_versions_of_one_strategy_keep_their_pinned_names(
+    client: TestClient, clock: FakeClock
+) -> None:
+    browser, sid = replayed(client, clock)
+    # Version 2 of the same strategy, renamed, then a second replay of it.
+    assert browser.post(STRATEGY_COMMANDS, json={"action": "pause", "id": sid}).status_code == 200
+    renamed = {**PARAMS, "name": "SBIN Momentum Renamed"}
+    response = browser.post(
+        STRATEGY_COMMANDS, json={"action": "save-draft", "id": sid, "parameters": renamed}
+    )
+    assert response.status_code == 200, response.text
+    db_rows(_db(), "UPDATE strategies SET draft_backtest = 'passed' WHERE id = :id", id=sid)
+    response = browser.post(STRATEGY_COMMANDS, json={"action": "activate", "id": sid})
+    assert response.status_code == 200, response.text
+    ok(browser, {"action": "assign", "strategyId": sid})
+    ok(browser, {"action": "start"})
+    run_to_end(client, clock)
+
+    v1 = {"id": sid, "name": PARAMS["name"], "version": 1}
+    v2 = {"id": sid, "name": "SBIN Momentum Renamed", "version": 2}
+    data = report(browser)["data"]
+    assert [s["strategy"] for s in data["strategies"]] == [v1, v2]
+    by_replay = {t["replay"]: t["strategy"] for t in data["journal"]}
+    assert by_replay == {1: v1, 2: v2}
+
+    rows = list(csv.reader(io.StringIO(browser.get(CSV).text)))[1:]
+    assert {(r[2], r[3], r[4]) for r in rows} == {
+        ("1", PARAMS["name"], "1"),
+        ("2", "SBIN Momentum Renamed", "2"),
+    }
+
+
+def test_extreme_period_bounds(client: TestClient, clock: FakeClock) -> None:
+    browser, _ = replayed(client, clock)
+    fills = len(expected_fills())
+    bounds = {"from": date.min.isoformat(), "to": date.max.isoformat()}
+    data = report(browser, **bounds)["data"]
+    assert data["period"] == {"from": "0001-01-01", "to": "9999-12-31"}
+    assert data["summary"]["fills"] == fills
+    response = browser.get(CSV, params=bounds)
+    assert response.status_code == 200
+    assert len(list(csv.reader(io.StringIO(response.text)))) == 1 + fills
+    assert report(browser, to=date.min.isoformat())["data"]["summary"]["fills"] == 0
+    assert report(browser, **{"from": date.max.isoformat()})["data"]["summary"]["fills"] == 0
 
 
 def test_journal_is_capped(

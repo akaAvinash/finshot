@@ -7,7 +7,7 @@ shared envelope: 400 INVALID_REQUEST, 404 UNKNOWN_INSTRUMENT,
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from typing import Annotated, Any
 
 import structlog
@@ -56,7 +56,7 @@ def _plain(value: Any) -> Any:
     built with model_construct() or had a list mutated after validation."""
     if isinstance(value, BaseModel):
         return value.model_dump()
-    if isinstance(value, list | tuple):
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
         return [_plain(item) for item in value]
     return value
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,7 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.market.demo import DemoMarketDataProvider
-from app.market.schemas import TIMEFRAMES, Instrument, MarketCandle, MarketCandles
+from app.market.schemas import (
+    TIMEFRAMES,
+    Instrument,
+    InstrumentQuote,
+    MarketCandle,
+    MarketCandles,
+    MarketOverview,
+)
 from tests.conftest import SettingsFactory
 from tests.market_support import (
     MARKET,
@@ -466,4 +474,25 @@ def test_bad_overview_and_catalog_objects_are_503(make_settings: SettingsFactory
     )
     with market_client(make_settings, provider) as client:
         assert_error(client.get(f"{MARKET}/instruments"), 503, "MARKET_DATA_UNAVAILABLE")
+        assert_error(client.get(f"{MARKET}/overview"), 503, "MARKET_DATA_UNAVAILABLE")
+
+
+def test_bad_instrument_in_any_sequence_type_is_503(make_settings: SettingsFactory) -> None:
+    """Any list-like container is re-checked, not only list and tuple."""
+    broken = Instrument.model_construct(id="tcs", symbol="TCS", name="TCS", kind="equity")
+    provider = StubProvider(instruments=lambda: deque([broken]))
+    with market_client(make_settings, provider) as client:
+        assert_error(client.get(f"{MARKET}/instruments"), 503, "MARKET_DATA_UNAVAILABLE")
+
+
+def test_already_built_bad_overview_is_503(make_settings: SettingsFactory) -> None:
+    """An existing MarketOverview instance is dumped and re-validated."""
+    with market_client(make_settings) as client:
+        good = client.get(f"{MARKET}/overview").json()
+    overview = MarketOverview.model_validate(good)
+    overview.quotes[0] = InstrumentQuote.model_construct(
+        **{**overview.quotes[0].model_dump(), "high": -1.0}
+    )
+    provider = StubProvider(overview=lambda: overview)
+    with market_client(make_settings, provider) as client:
         assert_error(client.get(f"{MARKET}/overview"), 503, "MARKET_DATA_UNAVAILABLE")

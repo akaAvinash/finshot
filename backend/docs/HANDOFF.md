@@ -22,12 +22,18 @@ the development kit is the roadmap.
 | C2: demo backtest jobs | #18 contract, #19 |
 | C3: paper trading and automatic checks | #20 contract, #21 |
 | D: paper reports and reconciliation | #22 contract, #24 |
+| E1: advisory agents | #25 contract, #27 |
 
 ## Open
 
-| Phase | PRs |
-|---|---|
-| E1: advisory agents | #25 contract, implementation PR on `feat/agents` (against main, after #25) |
+None. (#27 is listed as done because it merges with this file.)
+
+## Review notes
+
+CodeRabbit leaves a "changes requested" review that stays in force until it
+approves a later commit. Once every thread is resolved, a new commit or
+`@coderabbitai full review` makes it review again and approve. A change of
+base (another PR merging first) dismisses its approval, so ask again then.
 
 ## Merge policy
 

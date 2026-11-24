@@ -18,6 +18,7 @@ import pytest
 from alembic import command
 from fastapi.testclient import TestClient
 
+from app.agents import service as agent_service
 from app.agents.rules import MOVE_MULTIPLE, MOVE_WINDOW
 from app.agents.service import AgentService, encode_cursor
 from app.paper import engine
@@ -636,6 +637,30 @@ def test_the_background_worker_evaluates_changes(make_app: Callable[..., TestCli
         time.sleep(0.05)
     assert status == "ok"
     assert pass_ended
+
+
+def test_a_failure_before_the_run_update_commits_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    browser = assigned(client)
+    ok(browser, {"action": "halt", "confirmation": "STOP"})
+
+    def fail(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("interrupted after the event insert")
+
+    # `update` builds the AgentRun write that follows the event insert.
+    monkeypatch.setattr(agent_service, "update", fail)
+    assert client.portal is not None
+    with pytest.raises(RuntimeError, match="interrupted"):
+        client.portal.call(agents(client).run_once)
+    assert db_rows(_db(), "SELECT 1 FROM agent_events") == []
+    # The whole pass rolled back, including the run row and its memory.
+    assert db_rows(_db(), "SELECT 1 FROM agent_runs") == []
+    monkeypatch.undo()
+    assert evaluate(client) == 1
+    assert evaluate(client) == 0
+    rows = db_rows(_db(), "SELECT reason_code FROM agent_events")
+    assert [r["reason_code"] for r in rows] == ["ENGINE_HALTED"]
 
 
 def test_agent_events_are_append_only(client: TestClient, clock: FakeClock) -> None:

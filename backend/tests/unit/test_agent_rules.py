@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from app.agents import rules
 from app.agents.rules import (
     CancelledOrder,
@@ -91,6 +93,14 @@ def test_scanner_flags_a_move_twice_the_recent_average() -> None:
     assert (event.link_kind, event.link_id) == ("paper-replay", "1")
     assert "higher" in event.message and "SBIN" in event.message
     assert result.memory.scan_done == 7
+
+
+@pytest.mark.parametrize(("last", "flagged"), [(102_815, False), (102_816, True), (102_817, True)])
+def test_scanner_threshold_is_inclusive(last: int, flagged: bool) -> None:
+    # Previous five moves 0, 0, 0, 0, 2%: average 0.4%, so 0.8% (102_816) is exactly twice.
+    series = closes([100_000, 100_000, 100_000, 100_000, 100_000, 102_000, last])
+    result = rules.evaluate(obs(closes=series, sessions_done=7), Memory())
+    assert codes(result) == (["LARGE_MOVE"] if flagged else [])
 
 
 def test_scanner_ignores_ordinary_moves_and_unreplayed_sessions() -> None:
@@ -201,8 +211,25 @@ def test_cancelled_orders_and_reconciliation_transitions() -> None:
     assert codes(rules.evaluate(obs(replay=0, reconciled=None), Memory())) == []
 
 
+def test_reconciliation_state_is_scoped_to_its_replay() -> None:
+    mismatched = rules.evaluate(obs(replay=1, reconciled=False), Memory()).memory
+    # The next replay also mismatches: warn again, it is a new replay.
+    again = rules.evaluate(obs(replay=2, reconciled=False), mismatched)
+    assert codes(again) == ["RECONCILIATION_MISMATCH"]
+    assert again.events[0].link_id == "2"
+    # The next replay matches: nothing to report, it never mismatched.
+    assert codes(rules.evaluate(obs(replay=2, reconciled=True), mismatched)) == []
+
+
 def test_memory_round_trips_and_tolerates_an_empty_row() -> None:
-    memory = Memory(trade_seq=9, engine="halted", reconciled=False, scan_replay=2, scan_done=5)
+    memory = Memory(
+        trade_seq=9,
+        engine="halted",
+        reconciled=False,
+        reconciled_replay=2,
+        scan_replay=2,
+        scan_done=5,
+    )
     assert Memory.load(memory.dump()) == memory
     assert Memory.load({}) == Memory()
 

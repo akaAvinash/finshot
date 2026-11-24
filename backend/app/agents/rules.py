@@ -138,6 +138,8 @@ class Memory:
     trade_seq: int = 0
     engine: str | None = None
     reconciled: bool = True
+    # The replay `reconciled` describes; a new replay starts reconciled.
+    reconciled_replay: int = 0
     scan_replay: int = 0
     scan_done: int = 0
 
@@ -147,6 +149,7 @@ class Memory:
             trade_seq=int(raw.get("tradeSeq", 0)),
             engine=raw.get("engine"),
             reconciled=bool(raw.get("reconciled", True)),
+            reconciled_replay=int(raw.get("reconciledReplay", 0)),
             scan_replay=int(raw.get("scanReplay", 0)),
             scan_done=int(raw.get("scanDone", 0)),
         )
@@ -156,6 +159,7 @@ class Memory:
             "tradeSeq": self.trade_seq,
             "engine": self.engine,
             "reconciled": self.reconciled,
+            "reconciledReplay": self.reconciled_replay,
             "scanReplay": self.scan_replay,
             "scanDone": self.scan_done,
         }
@@ -364,7 +368,9 @@ def _monitor(obs: Observation, out: Result) -> None:
         )
     if obs.reconciled is None:
         return
-    if not obs.reconciled and mem.reconciled:
+    # A flag from an earlier replay says nothing about this one.
+    was_reconciled = mem.reconciled if mem.reconciled_replay == obs.replay else True
+    if not obs.reconciled and was_reconciled:
         out.events.append(
             NewEvent(
                 agent_id="execution-monitor",
@@ -378,7 +384,7 @@ def _monitor(obs: Observation, out: Result) -> None:
                 data_as_of=obs.changed_at,
             )
         )
-    elif obs.reconciled and not mem.reconciled:
+    elif obs.reconciled and not was_reconciled:
         out.events.append(
             NewEvent(
                 agent_id="execution-monitor",
@@ -393,3 +399,4 @@ def _monitor(obs: Observation, out: Result) -> None:
             )
         )
     mem.reconciled = obs.reconciled
+    mem.reconciled_replay = obs.replay

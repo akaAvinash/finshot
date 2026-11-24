@@ -229,8 +229,13 @@ class AgentService:
                 insert(AgentRun)
                 .from_select(
                     ["user_id", "state"],
+                    # Only accounts not yet tracked, so a pass does not
+                    # resubmit every account on every call.
                     select(PaperAccount.user_id, literal({}, AgentRun.state.type)).where(
-                        PaperAccount.replay >= 1
+                        PaperAccount.replay >= 1,
+                        ~select(AgentRun.user_id)
+                        .where(AgentRun.user_id == PaperAccount.user_id)
+                        .exists(),
                     ),
                 )
                 .on_conflict_do_nothing(index_elements=[AgentRun.user_id])

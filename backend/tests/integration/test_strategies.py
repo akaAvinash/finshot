@@ -493,3 +493,30 @@ def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
     after = find(browser.get(BASE).json()["data"], sid)
     assert after["status"] == "active" and after["draft"] is None
     assert [v["number"] for v in after["versions"]] == [1]
+
+
+def test_command_result_shows_changes_committed_after_it(browser: Browser) -> None:
+    """The result of a command is read fresh: a change committed by another
+    request after this one must not be hidden by this request's own objects."""
+    browser.login()
+    sid = create(browser)["id"]
+    service = browser.client.app.state.strategies  # type: ignore[attr-defined]
+
+    def commit_other_draft() -> None:
+        sql = (
+            "UPDATE strategies SET draft_parameters ="
+            " jsonb_set(draft_parameters, '{name}', '\"Saved elsewhere\"') WHERE id = :id"
+        )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(db_rows, _db(), sql, id=sid).result()
+
+    service._before_result_snapshot = commit_other_draft
+    try:
+        response = send(
+            browser,
+            {"action": "save-draft", "id": sid, "parameters": {**PARAMS, "name": "Mine"}},
+        )
+    finally:
+        service._before_result_snapshot = None
+    assert response.status_code == 200, response.text
+    assert find(response.json(), sid)["draft"]["parameters"]["name"] == "Saved elsewhere"

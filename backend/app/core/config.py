@@ -149,7 +149,15 @@ class Settings(BaseSettings):
             or "#" in value
         ):
             raise ValueError(message)
-        return value
+        # Canonical browser serialization: lowercase scheme and host, default port
+        # dropped. The Origin header is compared to this string byte for byte.
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        default_port = 443 if parts.scheme == "https" else 80
+        port = parts.port
+        suffix = f":{port}" if port is not None and port != default_port else ""
+        return f"{parts.scheme}://{host}{suffix}"
 
     @field_validator("auth_secret_key")
     @classmethod

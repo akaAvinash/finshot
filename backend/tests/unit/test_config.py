@@ -146,6 +146,25 @@ def test_public_origin_accepts_explicit_port(make_settings: SettingsFactory) -> 
 
 
 @pytest.mark.parametrize(
+    ("configured", "canonical"),
+    [
+        ("https://app.example.com:443", "https://app.example.com"),
+        ("http://localhost:80", "http://localhost"),
+        ("HTTPS://App.Example.COM", "https://app.example.com"),
+        ("https://app.example.com:8443", "https://app.example.com:8443"),
+        ("http://localhost:3000", "http://localhost:3000"),
+    ],
+)
+def test_public_origin_is_normalized_to_browser_serialization(
+    make_settings: SettingsFactory, configured: str, canonical: str
+) -> None:
+    from app.core.config import Environment
+
+    settings = make_settings(public_origin=configured, app_env=Environment.TEST)
+    assert settings.public_origin == canonical
+
+
+@pytest.mark.parametrize(
     "origin",
     [
         "https://app.example.com/",

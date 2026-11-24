@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -117,10 +118,14 @@ def test_purge_removes_expired_otp_digests_and_dead_sessions(
 
 
 def test_purge_removes_idle_expired_sessions_that_were_never_revoked(
-    db_url: str, browser: Browser, clock: FakeClock
+    db_url: str, client: Any, clock: FakeClock
 ) -> None:
-    browser.login()
-    clock.advance(3 * 3600)  # idle for 3 hours (30 min idle TTL), still inside the 12 h cap
+    old, recent_idle, active = Browser(client), Browser(client), Browser(client)
+    old.login()
+    clock.advance(3 * 3600)  # `old` went idle 2.5 hours ago: outside retention
+    recent_idle.login()
+    clock.advance(40 * 60)  # `recent_idle` went idle 10 minutes ago: inside retention
+    active.login()
 
     async def run() -> dict[str, int]:
         engine = create_async_engine(db_url)
@@ -133,7 +138,9 @@ def test_purge_removes_idle_expired_sessions_that_were_never_revoked(
             await engine.dispose()
 
     assert asyncio.run(run())["sessions"] == 1
-    assert db_rows(db_url, "SELECT 1 FROM sessions") == []
+    # Only the long-idle session is gone; the recently idle and active ones stay.
+    assert len(db_rows(db_url, "SELECT 1 FROM sessions")) == 2
+    assert active.get("/api/v1/auth/me").status_code == 200
 
 
 def test_requesting_a_code_purges_that_phones_old_challenges(

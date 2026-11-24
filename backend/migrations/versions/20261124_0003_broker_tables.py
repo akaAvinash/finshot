@@ -32,10 +32,12 @@ def upgrade() -> None:
         sa.Column("connected_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("last_synced_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(_PROVIDER_CHECK, name="ck_broker_connections_provider_valid"),
-        sa.CheckConstraint("environment = 'DEMO'", name="ck_broker_connections_environment_demo"),
+        sa.CheckConstraint(_PROVIDER_CHECK, name=op.f("ck_broker_connections_provider_valid")),
         sa.CheckConstraint(
-            "expires_at > connected_at", name="ck_broker_connections_expiry_after_connect"
+            "environment = 'DEMO'", name=op.f("ck_broker_connections_environment_demo")
+        ),
+        sa.CheckConstraint(
+            "expires_at > connected_at", name=op.f("ck_broker_connections_expiry_after_connect")
         ),
         sa.ForeignKeyConstraint(
             ["user_id"],
@@ -54,10 +56,10 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(length=16), nullable=False),
         sa.Column("action", sa.String(length=16), nullable=False),
         sa.Column("at", sa.DateTime(timezone=True), nullable=False),
-        sa.CheckConstraint(_PROVIDER_CHECK, name="ck_broker_events_provider_valid"),
+        sa.CheckConstraint(_PROVIDER_CHECK, name=op.f("ck_broker_events_provider_valid")),
         sa.CheckConstraint(
             "action IN ('connect', 'reconnect', 'sync', 'disconnect')",
-            name="ck_broker_events_action_valid",
+            name=op.f("ck_broker_events_action_valid"),
         ),
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name="fk_broker_events_user_id_users", ondelete="CASCADE"

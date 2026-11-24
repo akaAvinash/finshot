@@ -407,3 +407,20 @@ def _db() -> str:
     import os
 
     return os.environ["TEST_DATABASE_URL"]
+
+
+def test_check_constraints_keep_their_intended_names() -> None:
+    """Migration names are final (op.f), not run through the naming convention
+    a second time, which would produce ck_<table>_ck_<table>_<name>."""
+    rows = db_rows(
+        _db(),
+        "SELECT conname FROM pg_constraint WHERE contype = 'c'"
+        " AND conrelid::regclass::text IN ('broker_connections', 'broker_events')",
+    )
+    assert {r["conname"] for r in rows} == {
+        "ck_broker_connections_provider_valid",
+        "ck_broker_connections_environment_demo",
+        "ck_broker_connections_expiry_after_connect",
+        "ck_broker_events_provider_valid",
+        "ck_broker_events_action_valid",
+    }

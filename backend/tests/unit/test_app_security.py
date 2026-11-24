@@ -124,7 +124,14 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auth/logout",
         "/api/v1/auth/logout-all",
         "/api/v1/auth/sessions",
+        "/api/v1/market/instruments",
+        "/api/v1/market/overview",
+        "/api/v1/market/instruments/{instrumentId}/candles",
     }
+    # Market data is read-only.
+    for path, operations in paths.items():
+        if path.startswith("/api/v1/market/"):
+            assert set(operations) == {"get"}, path
 
 
 def test_access_log_is_json_with_request_id(

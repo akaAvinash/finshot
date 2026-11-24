@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     # proxy set this to 1, otherwise every user shares one rate-limit bucket.
     trusted_proxy_hops: int = Field(default=0, ge=0, le=5)
 
+    # --- Market data (Phase B1, read-only) -------------------------------------
+    # "demo": deterministic demo fixtures, labeled source=demo in responses.
+    # "disabled": every market endpoint returns 503 MARKET_DATA_UNAVAILABLE.
+    # Live feeds are a later phase.
+    market_data_provider: Literal["demo", "disabled"] = "demo"
+    market_data_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

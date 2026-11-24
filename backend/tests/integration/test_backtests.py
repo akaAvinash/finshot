@@ -76,7 +76,17 @@ def contract() -> dict[str, Any]:
 
 
 def check(contract: dict[str, Any], schema_name: str, payload: Any) -> None:
-    schema = {"$ref": f"#/components/schemas/{schema_name}", "components": contract["components"]}
+    validate(contract, {"$ref": f"#/components/schemas/{schema_name}"}, payload)
+
+
+def check_queued(contract: dict[str, Any], payload: Any) -> None:
+    """The POST's own 202 schema, which only allows status `queued`."""
+    responses = contract["paths"][RUNS]["post"]["responses"]
+    validate(contract, responses["202"]["content"]["application/json"]["schema"], payload)
+
+
+def validate(contract: dict[str, Any], schema: dict[str, Any], payload: Any) -> None:
+    schema = {**schema, "components": contract["components"]}
     validator = Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
     errors = list(validator.iter_errors(payload))
     assert not errors, [e.message for e in errors]
@@ -253,7 +263,7 @@ def test_run_lifecycle(client: TestClient, clock: FakeClock, contract: Any) -> N
     response = start(browser, body)
     assert response.status_code == 202, response.text
     queued = response.json()
-    check(contract, "BacktestRun", queued)
+    check_queued(contract, queued)
     assert queued["status"] == "queued"
     assert queued["config"] == body
     assert parse(queued["queuedAt"]) == parse(queued["asOf"]) == clock.now
@@ -278,6 +288,33 @@ def test_run_lifecycle(client: TestClient, clock: FakeClock, contract: Any) -> N
         _db(), "SELECT action, resource FROM audit_events WHERE action LIKE 'backtest.%'"
     )
     assert audit == [{"action": "backtest.queue", "resource": f"backtest:{queued['id']}"}]
+
+
+def test_queued_schema_rejects_other_statuses(contract: Any) -> None:
+    running = {
+        "id": "r",
+        "source": "demo",
+        "environment": "DEMO",
+        "asOf": "2026-11-24T06:00:00Z",
+        "queuedAt": "2026-11-24T06:00:00Z",
+        "config": config(f"{uuid.uuid4()}:draft"),
+        "status": "running",
+    }
+    check(contract, "BacktestRun", running)
+    with pytest.raises(AssertionError):
+        check_queued(contract, running)
+
+
+def test_request_instrument_chooses_the_candles(client: TestClient) -> None:
+    """The revision supplies only its position size; the request picks the candles."""
+    browser = Browser(client)
+    ref = draft_ref(browser)  # a NIFTY 50 strategy with positionSizeBps 900
+    body = config(ref, instrumentId="NSE:SBIN")
+    run_id = start(browser, body).json()["id"]
+    assert work(client)
+    result = browser.get(f"{RUNS}/{run_id}").json()["result"]
+    assert result == expected_result(body, 900)
+    assert result != expected_result(config(ref), 900)
 
 
 def test_completed_run_does_not_pass_the_strategy_check(client: TestClient) -> None:

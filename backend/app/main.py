@@ -32,6 +32,7 @@ from app.core.middleware import (
 from app.db.session import create_engine, create_session_factory
 from app.market.demo import DemoMarketDataProvider
 from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
+from app.strategies.service import StrategyService
 
 logger = structlog.get_logger(__name__)
 
@@ -80,6 +81,11 @@ def create_app(
             ),
             clock=clock,
             timeout_seconds=settings.broker_timeout_seconds,
+        )
+        app.state.strategies = StrategyService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.strategies_enabled,
         )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:

@@ -40,7 +40,8 @@ def test_migrations_match_the_models(db_url: str) -> None:
 
     async def diff() -> list[object]:
         import app.auth.models
-        import app.brokers.models  # noqa: F401
+        import app.brokers.models
+        import app.strategies.models  # noqa: F401
 
         engine = create_async_engine(db_url)
         try:

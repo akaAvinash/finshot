@@ -220,26 +220,19 @@ class AgentService:
 
     # ---------------------------------------------------------------- worker
 
-    async def run_once(self) -> bool:
+    async def discover(self) -> None:
+        """Track accounts that have a replay but no agent run yet."""
+        async with self._factory() as db, db.begin():
+            await _discover(db)
+
+    async def run_once(self, *, discover: bool = True) -> bool:
         """Evaluate one user whose paper data changed since the agents last
-        did. False when every user is up to date."""
+        did. False when every user is up to date. The worker discovers once
+        per poll and passes `discover=False`."""
         async with self._factory() as db, db.begin():
             now = self._clock()
-            await db.execute(
-                insert(AgentRun)
-                .from_select(
-                    ["user_id", "state"],
-                    # Only accounts not yet tracked, so a pass does not
-                    # resubmit every account on every call.
-                    select(PaperAccount.user_id, literal({}, AgentRun.state.type)).where(
-                        PaperAccount.replay >= 1,
-                        ~select(AgentRun.user_id)
-                        .where(AgentRun.user_id == PaperAccount.user_id)
-                        .exists(),
-                    ),
-                )
-                .on_conflict_do_nothing(index_elements=[AgentRun.user_id])
-            )
+            if discover:
+                await _discover(db)
             pending = (
                 select(AgentRun)
                 .join(PaperAccount, PaperAccount.user_id == AgentRun.user_id)
@@ -470,7 +463,8 @@ class AgentService:
         """Evaluate changed users until cancelled, checking every `poll_seconds`."""
         while True:
             try:
-                while await self.run_once():
+                await self.discover()
+                while await self.run_once(discover=False):
                     pass
             except asyncio.CancelledError:
                 raise
@@ -478,6 +472,22 @@ class AgentService:
                 # The database may be briefly down; try again on the next poll.
                 logger.warning("agent_worker_error", error_type=type(exc).__name__)
             await asyncio.sleep(poll_seconds)
+
+
+async def _discover(db: AsyncSession) -> None:
+    await db.execute(
+        insert(AgentRun)
+        .from_select(
+            ["user_id", "state"],
+            # Only accounts not yet tracked, so a pass does not
+            # resubmit every account on every call.
+            select(PaperAccount.user_id, literal({}, AgentRun.state.type)).where(
+                PaperAccount.replay >= 1,
+                ~select(AgentRun.user_id).where(AgentRun.user_id == PaperAccount.user_id).exists(),
+            ),
+        )
+        .on_conflict_do_nothing(index_elements=[AgentRun.user_id])
+    )
 
 
 async def _verified_links(

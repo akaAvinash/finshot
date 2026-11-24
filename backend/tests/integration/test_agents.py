@@ -639,6 +639,18 @@ def test_the_background_worker_evaluates_changes(make_app: Callable[..., TestCli
     assert pass_ended
 
 
+def test_the_worker_discovers_accounts_once_per_poll(client: TestClient) -> None:
+    assigned(client)
+    service = agents(client)
+    assert client.portal is not None
+    # Without discovery an untracked account is not evaluated.
+    assert client.portal.call(lambda: service.run_once(discover=False)) is False
+    assert db_rows(_db(), "SELECT 1 FROM agent_runs") == []
+    client.portal.call(service.discover)
+    assert client.portal.call(lambda: service.run_once(discover=False)) is True
+    assert client.portal.call(lambda: service.run_once(discover=False)) is False
+
+
 def test_a_failure_before_the_run_update_commits_nothing(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

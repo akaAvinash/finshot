@@ -1,0 +1,185 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Strategy Preview API Proposal
+  version: 0.5.0
+  description: >
+    Proposed interface for the strategy workspace demo. The frontend serves
+    deterministic fixtures locally. No backend, backtest engine, broker, or
+    order execution is implemented by this proposal.
+paths:
+  /api/v1/strategies/preview:
+    get:
+      operationId: getStrategies
+      summary: Read the strategy preview workspace
+      responses:
+        '200':
+          description: Dated strategy snapshot or empty demo workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/strategies/preview/commands:
+    post:
+      operationId: sendStrategyCommand
+      summary: Apply a simulated strategy command
+      description: >
+        Commands require a current, authorized demo workspace. Creation and
+        edits save a separate draft with no passing backtest or approved risk
+        review. Activation requires both checks on the exact eligible revision.
+        A new activation creates an immutable version, and activation of a
+        paused unchanged version leaves history intact. Pausing requires an
+        active version. All commands are confined to the demo workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StrategyCommand' }
+      responses:
+        '200':
+          description: Updated strategy snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategySnapshot' }
+        '400':
+          description: Invalid action or strategy parameters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Strategy unavailable in the requesting workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyError' }
+        '409':
+          description: Stale data, invalid status transition, or missing revision approvals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StrategyError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  responses:
+    Forbidden:
+      description: Access to the demo workspace or action was denied.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/StrategyError' }
+    Unavailable:
+      description: The demo workspace is temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/StrategyError' }
+  schemas:
+    StrategyResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/StrategySnapshot' }
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status: { const: empty }
+    StrategySnapshot:
+      type: object
+      required: [source, environment, asOf, strategies]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        strategies:
+          type: array
+          items: { $ref: '#/components/schemas/Strategy' }
+    Strategy:
+      type: object
+      required: [id, status, draft, versions, metrics]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        status: { enum: [draft, active, paused] }
+        draft:
+          oneOf:
+            - { $ref: '#/components/schemas/StrategyRevision' }
+            - { type: 'null' }
+        versions:
+          type: array
+          description: Immutable activated versions, ordered oldest first.
+          items: { $ref: '#/components/schemas/StrategyVersion' }
+        metrics:
+          oneOf:
+            - { $ref: '#/components/schemas/StrategyMetrics' }
+            - { type: 'null' }
+    StrategyRevision:
+      type: object
+      required: [parameters, backtest, riskReview]
+      additionalProperties: false
+      properties:
+        parameters: { $ref: '#/components/schemas/StrategyParameters' }
+        backtest: { enum: [passed, failed, unavailable] }
+        riskReview: { enum: [approved, rejected, pending] }
+    StrategyVersion:
+      type: object
+      required: [number, activatedAt, parameters, backtest, riskReview]
+      additionalProperties: false
+      properties:
+        number: { type: integer, minimum: 1 }
+        activatedAt: { type: string, format: date-time }
+        parameters: { $ref: '#/components/schemas/StrategyParameters' }
+        backtest: { const: passed }
+        riskReview: { const: approved }
+    StrategyParameters:
+      type: object
+      required: [name, description, instrument, timeframe, riskTier, positionSizeBps, stopLossBps]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 3, maxLength: 64 }
+        description: { type: string, maxLength: 240 }
+        instrument: { enum: [NIFTY 50, BANKNIFTY, FINNIFTY, RELIANCE, HDFCBANK, SBIN] }
+        timeframe: { enum: [5m, 15m, 30m, 1h, 1D] }
+        riskTier: { enum: [low, medium, high] }
+        positionSizeBps: { type: integer, minimum: 1, maximum: 10000 }
+        stopLossBps: { type: integer, minimum: 1, maximum: 10000 }
+    StrategyMetrics:
+      type: object
+      required: [pnlPaise, winRateBps]
+      additionalProperties: false
+      properties:
+        pnlPaise:
+          type: integer
+          minimum: -1000000000000
+          maximum: 1000000000000
+          description: Signed INR profit or loss in whole paise.
+        winRateBps: { type: integer, minimum: 0, maximum: 10000 }
+    StrategyCommand:
+      oneOf:
+        - type: object
+          required: [action, parameters]
+          additionalProperties: false
+          properties:
+            action: { const: create }
+            parameters: { $ref: '#/components/schemas/StrategyParameters' }
+        - type: object
+          required: [action, id, parameters]
+          additionalProperties: false
+          properties:
+            action: { const: save-draft }
+            id: { type: string, minLength: 1 }
+            parameters: { $ref: '#/components/schemas/StrategyParameters' }
+        - type: object
+          required: [action, id]
+          additionalProperties: false
+          properties:
+            action: { enum: [activate, pause] }
+            id: { type: string, minLength: 1 }
+    StrategyError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { enum: [INVALID_COMMAND, FORBIDDEN, NOT_FOUND, CONFLICT, UNAVAILABLE] }
+        message: { type: string }

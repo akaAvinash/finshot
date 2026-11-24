@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     broker_provider: Literal["demo", "disabled"] = "demo"
     broker_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
 
+    # --- Strategies (Phase C1) -------------------------------------------------
+    # false: every strategy endpoint returns 503 STRATEGY_UNAVAILABLE.
+    strategies_enabled: bool = True
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

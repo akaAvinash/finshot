@@ -23,22 +23,32 @@ the development kit is the roadmap.
 | PR | Branch | Base | Status |
 |---|---|---|---|
 | #13 Broker endpoints in the API contract | `feat/brokers-contract` | `main` | Contract-only. Awaiting owner review. |
-| Phase B2 demo broker connections | `feat/backend-brokers` | `feat/brokers-contract` | Draft. Retarget to `main` after #13 merges. |
+| #14 Phase B2 demo broker connections | `feat/backend-brokers` | `feat/brokers-contract` | Draft. Retarget to `main` after #13 merges. |
+| #15 Strategy endpoints in the API contract | `feat/strategies-contract` | `feat/backend-brokers` | Contract-only, draft (stacked to avoid `openapi.yaml` conflicts). Awaiting owner review. |
+| Phase C1 strategy drafts and versions | `feat/backend-strategies` | `feat/strategies-contract` | Draft. |
 
-Merge order: #13, then B2 (after retargeting to `main`).
+Merge order: #13 → #14 → #15 → C1. Retarget each to `main` after the one
+before it merges.
 
 ## Blockers
 
-- B2 cannot merge before the contract PR #13.
+- Each PR in the stack depends on the one before it.
+- Strategy activation stays blocked (409) until backtest jobs and a risk
+  review flow exist. Who approves a risk review is an open product decision.
 - Frontend wiring (Next.js same-origin proxy, switching the broker client from
   the mock) is Codex's work and is not done by the backend.
 
 ## Next backend task
 
-Strategy versions (kit order: strategy configs, then backtest jobs, paper
-execution and risk, reconciliation and reports, agents, alerts, hardening).
-Needs its own contract PR first. `contracts/strategies.openapi.yaml` holds the
-frontend's proposal to start from.
+Backtest jobs (kit order: backtest jobs, then paper execution and risk,
+reconciliation and reports, agents, alerts, hardening). Needs its own contract
+PR first; `contracts/backtesting.openapi.yaml` holds the frontend's proposal.
+
+## Known issues
+
+- Migration `0002` (auth) created its check constraints with doubled names
+  (`ck_users_ck_users_phone_format`). Harmless, but a rename migration would
+  tidy it. `0003` and `0004` use `op.f()` and have tests for exact names.
 
 ## Running checks locally (no Docker needed)
 

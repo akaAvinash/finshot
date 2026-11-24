@@ -33,10 +33,12 @@ app/
   api/routes/auth.py /api/v1/auth/* (see contracts/openapi.yaml)
   api/routes/market.py /api/v1/market/* (read-only)
   api/routes/brokers.py /api/v1/brokers/preview* (demo connections)
+  api/routes/strategies.py /api/v1/strategies/preview* (drafts, versions)
   api/router.py      /api/v1 router
   auth/              models, service, signed CSRF tokens, OTP providers, rate limits
   market/            provider interface, demo provider, search, response models
   brokers/           read-only adapter protocol, demo adapter, models, service
+  strategies/        strategy drafts, immutable versions, activation gate
 migrations/          Alembic
 tests/unit           no external services needed
 tests/integration    real Postgres + Redis
@@ -140,6 +142,27 @@ Providers `zerodha` and `fyers`; actions `connect`, `reconnect`, `sync`,
   per-user, per-provider advisory lock and writes a broker event and an audit
   event. An adapter error, timeout (`BROKER_TIMEOUT_SECONDS`) or a sync for a
   different account returns `503 BROKER_UNAVAILABLE` and writes nothing.
+
+## Strategies (Phase C1, no execution)
+
+Implements `GET /api/v1/strategies/preview` and
+`POST /api/v1/strategies/preview/commands` (`create`, `save-draft`,
+`activate`, `pause`) from `contracts/openapi.yaml`.
+
+- **Drafts and versions.** `strategies` holds status and at most one draft
+  (parameters plus `backtest` and `riskReview` checks). `strategy_versions`
+  holds activated versions, numbered from 1, with a SHA-256 of the canonical
+  parameters. A trigger rejects any UPDATE of a version (migration `0004`).
+- **Activation gate.** Activation needs `backtest = passed` and
+  `riskReview = approved` on the candidate. Nothing in the API sets those yet,
+  so activation returns `409 STRATEGY_CONFLICT` until the backtest and risk
+  phases land. Saving a draft resets both checks.
+- **No invented results.** `metrics` is always `null`. No signals, orders or
+  broker calls.
+- **Safety.** Session required (401 first), `session` CSRF token on writes,
+  row lock per command, per-user advisory lock and a 100-strategy limit on
+  `create`, audit event per command. Another user's id is `404`.
+  `STRATEGIES_ENABLED=false` makes both endpoints 503.
 
 ## Run locally
 

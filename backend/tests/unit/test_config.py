@@ -139,7 +139,27 @@ def test_auth_secret_not_in_repr(make_settings: SettingsFactory) -> None:
     assert TEST_SECRET not in repr(make_settings())
 
 
-@pytest.mark.parametrize("origin", ["https://app.example.com/", "app.example.com", "ftp://x"])
+def test_public_origin_accepts_explicit_port(make_settings: SettingsFactory) -> None:
+    assert make_settings(public_origin="https://app.example.com:8443").public_origin.endswith(
+        ":8443"
+    )
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://app.example.com/",
+        "https://app.example.com/app",
+        "https://app.example.com?x=1",
+        "https://app.example.com#frag",
+        "https://user:pw@app.example.com",
+        "https://",
+        "https:///path",
+        "https://app.example.com:notaport",
+        "app.example.com",
+        "ftp://x",
+    ],
+)
 def test_rejects_malformed_public_origin(make_settings: SettingsFactory, origin: str) -> None:
     with pytest.raises(ValidationError, match="PUBLIC_ORIGIN"):
         make_settings(public_origin=origin)

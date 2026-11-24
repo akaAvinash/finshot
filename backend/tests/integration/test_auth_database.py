@@ -116,6 +116,26 @@ def test_purge_removes_expired_otp_digests_and_dead_sessions(
     assert db_rows(db_url, "SELECT count(*) AS n FROM audit_events")[0]["n"] >= 3
 
 
+def test_purge_removes_idle_expired_sessions_that_were_never_revoked(
+    db_url: str, browser: Browser, clock: FakeClock
+) -> None:
+    browser.login()
+    clock.advance(3 * 3600)  # idle for 3 hours (30 min idle TTL), still inside the 12 h cap
+
+    async def run() -> dict[str, int]:
+        engine = create_async_engine(db_url)
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession
+
+            async with AsyncSession(bind=engine) as db:
+                return await purge_expired(db, now=clock.now, idle_ttl=timedelta(minutes=30))
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(run())["sessions"] == 1
+    assert db_rows(db_url, "SELECT 1 FROM sessions") == []
+
+
 def test_requesting_a_code_purges_that_phones_old_challenges(
     db_url: str, browser: Browser, clock: FakeClock
 ) -> None:

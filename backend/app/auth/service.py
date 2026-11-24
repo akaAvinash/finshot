@@ -263,12 +263,20 @@ class AuthService:
                 return None
             sess, user = row
             last_seen = sess.last_seen_at
-            if now - last_seen >= _LAST_SEEN_RESOLUTION:
-                await db.execute(
-                    update(SessionRow).where(SessionRow.id == sess.id).values(last_seen_at=now)
+            # Throttle writes, but never beyond a quarter of the idle TTL, so a
+            # short idle TTL can still be renewed by regular activity.
+            resolution = min(_LAST_SEEN_RESOLUTION, idle / 4)
+            if now - last_seen >= resolution:
+                # GREATEST: a concurrent renewal with a later timestamp must win.
+                renewed = await db.scalar(
+                    update(SessionRow)
+                    .where(SessionRow.id == sess.id)
+                    .values(last_seen_at=func.greatest(SessionRow.last_seen_at, now))
+                    .returning(SessionRow.last_seen_at)
                 )
                 await db.commit()
-                last_seen = now
+                if renewed is not None:
+                    last_seen = renewed
             return SessionInfo(
                 session_id=sess.id,
                 user_id=user.id,
@@ -297,19 +305,28 @@ class AuthService:
         s = self.settings
         ip = self.client_ip(request)
 
-        retry = await self._limiter.cooldown("otp_cooldown", phone, s.otp_resend_cooldown_seconds)
-        if retry is not None:
-            raise _rate_limited(retry)
+        # IP and context limits come first so a throttled caller cannot reserve
+        # the per-phone cooldown and lock out the phone's real owner.
         for kind, subject, limit in (
             ("otp_req_ip", ip, s.rate_limit_otp_request_per_ip),
             ("otp_req_ctx", context_id, s.rate_limit_otp_request_per_context),
-            ("otp_req_phone", phone, s.rate_limit_otp_request_per_phone),
         ):
             retry = await self._limiter.hit(
                 kind, subject, limit, s.rate_limit_otp_request_window_seconds
             )
             if retry is not None:
                 raise _rate_limited(retry)
+        retry = await self._limiter.cooldown("otp_cooldown", phone, s.otp_resend_cooldown_seconds)
+        if retry is not None:
+            raise _rate_limited(retry)
+        retry = await self._limiter.hit(
+            "otp_req_phone",
+            phone,
+            s.rate_limit_otp_request_per_phone,
+            s.rate_limit_otp_request_window_seconds,
+        )
+        if retry is not None:
+            raise _rate_limited(retry)
 
         now = self.clock()
         challenge_id = uuid.uuid4()
@@ -391,6 +408,7 @@ class AuthService:
         # Count the attempt atomically before checking the code. The same UPDATE
         # enforces: unconsumed, unexpired, and under the attempt limit.
         async with self._factory() as db, db.begin():
+            now = self.clock()  # sampled inside the transaction for the expiry check
             challenge = (
                 await db.execute(
                     update(OtpChallenge)

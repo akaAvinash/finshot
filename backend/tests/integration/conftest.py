@@ -1,6 +1,6 @@
 """Fixtures for tests that need real PostgreSQL and Redis.
 
-    TEST_DATABASE_URL=postgresql+asyncpg://user:pw@localhost:5432/tradeo_test
+    TEST_DATABASE_URL=postgresql+asyncpg://user:pw@localhost:5432/tradeo_test \
     TEST_REDIS_URL=redis://localhost:6379/15 pytest
 
 These tests TRUNCATE the auth tables and FLUSHDB the Redis database. Point them

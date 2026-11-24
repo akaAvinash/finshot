@@ -178,12 +178,34 @@ def test_pre_login_token_cannot_authorize_session_writes(browser: Browser) -> No
 
 
 def test_session_token_is_bound_to_its_own_session(browser: Browser, client: TestClient) -> None:
-    a, b = Browser(client), Browser(client)
+    a, b, c = Browser(client), Browser(client), Browser(client)
     a.login()
     b.login(phone=OTHER_PHONE)
-    # Put A's cookie value but B's token in the header, and vice versa: neither works.
-    assert b.post("/api/v1/auth/logout-all", headers=b.headers(csrf=a.csrf)).status_code == 403
-    assert b.post("/api/v1/auth/logout-all").status_code == 204
+    c.get_csrf()  # a valid pre-login token
+    b_session = b.cookie(SESSION)
+
+    def forged(token: str | None) -> int:
+        """B's session cookie with `token` in BOTH the CSRF cookie and the header,
+        so the double-submit equality check passes and only binding can reject."""
+        client.cookies.clear()
+        response = client.post(
+            "/api/v1/auth/logout-all",
+            headers={
+                "Cookie": f"{SESSION}={b_session}; {CSRF}={token}",
+                "X-CSRF-Token": str(token),
+                "Origin": ORIGIN,
+            },
+        )
+        client.cookies.clear()
+        return int(response.status_code)
+
+    # A's validly signed session token, and a validly signed pre-login token,
+    # are both rejected against B's session even though cookie == header.
+    assert forged(a.csrf) == 403
+    assert forged(c.csrf) == 403
+    assert len(db_rows(_db(b), "SELECT 1 FROM sessions WHERE revoked_at IS NULL")) == 2
+    # B's own matching pair is accepted.
+    assert forged(b.csrf) == 204
 
 
 def test_otp_verify_must_come_from_the_requesting_context(client: TestClient) -> None:
@@ -353,7 +375,13 @@ def test_concurrent_verifies_with_the_right_code_create_one_session(client: Test
     browser.get_csrf()
     challenge = browser.request_otp().json()
     client = browser.activate()
-    headers = browser.headers()
+    # Freeze the request credentials before any worker starts, then empty the
+    # shared jar so a successful worker's Set-Cookie cannot change what others send.
+    headers = {
+        **browser.headers(),
+        "Cookie": "; ".join(f"{c.name}={c.value}" for c in browser.jar.jar),
+    }
+    client.cookies.clear()
 
     def attempt(_: int) -> int:
         return client.post(
@@ -388,14 +416,18 @@ def test_otp_request_response_does_not_reveal_whether_an_account_exists(client: 
     known.post("/api/v1/auth/logout")
     fresh = Browser(client)
     fresh.get_csrf()
+    issued: list[str] = []
     for browser, phone in ((known, PHONE), (fresh, "+919123456780")):
         browser.get_csrf()
         response = browser.request_otp(phone)
         assert response.status_code == 202
         assert set(response.json()) == {"challengeId", "expiresAt", "resendAvailableAt"}
-    # Wrong codes look identical for known and unknown phones.
-    a = known.verify(new_id(), "123456")
-    b = fresh.verify(new_id(), "123456")
+        issued.append(response.json()["challengeId"])
+    known_challenge, fresh_challenge = issued
+    # Wrong codes against real challenges look identical for known and unknown phones.
+    a = known.verify(known_challenge, "000000")
+    b = fresh.verify(fresh_challenge, "000000")
+    assert a.status_code == 401
     assert (a.status_code, a.json()["code"], a.json()["message"]) == (
         b.status_code,
         b.json()["code"],
@@ -476,6 +508,22 @@ def test_rate_limit_per_ip_and_per_context(make_app: Any) -> None:
     assert b.request_otp("+919876543201").status_code == 202
     assert b.request_otp("+919876543202").status_code == 202
     assert b.request_otp("+919876543203").status_code == 429
+
+
+def test_throttled_caller_cannot_reserve_another_phones_cooldown(make_app: Any) -> None:
+    client = make_app(
+        otp_resend_cooldown_seconds=300,
+        rate_limit_otp_request_per_context=1,
+        rate_limit_otp_request_per_ip=50,
+        rate_limit_otp_request_per_phone=50,
+    )
+    attacker, owner = Browser(client), Browser(client)
+    attacker.get_csrf()
+    assert attacker.request_otp(OTHER_PHONE).status_code == 202
+    assert attacker.request_otp(PHONE).status_code == 429  # context limit, not cooldown
+    owner.get_csrf()
+    # The real owner of PHONE is not locked out by the throttled attempt.
+    assert owner.request_otp(PHONE).status_code == 202
 
 
 def test_resend_cooldown(make_app: Any) -> None:
@@ -589,14 +637,43 @@ def test_idle_expiry_is_capped_by_absolute_expiry(browser: Browser, clock: FakeC
     assert me["idleExpiresAt"] <= me["expiresAt"]
 
 
+def test_idle_expiry_equals_absolute_expiry_near_the_end(
+    browser: Browser, clock: FakeClock
+) -> None:
+    browser.login()
+    for _ in range(28):  # 700 minutes of activity; 20 minutes left of 12 hours
+        clock.advance(25 * 60)
+        assert browser.get("/api/v1/auth/me").status_code == 200
+    session = browser.get("/api/v1/auth/me").json()["session"]
+    # Idle would be +30 minutes, but the session ends sooner, so the cap applies.
+    assert session["idleExpiresAt"] == session["expiresAt"]
+
+
+def test_short_idle_ttl_is_renewed_by_regular_activity(make_app: Any, clock: FakeClock) -> None:
+    client = make_app(session_idle_ttl_seconds=60)
+    browser = Browser(client)
+    browser.login()
+    for _ in range(6):  # a request every 30 s for 3 minutes, idle TTL is 60 s
+        clock.advance(30)
+        assert browser.get("/api/v1/auth/me").status_code == 200
+    clock.advance(61)
+    assert browser.get("/api/v1/auth/me").status_code == 401
+
+
 def test_login_rotates_an_existing_session(browser: Browser) -> None:
     browser.login()
     old = browser.cookie(SESSION)
+    (old_row,) = db_rows(_db(browser), "SELECT id FROM sessions")
     challenge = browser.request_otp(OTHER_PHONE).json()
     browser.verify(challenge["challengeId"], "123456")
     assert browser.cookie(SESSION) != old
-    rows = db_rows(_db(browser), "SELECT revoked_at FROM sessions ORDER BY created_at")
-    assert rows[0]["revoked_at"] is not None and rows[1]["revoked_at"] is None
+    rows = {
+        r["id"]: r["revoked_at"]
+        for r in db_rows(_db(browser), "SELECT id, revoked_at FROM sessions")
+    }
+    assert len(rows) == 2
+    assert rows[old_row["id"]] is not None
+    assert [v for k, v in rows.items() if k != old_row["id"]] == [None]
 
 
 def test_tenant_isolation_for_sessions(client: TestClient) -> None:
@@ -631,6 +708,19 @@ def test_sessions_list_excludes_revoked_and_expired(client: TestClient, clock: F
     assert len(a.get("/api/v1/auth/sessions").json()["sessions"]) == 1
 
 
+def test_sessions_list_excludes_idle_expired_sessions(client: TestClient, clock: FakeClock) -> None:
+    stale, live = Browser(client), Browser(client)
+    stale.login()
+    clock.advance(31 * 60)  # `stale` is now past its idle timeout but never revoked
+    live.login()
+    sessions = live.get("/api/v1/auth/sessions").json()["sessions"]
+    assert len(sessions) == 1 and sessions[0]["current"] is True
+    assert (
+        db_rows(_db(live), "SELECT count(*) AS n FROM sessions WHERE revoked_at IS NULL")[0]["n"]
+        == 2
+    )
+
+
 def test_session_summary_has_no_secrets(browser: Browser) -> None:
     browser.login()
     token = browser.cookie(SESSION)
@@ -644,7 +734,9 @@ def test_session_summary_has_no_secrets(browser: Browser) -> None:
 
 def test_audit_events_record_actions_without_secrets(browser: Browser, client: TestClient) -> None:
     browser.login()
-    browser.post("/api/v1/auth/logout-all")
+    session_token = browser.cookie(SESSION)
+    assert session_token and len(session_token) >= 32
+    assert browser.post("/api/v1/auth/logout-all").status_code == 204
     wrong = Browser(client)
     wrong.get_csrf()
     challenge = wrong.request_otp().json()
@@ -655,7 +747,7 @@ def test_audit_events_record_actions_without_secrets(browser: Browser, client: T
     for expected in ("otp_requested", "login_succeeded", "logout_all", "otp_verify_failed"):
         assert expected in actions
     blob = json.dumps(rows, default=str)
-    for secret in (PHONE, "9876543210", "123456", browser.cookie(SESSION) or "?"):
+    for secret in (PHONE, "9876543210", "123456", session_token):
         assert secret not in blob
     login = next(r for r in rows if r["action"] == "login_succeeded")
     assert login["user_id"] is not None and login["actor"].startswith("user:")

@@ -16,7 +16,11 @@ from app.auth.models import Session as SessionRow
 
 
 async def purge_expired(
-    db: AsyncSession, *, now: datetime | None = None, keep: timedelta = timedelta(hours=1)
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    keep: timedelta = timedelta(hours=1),
+    idle_ttl: timedelta = timedelta(minutes=30),
 ) -> dict[str, int]:
     """Delete OTP challenges and sessions that ended more than `keep` ago.
 
@@ -26,7 +30,11 @@ async def purge_expired(
     otp = await db.execute(delete(OtpChallenge).where(OtpChallenge.expires_at < cutoff))
     sessions = await db.execute(
         delete(SessionRow).where(
-            or_(SessionRow.expires_at < cutoff, SessionRow.revoked_at < cutoff)
+            or_(
+                SessionRow.expires_at < cutoff,
+                SessionRow.revoked_at < cutoff,
+                SessionRow.last_seen_at + idle_ttl < cutoff,  # ended by idle expiry
+            )
         )
     )
     await db.commit()
@@ -43,7 +51,12 @@ async def _main() -> None:
     engine = create_engine(get_settings())
     try:
         async with create_session_factory(engine)() as db:
-            print(await purge_expired(db))
+            print(
+                await purge_expired(
+                    db,
+                    idle_ttl=timedelta(seconds=get_settings().session_idle_ttl_seconds),
+                )
+            )
     finally:
         await engine.dispose()
 

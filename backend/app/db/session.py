@@ -23,6 +23,8 @@ def create_engine(settings: Settings) -> AsyncEngine:
         max_overflow=settings.database_max_overflow,
         pool_timeout=settings.database_pool_timeout_seconds,
         pool_pre_ping=True,
+        # Bound values (phone numbers) must never appear in exception text or logs.
+        hide_parameters=True,
         connect_args={
             "timeout": settings.database_pool_timeout_seconds,
             "server_settings": {

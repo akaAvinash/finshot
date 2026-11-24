@@ -9,6 +9,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -131,8 +132,23 @@ class Settings(BaseSettings):
     @field_validator("public_origin")
     @classmethod
     def _validate_public_origin(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")) or value.endswith("/") or "?" in value:
-            raise ValueError("PUBLIC_ORIGIN must be scheme://host[:port] with no trailing slash")
+        message = "PUBLIC_ORIGIN must be scheme://host[:port] with no path, query or fragment"
+        try:
+            parts = urlsplit(value)
+            parts.port  # noqa: B018 - raises ValueError on a malformed port
+        except ValueError as exc:
+            raise ValueError(message) from exc
+        if (
+            parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or "@" in parts.netloc
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or "?" in value
+            or "#" in value
+        ):
+            raise ValueError(message)
         return value
 
     @field_validator("auth_secret_key")

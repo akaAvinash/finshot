@@ -1,14 +1,16 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.6.0
+  version: 0.7.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
-    strategy versions (no execution) and demo backtest jobs (simulated data
-    only). The frontend uses deterministic demo responses in
+    strategy versions with automatic backtest and risk checks, demo backtest
+    jobs (simulated data only) and a paper trading engine (simulated fills
+    over demo data, no broker). The frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
-    a deployed backend. No endpoint here places, modifies or cancels orders.
+    a deployed backend. No endpoint here places, modifies or cancels a real
+    order; paper orders exist only in the server's paper ledger.
 tags:
   - name: Markets
     description: NSE instrument reference data, quotes and historical candles.
@@ -28,9 +30,17 @@ tags:
     description: >
       Per-user demo backtest runs over the server's synthetic daily candles,
       queued and completed by a server-side worker. No market data provider,
-      broker or order is involved, and a completed run never certifies a
-      strategy for activation. Promoted from `contracts/backtesting.openapi.yaml`
-      with the same paths and shapes, plus session, CSRF and error semantics.
+      broker or order is involved. A completed run of a strategy's current
+      draft sets that draft's `backtest` check (see `sendStrategyCommand`).
+      Promoted from `contracts/backtesting.openapi.yaml` with the same paths
+      and shapes, plus session, CSRF and error semantics.
+  - name: Paper trading
+    description: >
+      One paper engine per user that replays the server's demo daily candles
+      for an assigned active strategy, with a deterministic risk engine and a
+      halt (kill switch). Simulated fills only: no broker, live data or real
+      order. Promoted from `contracts/auto-trading.openapi.yaml` with session,
+      CSRF and error semantics; see the operations for the differences.
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -506,11 +516,13 @@ paths:
         snapshot. No orders are placed and nothing runs against a broker.
 
         - `create` adds a strategy with status `draft` and a draft whose
-          `backtest` is `unavailable` and `riskReview` is `pending`. A user
-          can hold at most 100 strategies; beyond that `create` returns `409`.
-        - `save-draft` replaces the strategy's draft (allowed in any status)
-          and resets its checks to `unavailable` and `pending`. An active or
-          paused strategy keeps running its latest version meanwhile.
+          `backtest` is `unavailable` and whose `riskReview` is set by the risk
+          rule below. A user can hold at most 100 strategies; beyond that
+          `create` returns `409`.
+        - `save-draft` replaces the strategy's draft (allowed in any status),
+          resets its `backtest` to `unavailable` and sets `riskReview` by the
+          risk rule. An active or paused strategy keeps running its latest
+          version meanwhile.
         - `activate` requires the strategy not to be `active`. The candidate is
           the draft if there is one, otherwise the latest version. The
           candidate needs `backtest: passed` and `riskReview: approved`,
@@ -520,9 +532,30 @@ paths:
           back to `active`; history is unchanged.
         - `pause` requires status `active`.
 
-        Until backtest jobs and a risk review flow exist, drafts stay
-        `unavailable`/`pending`, so `activate` returns `409` for every
-        strategy. Parameters are trimmed (`name`, `description`) before
+        Both checks are automatic server rules; there is no manual approval.
+
+        **Risk rule.** `riskReview` is `approved` when `positionSizeBps` and
+        `stopLossBps` are within the draft's `riskTier` limits, otherwise
+        `rejected`. `pending` is no longer emitted.
+
+        | riskTier | max positionSizeBps | max stopLossBps | min maxDrawdownBps |
+        |----------|---------------------|-----------------|--------------------|
+        | low      | 600                 | 100             | -500               |
+        | medium   | 1000                | 200             | -1000              |
+        | high     | 1500                | 300             | -2000              |
+
+        **Backtest rule.** When a backtest run of revision `draft` completes
+        and the strategy's draft still has the same parameters the run copied,
+        the draft's `backtest` becomes `passed` if all of these hold, otherwise
+        `failed`: at least 10 out-of-sample sessions (equity points), at least
+        one trade, `netPnlPaise` at least 0, and `maxDrawdownBps` at least the
+        tier's minimum above. The latest such completion wins. Runs of a
+        version, failed runs and runs whose parameters no longer match the
+        draft do not change it. Thresholds are fixed server configuration
+        examples, not investment advice; demo candles are synthetic. Existing
+        drafts are re-evaluated by these rules when this is deployed.
+
+        Parameters are trimmed (`name`, `description`) before
         validation. Requires a valid session and a `session` CSRF token; a
         missing or stale session returns `401` before the CSRF check. An
         unknown `id`, or one that belongs to another user, returns `404`.
@@ -635,8 +668,10 @@ paths:
         The revision's parameters are copied when the run is queued, so later
         draft edits do not change it.
 
-        A completed run does not change the strategy's `backtest` check:
-        activation stays blocked until a reviewed pass/fail policy exists.
+        A completed run of revision `draft` sets the draft's `backtest` check
+        by the backtest rule in `sendStrategyCommand`, provided the draft's
+        parameters still equal the ones the run copied. Runs of a version never
+        change a check.
         At most three runs per user may be `queued` or `running`; another
         start returns `409`. Requires a valid session and a `session` CSRF
         token; a missing or stale session returns `401` before the CSRF check.
@@ -705,6 +740,124 @@ paths:
           $ref: '#/components/responses/BacktestNotFound'
         '503':
           $ref: '#/components/responses/BacktestUnavailable'
+  /api/v1/auto-trading/paper:
+    get:
+      operationId: getPaperTrading
+      tags: [Paper trading]
+      summary: Read the paper trading workspace
+      description: |
+        Returns the caller's paper trading workspace. Paper trading replays
+        the deterministic demo daily candles; no broker, live market data or
+        real order is involved.
+
+        - `status: empty` (with no `data`) when the caller has no active
+          strategy and has never assigned one. Otherwise `ready`.
+        - `strategies` lists the caller's active strategies, oldest first,
+          each with its latest version.
+        - `orders` holds the 20 most recent paper orders, newest first.
+          `trades` holds the 50 most recent paper fills, newest first.
+          `events` holds the 50 most recent events in chronological order.
+
+        `stale` is reserved and not emitted.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's paper workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperResult'
+        '401':
+          $ref: '#/components/responses/PaperUnauthenticated'
+        '503':
+          $ref: '#/components/responses/PaperUnavailable'
+  /api/v1/auto-trading/paper/commands:
+    post:
+      operationId: sendPaperCommand
+      tags: [Paper trading]
+      summary: Apply a paper engine command
+      description: |
+        Applies one command to the caller's paper engine and returns the
+        updated workspace. No command places a real order.
+
+        Commands (`409 PAPER_CONFLICT` when the state does not allow it):
+        - `assign` needs the engine `idle` and `strategyId` to be one of the
+          caller's active strategies. It pins that strategy's latest version
+          and starts a fresh replay: cash back to the paper capital, no
+          position, no orders, first session. Assigning the strategy that is
+          already assigned is a no-op unless its replay has finished.
+        - `start` needs the engine `idle`, an assigned strategy that is still
+          active, an unfinished replay and risk `status: approved`.
+        - `pause` needs the engine `running`; it becomes `idle`. Queued orders
+          are kept.
+        - `halt` (kill switch) needs `confirmation: STOP` and the engine not
+          `halted`. It cancels every queued order and sets `halted`. Any open
+          position is kept. It does not depend on any agent.
+        - `reset` needs the engine `halted`; it becomes `idle`.
+
+        While `running`, a server-side worker advances the replay by one demo
+        session per tick (every few seconds). For each session, in order:
+        1. A queued order fills at the session's open, rounded to whole
+           paise, with `slippageBps` against the order (buys round up, sells
+           round down). Fees are `feeBps` of notional, rounded up.
+        2. If a position is open and the session's low reaches the stop price
+           (entry price less the version's `stopLossBps`, rounded down), the
+           position is sold at the lower of the open and the stop price, less
+           slippage.
+        3. At the close the signal is evaluated as in backtests: long when this
+           session's close is above the average of the last three closes
+           (this one included). Long with no position and no queued order
+           queues a buy for the next open, if the risk engine allows it. Not
+           long with an open position queues a sell for the next open.
+        4. On the last session of the history any open position is sold at the
+           close less slippage, queued orders are cancelled, the replay is
+           finished and the engine becomes `idle`.
+
+        Risk engine (deterministic, server-side): a buy is queued only while
+        the session's realised loss is below `lossLimitPaise` and its fills are
+        below `tradeLimit`. The session's realised loss is the negated sum of
+        its fills' `pnlPaise`, floored at zero. Quantity is sized at the
+        decision close plus slippage: the smaller of the largest quantity
+        whose notional plus entry fee fits `positionSizeBps` of cash (rounded
+        down) and the largest quantity whose loss from that price to its stop
+        price stays within `perTradeRiskPaise`. If the open gaps up so the fill
+        plus fees would exceed cash, the quantity is reduced to fit; if that
+        leaves zero the order is cancelled. A blocked or zero-quantity buy is
+        recorded as an event instead of an order. Paper limits are fixed configuration
+        examples, not recommendations: capital ₹25,000, daily loss ₹2,500,
+        10 fills per session, per-trade risk 1% of capital, 3 bps fees and
+        5 bps slippage.
+
+        Every applied command and every fill writes an event. Requires a valid
+        session and a `session` CSRF token; a missing or stale session returns
+        `401` before the CSRF check.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaperCommand'
+      responses:
+        '200':
+          description: The updated paper workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaperSnapshot'
+        '400':
+          $ref: '#/components/responses/PaperInvalidRequest'
+        '401':
+          $ref: '#/components/responses/PaperUnauthenticated'
+        '403':
+          $ref: '#/components/responses/PaperCsrfFailed'
+        '409':
+          $ref: '#/components/responses/PaperConflict'
+        '503':
+          $ref: '#/components/responses/PaperUnavailable'
 components:
   securitySchemes:
     sessionCookie:
@@ -1134,6 +1287,7 @@ components:
           enum: [passed, failed, unavailable]
         riskReview:
           enum: [approved, rejected, pending]
+          description: '`pending` is reserved and no longer emitted.'
     StrategyVersion:
       type: object
       required: [number, activatedAt, parameters, backtest, riskReview]
@@ -1680,6 +1834,277 @@ components:
           enum: [INVALID_REQUEST, UNKNOWN_INSTRUMENT, MARKET_DATA_UNAVAILABLE]
         message:
           type: string
+    PaperResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status:
+              enum: [ready, stale]
+            data:
+              $ref: '#/components/schemas/PaperSnapshot'
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status:
+              const: empty
+    PaperSnapshot:
+      type: object
+      required: [source, environment, asOf, engine, strategies, strategyId, agent, risk, account, replay, orders, trades, events]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: PAPER
+        asOf:
+          type: string
+          format: date-time
+        engine:
+          enum: [idle, running, halted]
+        strategies:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaperStrategy'
+        strategyId:
+          description: The assigned strategy, or null before the first assignment.
+          type: [string, 'null']
+          maxLength: 64
+        agent:
+          type: object
+          required: [name, ready]
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+              minLength: 1
+            ready:
+              type: boolean
+              description: >
+                True when a strategy is assigned, is still active and its
+                replay has not finished.
+        risk:
+          $ref: '#/components/schemas/PaperRisk'
+        account:
+          $ref: '#/components/schemas/PaperAccount'
+        replay:
+          $ref: '#/components/schemas/PaperReplay'
+        orders:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/PaperOrder'
+        trades:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/PaperTrade'
+        events:
+          type: array
+          maxItems: 50
+          description: The most recent events, in chronological order.
+          items:
+            $ref: '#/components/schemas/PaperEvent'
+    PaperStrategy:
+      type: object
+      required: [id, name, instrument, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+        instrument:
+          type: string
+          minLength: 1
+        version:
+          type: integer
+          minimum: 1
+          description: >
+            For listed strategies, the latest version. The assigned strategy
+            keeps the version pinned when it was assigned.
+    PaperRisk:
+      type: object
+      required: [status, dailyLossPaise, lossLimitPaise, tradesToday, tradeLimit]
+      additionalProperties: false
+      properties:
+        status:
+          enum: [approved, blocked]
+          description: >
+            `blocked` while the engine is halted, or the current session's
+            realised loss has reached `lossLimitPaise`, or its fills have
+            reached `tradeLimit`.
+        dailyLossPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        lossLimitPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        tradesToday:
+          type: integer
+          minimum: 0
+        tradeLimit:
+          type: integer
+          minimum: 1
+    PaperAccount:
+      type: object
+      required: [capitalPaise, cashPaise, equityPaise, positionQuantity, perTradeRiskPaise]
+      additionalProperties: false
+      properties:
+        capitalPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        cashPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        equityPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+          description: Cash plus the open position at the last replayed close.
+        positionQuantity:
+          type: integer
+          minimum: 0
+        perTradeRiskPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+    PaperReplay:
+      type: object
+      required: [sessionDate, sessionsDone, sessionsTotal, finished]
+      additionalProperties: false
+      properties:
+        sessionDate:
+          description: The last replayed demo session, or null before the first.
+          type: [string, 'null']
+          format: date
+        sessionsDone:
+          type: integer
+          minimum: 0
+        sessionsTotal:
+          type: integer
+          minimum: 0
+        finished:
+          type: boolean
+    PaperOrder:
+      type: object
+      required: [id, instrument, side, quantity, limitPaise, approval, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        instrument:
+          type: string
+          minLength: 1
+        side:
+          enum: [Buy, Sell]
+        quantity:
+          type: integer
+          minimum: 1
+        limitPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+          description: The close the order was decided on; orders fill at the next open.
+        approval:
+          enum: [approved, pending]
+          description: Orders are created only after the risk engine approves; `pending` is reserved.
+        status:
+          enum: [queued, held, filled, cancelled]
+          description: '`held` is reserved and not emitted.'
+    PaperTrade:
+      type: object
+      required: [id, instrument, side, quantity, fillPaise, feesPaise, pnlPaise, filledAt, reason]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        instrument:
+          type: string
+          minLength: 1
+        side:
+          enum: [Buy, Sell]
+        quantity:
+          type: integer
+          minimum: 1
+        fillPaise:
+          type: integer
+          minimum: 1
+        feesPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        pnlPaise:
+          type: integer
+          description: >
+            Realised P&L of this fill after both sides' fees, in paise. Zero
+            for a buy, which opens a position.
+        filledAt:
+          type: string
+          format: date-time
+          description: The demo session's time.
+        reason:
+          enum: [entry, signal-exit, stop-loss, end-of-replay]
+    PaperEvent:
+      type: object
+      required: [id, at, message]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        at:
+          type: string
+          format: date-time
+        message:
+          type: string
+          minLength: 1
+    PaperCommand:
+      oneOf:
+        - type: object
+          required: [action, strategyId]
+          additionalProperties: false
+          properties:
+            action:
+              const: assign
+            strategyId:
+              type: string
+              minLength: 1
+              maxLength: 64
+        - type: object
+          required: [action]
+          additionalProperties: false
+          properties:
+            action:
+              enum: [start, pause, reset]
+        - type: object
+          required: [action, confirmation]
+          additionalProperties: false
+          properties:
+            action:
+              const: halt
+            confirmation:
+              const: STOP
+    NonnegativePaise:
+      type: integer
+      minimum: 0
+      description: Nonnegative amount in INR minor units (paise).
+    PaperError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - CSRF_FAILED
+            - PAPER_CONFLICT
+            - PAPER_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
   responses:
     AuthInvalidRequest:
       description: The request body is missing, malformed or has an invalid field.
@@ -1911,3 +2336,48 @@ components:
           example:
             code: BACKTEST_UNAVAILABLE
             message: Backtests are temporarily unavailable. Try again shortly.
+    PaperInvalidRequest:
+      description: Malformed command body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    PaperUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    PaperCsrfFailed:
+      description: The CSRF token is missing or wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: CSRF_FAILED
+            message: The request could not be verified. Reload and try again.
+    PaperConflict:
+      description: The command does not fit the engine's state, or the strategy cannot be assigned.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: PAPER_CONFLICT
+            message: Pause or reset the paper engine before assigning a strategy.
+    PaperUnavailable:
+      description: Paper trading is disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: PAPER_UNAVAILABLE
+            message: Paper trading is temporarily unavailable. Try again shortly.

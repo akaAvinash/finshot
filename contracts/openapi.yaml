@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.4.0
+  version: 0.5.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
-    authentication and the demo broker workspace (no real broker access). The frontend uses deterministic demo responses in
+    authentication, the demo broker workspace (no real broker access) and
+    strategy versions (no execution). The frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels orders.
 tags:
@@ -15,6 +16,12 @@ tags:
       Demo broker connections stored per user on the server. No provider
       requests, OAuth flows or broker credentials. Promoted from
       `contracts/brokers.openapi.yaml` with the same paths and shapes, plus
+      session, CSRF and error semantics.
+  - name: Strategies
+    description: >
+      Per-user strategy drafts and immutable activated versions, stored on the
+      server. No signals, orders or execution. Promoted from
+      `contracts/strategies.openapi.yaml` with the same paths and shapes, plus
       session, CSRF and error semantics.
   - name: Auth
     description: |
@@ -457,6 +464,88 @@ paths:
           $ref: '#/components/responses/BrokerActionConflict'
         '503':
           $ref: '#/components/responses/BrokerUnavailable'
+  /api/v1/strategies/preview:
+    get:
+      operationId: getStrategies
+      tags: [Strategies]
+      summary: Read the signed-in user's strategies
+      description: >
+        Returns the caller's strategies, oldest first. A new user has none and
+        gets `status: ready` with an empty `strategies` list. The demo source
+        always returns `status: ready`; `stale` and `empty` are reserved and
+        not emitted. `metrics` is always null until paper execution exists:
+        the server never reports profit or win rate it has not measured.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's strategy snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyResult'
+        '401':
+          $ref: '#/components/responses/StrategyUnauthenticated'
+        '503':
+          $ref: '#/components/responses/StrategyUnavailable'
+  /api/v1/strategies/preview/commands:
+    post:
+      operationId: sendStrategyCommand
+      tags: [Strategies]
+      summary: Apply a strategy command
+      description: |
+        Applies one command to the caller's strategies and returns the updated
+        snapshot. No orders are placed and nothing runs against a broker.
+
+        - `create` adds a strategy with status `draft` and a draft whose
+          `backtest` is `unavailable` and `riskReview` is `pending`. A user
+          can hold at most 100 strategies; beyond that `create` returns `409`.
+        - `save-draft` replaces the strategy's draft (allowed in any status)
+          and resets its checks to `unavailable` and `pending`. An active or
+          paused strategy keeps running its latest version meanwhile.
+        - `activate` requires the strategy not to be `active`. The candidate is
+          the draft if there is one, otherwise the latest version. The
+          candidate needs `backtest: passed` and `riskReview: approved`,
+          otherwise `409`. With a draft, activation appends a new immutable
+          version (numbered from 1, never reused or edited) and clears the
+          draft. Without a draft (a paused strategy) it only sets the status
+          back to `active`; history is unchanged.
+        - `pause` requires status `active`.
+
+        Until backtest jobs and a risk review flow exist, drafts stay
+        `unavailable`/`pending`, so `activate` returns `409` for every
+        strategy. Parameters are trimmed (`name`, `description`) before
+        validation. Requires a valid session and a `session` CSRF token; a
+        missing or stale session returns `401` before the CSRF check. An
+        unknown `id`, or one that belongs to another user, returns `404`.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StrategyCommand'
+      responses:
+        '200':
+          description: Updated strategy snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategySnapshot'
+        '400':
+          $ref: '#/components/responses/StrategyInvalidRequest'
+        '401':
+          $ref: '#/components/responses/StrategyUnauthenticated'
+        '403':
+          $ref: '#/components/responses/StrategyCsrfFailed'
+        '404':
+          $ref: '#/components/responses/StrategyNotFound'
+        '409':
+          $ref: '#/components/responses/StrategyConflict'
+        '503':
+          $ref: '#/components/responses/StrategyUnavailable'
 components:
   securitySchemes:
     sessionCookie:
@@ -816,6 +905,211 @@ components:
         requestId:
           type: string
           description: Same value as the `X-Request-ID` response header.
+    StrategyResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status:
+              enum: [ready, stale]
+            data:
+              $ref: '#/components/schemas/StrategySnapshot'
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status:
+              const: empty
+    StrategySnapshot:
+      type: object
+      required: [source, environment, asOf, strategies]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        asOf:
+          type: string
+          format: date-time
+        strategies:
+          type: array
+          maxItems: 100
+          description: The caller's strategies, oldest first.
+          items:
+            $ref: '#/components/schemas/Strategy'
+    Strategy:
+      type: object
+      required: [id, status, draft, versions, metrics]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Opaque identifier.
+        status:
+          enum: [draft, active, paused]
+        draft:
+          oneOf:
+            - $ref: '#/components/schemas/StrategyRevision'
+            - type: 'null'
+        versions:
+          type: array
+          description: Immutable activated versions, ordered oldest first.
+          items:
+            $ref: '#/components/schemas/StrategyVersion'
+        metrics:
+          description: Always null until paper execution produces measured results.
+          oneOf:
+            - $ref: '#/components/schemas/StrategyMetrics'
+            - type: 'null'
+    StrategyRevision:
+      type: object
+      required: [parameters, backtest, riskReview]
+      additionalProperties: false
+      properties:
+        parameters:
+          $ref: '#/components/schemas/StrategyParameters'
+        backtest:
+          enum: [passed, failed, unavailable]
+        riskReview:
+          enum: [approved, rejected, pending]
+    StrategyVersion:
+      type: object
+      required: [number, activatedAt, parameters, backtest, riskReview]
+      additionalProperties: false
+      properties:
+        number:
+          type: integer
+          minimum: 1
+        activatedAt:
+          type: string
+          format: date-time
+        parameters:
+          $ref: '#/components/schemas/StrategyParameters'
+        backtest:
+          const: passed
+        riskReview:
+          const: approved
+    StrategyParameters:
+      type: object
+      required: [name, description, instrument, timeframe, riskTier, positionSizeBps, stopLossBps]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: Stored trimmed. Commands use StrategyParametersInput.
+        description:
+          type: string
+          maxLength: 240
+          description: Stored trimmed. Commands use StrategyParametersInput.
+        instrument:
+          enum: [NIFTY 50, BANKNIFTY, FINNIFTY, RELIANCE, HDFCBANK, SBIN]
+        timeframe:
+          enum: [5m, 15m, 30m, 1h, 1D]
+        riskTier:
+          enum: [low, medium, high]
+        positionSizeBps:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        stopLossBps:
+          type: integer
+          minimum: 1
+          maximum: 10000
+    StrategyParametersInput:
+      description: >-
+        Parameters as sent in a command. The server trims surrounding
+        whitespace from name and description before storing them, so the
+        length limits apply to the trimmed values: name 3-64 characters,
+        description up to 240. The patterns encode exactly those limits.
+        Stored and returned values use StrategyParameters.
+      type: object
+      required: [name, description, instrument, timeframe, riskTier, positionSizeBps, stopLossBps]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: '^\s*\S[\s\S]{1,62}\S\s*$'
+        description:
+          type: string
+          pattern: '^\s*(\S([\s\S]{0,238}\S)?)?\s*$'
+        instrument:
+          $ref: '#/components/schemas/StrategyParameters/properties/instrument'
+        timeframe:
+          $ref: '#/components/schemas/StrategyParameters/properties/timeframe'
+        riskTier:
+          $ref: '#/components/schemas/StrategyParameters/properties/riskTier'
+        positionSizeBps:
+          $ref: '#/components/schemas/StrategyParameters/properties/positionSizeBps'
+        stopLossBps:
+          $ref: '#/components/schemas/StrategyParameters/properties/stopLossBps'
+    StrategyMetrics:
+      type: object
+      required: [pnlPaise, winRateBps]
+      additionalProperties: false
+      properties:
+        pnlPaise:
+          type: integer
+          minimum: -1000000000000
+          maximum: 1000000000000
+          description: Signed INR profit or loss in whole paise.
+        winRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+    StrategyCommand:
+      oneOf:
+        - type: object
+          required: [action, parameters]
+          additionalProperties: false
+          properties:
+            action:
+              const: create
+            parameters:
+              $ref: '#/components/schemas/StrategyParametersInput'
+        - type: object
+          required: [action, id, parameters]
+          additionalProperties: false
+          properties:
+            action:
+              const: save-draft
+            id:
+              type: string
+              minLength: 1
+            parameters:
+              $ref: '#/components/schemas/StrategyParametersInput'
+        - type: object
+          required: [action, id]
+          additionalProperties: false
+          properties:
+            action:
+              enum: [activate, pause]
+            id:
+              type: string
+              minLength: 1
+    StrategyError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - CSRF_FAILED
+            - STRATEGY_NOT_FOUND
+            - STRATEGY_CONFLICT
+            - STRATEGY_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     InstrumentId:
       type: string
       pattern: '^NSE:[A-Z0-9_.&-]+$'
@@ -1091,3 +1385,61 @@ components:
           example:
             code: BROKER_UNAVAILABLE
             message: Broker accounts are temporarily unavailable. Try again shortly.
+    StrategyInvalidRequest:
+      description: Malformed command or invalid parameters.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    StrategyUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    StrategyCsrfFailed:
+      description: The CSRF token is missing or wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: CSRF_FAILED
+            message: The request could not be verified. Reload and try again.
+    StrategyNotFound:
+      description: No strategy with this id belongs to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: STRATEGY_NOT_FOUND
+            message: This strategy is not available.
+    StrategyConflict:
+      description: >
+        The command does not fit the strategy's state: activating an active
+        strategy, activating without a passing backtest and approved risk
+        review, pausing a strategy that is not active, or creating beyond the
+        per-user limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: STRATEGY_CONFLICT
+            message: A passing backtest and an approved risk review are required.
+    StrategyUnavailable:
+      description: The strategy workspace is disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: STRATEGY_UNAVAILABLE
+            message: Strategies are temporarily unavailable. Try again shortly.

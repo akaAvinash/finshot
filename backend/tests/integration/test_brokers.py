@@ -465,3 +465,34 @@ def test_contract_accepts_both_providers_disconnected_and_rejects_extras(contrac
         check(contract, "BrokerSnapshot", {**snapshot, "extra": 1})
     with pytest.raises(AssertionError):
         check(contract, "BrokerResult", {"status": "empty", "data": 123})
+
+
+def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
+    """An action committed between the snapshot's two reads must not show up
+    in one read and not the other."""
+    browser.login()
+    act(browser, "zerodha", "connect")
+    service = browser.client.app.state.brokers  # type: ignore[attr-defined]
+    user_id = db_rows(_db(), "SELECT id FROM users")[0]["id"]
+
+    def commit_disconnect() -> None:
+        sql = (
+            "WITH gone AS (DELETE FROM broker_connections WHERE user_id = :u RETURNING user_id)"
+            " INSERT INTO broker_events (user_id, provider, action, at)"
+            " SELECT user_id, 'zerodha', 'disconnect', now() FROM gone"
+        )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(db_rows, _db(), sql, u=user_id).result()
+
+    service._between_snapshot_reads = commit_disconnect
+    try:
+        snapshot = browser.get(BASE).json()["data"]
+    finally:
+        service._between_snapshot_reads = None
+    # The state before the disconnect: connected, and no disconnect event.
+    assert account(snapshot, "zerodha") is not None
+    assert [e["action"] for e in snapshot["events"]] == ["connect"]
+    # The next read sees the state after it.
+    after = browser.get(BASE).json()["data"]
+    assert account(after, "zerodha") is None
+    assert [e["action"] for e in after["events"]] == ["connect", "disconnect"]

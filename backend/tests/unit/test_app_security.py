@@ -110,6 +110,17 @@ def test_unhandled_errors_return_generic_500(make_settings: SettingsFactory) -> 
     assert "hunter2" not in response.text
 
 
+def test_openapi_documents_400_not_422(client: TestClient) -> None:
+    """Invalid requests return 400 INVALID_REQUEST, so no operation lists a 422."""
+    document = client.get("/openapi.json").json()
+    for path, operations in document["paths"].items():
+        for method, operation in operations.items():
+            assert "422" not in operation["responses"], (method, path)
+    assert "HTTPValidationError" not in document["components"]["schemas"]
+    command = document["paths"]["/api/v1/auto-trading/paper/commands"]["post"]
+    assert set(command["responses"]) == {"200", "400", "401", "403", "409", "503"}
+
+
 def test_no_order_routes_exist(client: TestClient) -> None:
     """Live order placement is out of scope for this foundation."""
     paths = client.get("/openapi.json").json()["paths"]

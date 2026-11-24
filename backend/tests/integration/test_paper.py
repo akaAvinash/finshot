@@ -23,6 +23,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from app.market.demo import DemoMarketDataProvider
 from app.paper import engine
+from app.paper import service as service_module
 from app.paper.service import PaperService
 from tests.support import OTHER_PHONE, Browser, FakeClock, db_rows
 
@@ -53,7 +54,10 @@ def _db() -> str:
 
 @pytest.fixture
 def client(make_app: Callable[..., TestClient]) -> TestClient:
-    return make_app(paper_worker_enabled=False, paper_tick_seconds=TICK)
+    # Both workers off: tests drive ticks and backtest runs themselves.
+    return make_app(
+        paper_worker_enabled=False, backtest_worker_enabled=False, paper_tick_seconds=TICK
+    )
 
 
 @pytest.fixture
@@ -122,7 +126,9 @@ def expected_replay(
     state = engine.State(cash_paise=engine.CAPITAL_PAISE)
     fills: list[engine.Fill] = []
     queued: engine.QueuedOrder | None = None
-    while state.sessions_done < len(bars):
+    for _ in range(len(bars)):
+        if state.sessions_done == len(bars):
+            break
         out = engine.step(
             state, bars, queued, size_bps=size_bps, stop_loss_bps=stop_bps, symbol="X"
         )
@@ -130,14 +136,19 @@ def expected_replay(
         queued = None
         if out.new_order is not None:
             queued = engine.QueuedOrder(out.new_order.side, out.new_order.quantity)
+    assert state.sessions_done == len(bars), "the engine did not advance one session per step"
     return state, fills
 
 
 def run_to_end(client: TestClient, clock: FakeClock) -> int:
+    """Tick until the replay finishes, at most one tick per demo session."""
+    budget = len(sessions("NSE:SBIN"))
     ticks = 0
-    while tick(client):
+    while ticks < budget and tick(client):
         ticks += 1
         clock.advance(TICK)
+    clock.advance(TICK)
+    assert not tick(client), "a tick is still due after every session was replayed"
     return ticks
 
 
@@ -319,6 +330,8 @@ def test_halt_needs_no_assignment(browser: Browser) -> None:
     browser.login()
     data = ok(browser, {"action": "halt", "confirmation": "STOP"})
     assert data["engine"] == "halted" and data["strategyId"] is None
+    # Never assigned and no active strategy: the workspace is still empty.
+    assert browser.get(BASE).json() == {"status": "empty"}
 
 
 # ------------------------------------------------------------------------ replay
@@ -412,12 +425,12 @@ def test_paused_strategy_stops_the_engine(client: TestClient) -> None:
     assert response.status_code == 409
 
 
-def test_assigned_strategy_keeps_its_pinned_version(client: TestClient) -> None:
+def test_assigned_strategy_keeps_its_pinned_version(client: TestClient, clock: FakeClock) -> None:
     browser = Browser(client)
     browser.login()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
-    # A new version (v2) is activated after assignment.
+    # A new version (v2) with smaller sizing is activated after assignment.
     browser.post(STRATEGY_COMMANDS, json={"action": "pause", "id": sid})
     browser.post(
         STRATEGY_COMMANDS,
@@ -432,6 +445,85 @@ def test_assigned_strategy_keeps_its_pinned_version(client: TestClient) -> None:
     (row,) = db_rows(_db(), "SELECT version_number, version_parameters FROM paper_accounts")
     assert row["version_number"] == 1
     assert row["version_parameters"]["position_size_bps"] == 900
+
+    # The replay sizes its orders with the pinned 900 bps, not v2's 500 bps.
+    ok(browser, {"action": "start"})
+    buys: list[dict[str, Any]] = []
+    for _ in range(len(sessions("NSE:SBIN"))):
+        if buys or not tick(client):
+            break
+        clock.advance(TICK)
+        buys = [o for o in browser.get(BASE).json()["data"]["orders"] if o["side"] == "Buy"]
+    assert buys, "expected the replay to queue a buy"
+    (buy,) = buys
+    cash = engine.CAPITAL_PAISE
+    pinned = engine.buy_quantity(cash, buy["limitPaise"], 900, 125)
+    assert pinned != engine.buy_quantity(cash, buy["limitPaise"], 500, 125)
+    assert buy["quantity"] == pinned
+
+
+def test_contending_workers_replay_a_session_once(client: TestClient) -> None:
+    """A worker skips an account another worker holds (SKIP LOCKED)."""
+    browser = Browser(client)
+    browser.login()
+    sid = active_strategy(browser)
+    ok(browser, {"action": "assign", "strategyId": sid})
+    ok(browser, {"action": "start"})
+    paper = service(client)
+    results: list[bool] = []
+
+    async def both() -> None:
+        results.extend(await asyncio.gather(paper.tick_once(), paper.tick_once()))
+
+    assert client.portal is not None
+    client.portal.call(both)
+    assert sorted(results) == [False, True]
+    (row,) = db_rows(_db(), "SELECT sessions_done FROM paper_accounts")
+    assert row["sessions_done"] == 1
+
+
+def test_failed_tick_leaves_no_partial_ledger(
+    client: TestClient, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    browser = Browser(client)
+    browser.login()
+    sid = active_strategy(browser)
+    ok(browser, {"action": "assign", "strategyId": sid})
+    ok(browser, {"action": "start"})
+    # Advance until the next session will fill a queued order.
+    for _ in range(len(sessions("NSE:SBIN"))):
+        queued = db_rows(_db(), "SELECT 1 FROM paper_orders WHERE status = 'queued'")
+        if queued:
+            break
+        assert tick(client)
+        clock.advance(TICK)
+    assert queued, "expected a queued order"
+
+    def snapshot() -> tuple[Any, ...]:
+        account = db_rows(_db(), "SELECT sessions_done, cash_paise FROM paper_accounts")
+        counts = [
+            len(db_rows(_db(), f"SELECT 1 FROM {t}"))
+            for t in ("paper_trades", "paper_events", "paper_orders")
+        ]
+        statuses = db_rows(_db(), "SELECT status FROM paper_orders ORDER BY seq")
+        return (account, counts, statuses)
+
+    before = snapshot()
+    real_step = service_module.rules.step
+
+    def failing_step(*args: Any, **kwargs: Any) -> Any:
+        real_step(*args, **kwargs)  # stages fills and order changes
+        raise RuntimeError("replay failed after staging ledger writes")
+
+    monkeypatch.setattr(service_module.rules, "step", failing_step)
+    with pytest.raises(RuntimeError):
+        tick(client)
+    assert snapshot() == before
+    monkeypatch.setattr(service_module.rules, "step", real_step)
+    assert tick(client)
+    after = snapshot()
+    assert after[0][0]["sessions_done"] == before[0][0]["sessions_done"] + 1
+    assert after[1][0] > before[1][0]  # the retried session filled the order
 
 
 def test_users_are_isolated(client: TestClient, clock: FakeClock) -> None:

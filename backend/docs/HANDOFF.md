@@ -83,6 +83,12 @@ contract PR first.
 
 ## Known issues
 
+- On every write endpoint (auth, brokers, strategies, backtests, paper), a
+  body that is not valid JSON returns `400 INVALID_REQUEST` before the
+  session and CSRF checks run, because FastAPI decodes JSON first. Valid JSON
+  of the wrong shape still gets `401`/`403` first. Nothing is read or written
+  either way. Fix app-wide in the hardening phase (found on #21).
+
 - Migration `0002` (auth) created its check constraints with doubled names
   (`ck_users_ck_users_phone_format`). Harmless, but a rename migration would
   tidy it. `0003` to `0006` use `op.f()` and have tests for exact names.

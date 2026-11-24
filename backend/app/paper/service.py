@@ -150,7 +150,10 @@ class PaperService:
             assigned_active = False
             if account is not None and account.strategy_id is not None:
                 assigned_active = any(s.id == account.strategy_id for s in active)
-        if account is None and not active and allow_empty:
+        # `replay` is 0 until the first assign: an account created only by
+        # halt or another command has never assigned a strategy.
+        never_assigned = account is None or account.replay == 0
+        if never_assigned and not active and allow_empty:
             return None
 
         strategies: list[PaperStrategyOut] = []

@@ -421,30 +421,40 @@ def test_run_of_an_edited_draft_or_a_version_leaves_the_check(client: TestClient
 
 
 def test_completion_waits_for_a_concurrent_save_draft(client: TestClient) -> None:
-    """The worker locks the strategy row: a save-draft committed while the run
-    replays is seen, so the stale run does not grade the new draft."""
+    """The worker holds the strategy row lock while it grades the draft, so a
+    save-draft that arrives meanwhile waits and then resets the check. Without
+    the lock the worker's verdict would overwrite the reset."""
     browser = Browser(client)
     browser.login()
     sid = create_strategy(browser)
     start(browser, config(f"{sid}:draft"))
+    pool = ThreadPoolExecutor(max_workers=1)
+    pending: list[Any] = []
 
-    def edit_draft() -> None:
-        # The same change save-draft makes, committed from another connection.
-        with ThreadPoolExecutor(max_workers=1) as pool:
+    def save_draft_meanwhile() -> None:
+        # The same writes save-draft makes, from another connection. It blocks
+        # on the row lock until the worker commits.
+        pending.append(
             pool.submit(
                 db_rows,
                 _db(),
                 "UPDATE strategies SET draft_parameters ="
-                " jsonb_set(draft_parameters, '{position_size_bps}', '800')"
-                " WHERE id = :id",
+                " jsonb_set(draft_parameters, '{position_size_bps}', '800'),"
+                " draft_backtest = 'unavailable' WHERE id = :id",
                 id=sid,
-            ).result()
+            )
+        )
+        time.sleep(0.5)  # let the update reach the lock (or commit, if unlocked)
 
-    service(client)._after_claim = edit_draft
+    service(client)._after_strategy_lock = save_draft_meanwhile
     try:
         assert work(client)
+        pending[0].result(timeout=10)
     finally:
-        service(client)._after_claim = None
+        service(client)._after_strategy_lock = None
+        pool.shutdown()
+    (row,) = db_rows(_db(), "SELECT draft_parameters FROM strategies WHERE id = :id", id=sid)
+    assert row["draft_parameters"]["position_size_bps"] == 800
     assert draft_check(browser, sid) == "unavailable"
 
 

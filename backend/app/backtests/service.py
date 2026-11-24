@@ -130,6 +130,8 @@ class BacktestService:
         self._wake = asyncio.Event()
         # Test seam: after the worker marks a run running, before it replays.
         self._after_claim: Callable[[], None] | None = None
+        # Test seam: after the strategy row is locked, before the check is set.
+        self._after_strategy_lock: Callable[[], None] | None = None
 
     @property
     def enabled(self) -> bool:
@@ -379,6 +381,8 @@ class BacktestService:
             .where(Strategy.id == strategy_id, Strategy.user_id == user_id)
             .with_for_update()
         )
+        if self._after_strategy_lock is not None:
+            self._after_strategy_lock()
         if strategy is None or strategy.draft_parameters is None:
             return
         draft = StrategyParameters.model_validate(strategy.draft_parameters)

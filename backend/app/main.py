@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
@@ -171,6 +172,7 @@ def create_app(
 
     app.include_router(health.router)
     app.include_router(api_router)
+    _drop_generated_422(app)
 
     # Middleware runs outermost-last-added. Order (outer -> inner):
     # RequestContext -> SecurityHeaders -> HostAllowlist -> CORS -> app
@@ -189,3 +191,24 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
 
     return app
+
+
+def _drop_generated_422(app: FastAPI) -> None:
+    """FastAPI documents a 422 HTTPValidationError on every operation with
+    parameters, but invalid requests return 400 INVALID_REQUEST (see the
+    RequestValidationError handler), so /openapi.json leaves the 422 out."""
+    generate = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            schema = generate()
+            for operations in schema.get("paths", {}).values():
+                for operation in operations.values():
+                    operation.get("responses", {}).pop("422", None)
+            schemas = schema.get("components", {}).get("schemas", {})
+            for name in ("HTTPValidationError", "ValidationError"):
+                schemas.pop(name, None)
+            app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = openapi  # type: ignore[method-assign]

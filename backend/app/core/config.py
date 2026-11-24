@@ -134,6 +134,17 @@ class Settings(BaseSettings):
     # A run still `running` after this long is failed as abandoned.
     backtest_stale_after_seconds: int = Field(default=300, ge=10, le=3600)
 
+    # --- Paper trading (Phase C3, demo candles, no broker) --------------------
+    # false: both paper endpoints return 503 PAPER_UNAVAILABLE and the worker
+    # does not start.
+    paper_enabled: bool = True
+    # The in-process worker that replays running paper engines. Turn it off to
+    # run the API without ticks (tests drive the worker directly).
+    paper_worker_enabled: bool = True
+    # One demo session is replayed per running engine every tick.
+    paper_tick_seconds: float = Field(default=3.0, ge=0.5, le=300)
+    paper_worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

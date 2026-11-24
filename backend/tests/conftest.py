@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -38,13 +39,20 @@ _ENV_KEYS = [
     "BACKTEST_WORKER_ENABLED",
     "BACKTEST_WORKER_POLL_SECONDS",
     "BACKTEST_STALE_AFTER_SECONDS",
+    "PAPER_ENABLED",
+    "PAPER_WORKER_ENABLED",
+    "PAPER_TICK_SECONDS",
+    "PAPER_WORKER_POLL_SECONDS",
 ]
 
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in _ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
+    # Settings match environment names case-insensitively, so clear any casing.
+    wanted = {key.upper() for key in _ENV_KEYS}
+    for name in list(os.environ):
+        if name.upper() in wanted:
+            monkeypatch.delenv(name, raising=False)
 
 
 SettingsFactory = Callable[..., Settings]

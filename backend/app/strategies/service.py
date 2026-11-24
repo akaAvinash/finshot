@@ -20,6 +20,7 @@ from app.auth.models import AuditEvent
 from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.strategies.models import Strategy, StrategyVersion
+from app.strategies.rules import risk_review
 from app.strategies.schemas import (
     MAX_STRATEGIES,
     CreateCommand,
@@ -239,7 +240,7 @@ class StrategyService:
 def _set_draft(strategy: Strategy, parameters: StrategyParameters) -> None:
     strategy.draft_parameters = parameters.model_dump(mode="json")
     strategy.draft_backtest = "unavailable"
-    strategy.draft_risk_review = "pending"
+    strategy.draft_risk_review = risk_review(parameters)
 
 
 def _draft_out(strategy: Strategy) -> StrategyRevisionOut | None:

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import app.auth.models
 import app.backtests.models
 import app.brokers.models
+import app.paper.models
 import app.strategies.models  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base

@@ -1,6 +1,6 @@
 # Backend handoff
 
-Updated 2026-11-24 (UTC). The repository on `main` is the source of truth;
+Updated 2026-11-24 (UTC), with phase C3. The repository on `main` is the source of truth;
 the development kit is the roadmap.
 
 ## Ownership
@@ -19,12 +19,13 @@ the development kit is the roadmap.
 | B1: read-only market data (demo provider) | #10, #12 |
 | B2: demo broker connections | #13 contract, #14 |
 | C1: strategy drafts and immutable versions | #15 contract, #16 |
+| C2: demo backtest jobs | #18 contract, #19 |
 
 ## Open
 
 | Phase | PRs |
 |---|---|
-| C2: demo backtest jobs | #18 contract, implementation PR on `feat/backend-backtests` (merge after #18) |
+| C3: paper trading and automatic checks | #20 contract, implementation PR on `feat/paper-risk` (merge after #20) |
 
 ## Merge policy
 
@@ -37,21 +38,33 @@ and live trading.
 
 ## Blockers
 
-- Strategy activation stays blocked (409). Backtest runs exist (C2) but a
-  completed run does not set the strategy's `backtest` check: that needs a
-  reviewed pass/fail policy, decided with the risk phase. Who approves a
-  risk review is also deferred to the risk phase (see #15); nothing can set
-  `approved` until then.
-- Frontend wiring (Next.js same-origin proxy, switching the broker and
-  strategy clients from the mocks) is Codex's work and is not done by the
-  backend.
+- Frontend wiring (Next.js same-origin proxy, switching the broker,
+  strategy, backtest and paper clients from the mocks) is Codex's work and
+  is not done by the backend.
 
 ## Next backend task
 
-Paper execution and risk (kit order after backtest jobs: paper execution and
-risk, reconciliation and reports, agents, alerts, hardening). Needs its own
-contract PR first, including who approves a risk review and the backtest
-pass/fail policy.
+Reconciliation and reports (kit order after paper execution and risk:
+reconciliation and reports, agents, alerts, hardening). Needs its own
+contract PR first.
+
+## Automatic checks and paper trading (C3) notes
+
+- Owner decision (2026-11-24): both strategy checks are automatic server
+  rules, with no manual approval or admin role. Thresholds live in
+  `app/strategies/rules.py`; migration `0006` holds a frozen copy for
+  re-evaluating drafts that existed before it.
+- `riskReview` is set on create and save-draft. The backtest check is set by
+  the backtest worker, in the transaction that completes a draft run, under
+  the strategy row lock (so a save-draft committed meanwhile wins).
+- `app/paper/engine.py` holds the pure replay rules; `app/paper/service.py`
+  the commands and the tick worker (`PAPER_WORKER_ENABLED`, one demo session
+  per running engine every `PAPER_TICK_SECONDS`, claims with `SKIP LOCKED`).
+- `paper_trades` and `paper_events` are append-only (trigger). `assign`
+  starts a new replay number; the workspace shows only the current replay's
+  orders and trades.
+- `contracts/auto-trading.openapi.yaml` (the frontend proposal) can be
+  removed by the frontend owner once the client uses the main contract.
 
 ## Backtests (C2) notes
 
@@ -70,9 +83,15 @@ pass/fail policy.
 
 ## Known issues
 
+- On every write endpoint (auth, brokers, strategies, backtests, paper), a
+  body that is not valid JSON returns `400 INVALID_REQUEST` before the
+  session and CSRF checks run, because FastAPI decodes JSON first. Valid JSON
+  of the wrong shape still gets `401`/`403` first. Nothing is read or written
+  either way. Fix app-wide in the hardening phase (found on #21).
+
 - Migration `0002` (auth) created its check constraints with doubled names
   (`ck_users_ck_users_phone_format`). Harmless, but a rename migration would
-  tidy it. `0003` to `0005` use `op.f()` and have tests for exact names.
+  tidy it. `0003` to `0006` use `op.f()` and have tests for exact names.
 
 ## Running checks locally (no Docker needed)
 

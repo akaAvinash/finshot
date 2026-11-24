@@ -34,6 +34,8 @@ from app.backtests.service import (
     BacktestService,
 )
 from app.market.demo import DemoMarketDataProvider
+from app.strategies.rules import backtest_verdict
+from app.strategies.schemas import StrategyParameters
 from tests.support import OTHER_PHONE, Browser, FakeClock, db_rows
 
 pytestmark = pytest.mark.integration
@@ -122,7 +124,7 @@ def save_draft(browser: Browser, strategy_id: str, **overrides: Any) -> None:
 
 
 def activate(browser: Browser, strategy_id: str) -> None:
-    # The API cannot pass checks yet; mark them the way a later phase will.
+    # Mark the checks directly so tests do not depend on a passing run.
     db_rows(
         _db(),
         "UPDATE strategies SET draft_backtest = 'passed', draft_risk_review = 'approved'"
@@ -317,13 +319,143 @@ def test_request_instrument_chooses_the_candles(client: TestClient) -> None:
     assert result != expected_result(config(ref), 900)
 
 
-def test_completed_run_does_not_pass_the_strategy_check(client: TestClient) -> None:
+def draft_check(browser: Browser, sid: str) -> str:
+    strategies = browser.get("/api/v1/strategies/preview").json()["data"]["strategies"]
+    (strategy,) = [s for s in strategies if s["id"] == sid]
+    check: str = strategy["draft"]["backtest"]
+    return check
+
+
+# A window with 25 out-of-sample sessions, and one with only 8.
+LONG_WINDOW: dict[str, Any] = {}
+SHORT_WINDOW: dict[str, Any] = {"from": "2026-10-20", "outOfSampleFrom": "2026-11-12"}
+
+
+def test_completed_draft_run_sets_the_strategy_check(client: TestClient) -> None:
     browser = Browser(client)
-    ref = draft_ref(browser)
-    assert start(browser, config(ref)).status_code == 202
+    browser.login()
+    sid = create_strategy(browser)
+    body = config(f"{sid}:draft", **LONG_WINDOW)
+    expected = backtest_verdict(
+        StrategyParameters.model_validate(PARAMS), expected_result(body, 900)
+    )
+    assert expected == "passed"  # this demo window passes the medium-tier rule
+    run_id = start(browser, body).json()["id"]
+    assert draft_check(browser, sid) == "unavailable"  # queued: unchanged
     assert work(client)
-    (strategy,) = browser.get("/api/v1/strategies/preview").json()["data"]["strategies"]
-    assert strategy["draft"]["backtest"] == "unavailable"
+    assert browser.get(f"{RUNS}/{run_id}").json()["status"] == "completed"
+    assert draft_check(browser, sid) == "passed"
+    audit = db_rows(
+        _db(), "SELECT actor, action, resource FROM audit_events WHERE action LIKE 'strategy.back%'"
+    )
+    assert audit == [
+        {
+            "actor": "system:backtest-worker",
+            "action": "strategy.backtest_passed",
+            "resource": f"strategy:{sid}",
+        }
+    ]
+    # The draft can now be activated.
+    response = browser.post(STRATEGY_COMMANDS, json={"action": "activate", "id": sid})
+    assert response.status_code == 200, response.text
+
+
+def test_failing_draft_run_fails_the_check_and_the_latest_run_wins(client: TestClient) -> None:
+    browser = Browser(client)
+    browser.login()
+    sid = create_strategy(browser)
+    short = config(f"{sid}:draft", **SHORT_WINDOW)
+    result = expected_result(short, 900)
+    assert len(result["points"]) < 10
+    assert backtest_verdict(StrategyParameters.model_validate(PARAMS), result) == "failed"
+    start(browser, config(f"{sid}:draft"))
+    start(browser, short)
+    assert work(client) and draft_check(browser, sid) == "passed"
+    assert work(client) and draft_check(browser, sid) == "failed"
+    start(browser, config(f"{sid}:draft"))
+    assert work(client) and draft_check(browser, sid) == "passed"
+    response = browser.post(STRATEGY_COMMANDS, json={"action": "activate", "id": sid})
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"instrumentId": "NSE:BANKNIFTY"},  # not the draft's instrument
+        {"feeBps": 2},  # cheaper than the paper engine
+        {"slippageBps": 4},
+    ],
+)
+def test_runs_that_do_not_count_leave_the_check(
+    client: TestClient, overrides: dict[str, Any]
+) -> None:
+    browser = Browser(client)
+    browser.login()
+    sid = create_strategy(browser)
+    assert start(browser, config(f"{sid}:draft", **overrides)).status_code == 202
+    assert work(client)
+    assert draft_check(browser, sid) == "unavailable"
+
+
+def test_run_of_an_edited_draft_or_a_version_leaves_the_check(client: TestClient) -> None:
+    browser = Browser(client)
+    browser.login()
+    sid = create_strategy(browser)
+    start(browser, config(f"{sid}:draft"))
+    save_draft(browser, sid, positionSizeBps=800)  # edited after the run was queued
+    assert work(client)
+    assert draft_check(browser, sid) == "unavailable"
+
+    # Same parameters as the queued run again: a later completion counts.
+    save_draft(browser, sid)
+    start(browser, config(f"{sid}:draft"))
+    assert work(client) and draft_check(browser, sid) == "passed"
+    save_draft(browser, sid)  # save-draft always resets the check
+    assert draft_check(browser, sid) == "unavailable"
+
+    activate(browser, sid)
+    save_draft(browser, sid, positionSizeBps=800)
+    start(browser, config(f"{sid}:1"))
+    assert work(client)
+    assert draft_check(browser, sid) == "unavailable"
+
+
+def test_completion_waits_for_a_concurrent_save_draft(client: TestClient) -> None:
+    """The worker holds the strategy row lock while it grades the draft, so a
+    save-draft that arrives meanwhile waits and then resets the check. Without
+    the lock the worker's verdict would overwrite the reset."""
+    browser = Browser(client)
+    browser.login()
+    sid = create_strategy(browser)
+    start(browser, config(f"{sid}:draft"))
+    pool = ThreadPoolExecutor(max_workers=1)
+    pending: list[Any] = []
+
+    def save_draft_meanwhile() -> None:
+        # The same writes save-draft makes, from another connection. It blocks
+        # on the row lock until the worker commits.
+        pending.append(
+            pool.submit(
+                db_rows,
+                _db(),
+                "UPDATE strategies SET draft_parameters ="
+                " jsonb_set(draft_parameters, '{position_size_bps}', '800'),"
+                " draft_backtest = 'unavailable' WHERE id = :id",
+                id=sid,
+            )
+        )
+        time.sleep(0.5)  # let the update reach the lock (or commit, if unlocked)
+
+    service(client)._after_strategy_lock = save_draft_meanwhile
+    try:
+        assert work(client)
+        pending[0].result(timeout=10)
+    finally:
+        service(client)._after_strategy_lock = None
+        pool.shutdown()
+    (row,) = db_rows(_db(), "SELECT draft_parameters FROM strategies WHERE id = :id", id=sid)
+    assert row["draft_parameters"]["position_size_bps"] == 800
+    assert draft_check(browser, sid) == "unavailable"
 
 
 def test_parameters_are_copied_when_queued(client: TestClient) -> None:

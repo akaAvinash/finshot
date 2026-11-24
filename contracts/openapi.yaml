@@ -544,14 +544,15 @@ paths:
         | medium   | 1000                | 200             | -1000              |
         | high     | 1500                | 300             | -2000              |
 
-        **Backtest rule.** When a backtest run of revision `draft` completes
-        and the strategy's draft still has the same parameters the run copied,
-        the draft's `backtest` becomes `passed` if all of these hold, otherwise
-        `failed`: at least 10 out-of-sample sessions (equity points), at least
+        **Backtest rule.** When a backtest run of revision `draft` completes,
+        it counts if the strategy's draft still has the same parameters the
+        run copied, the run's `instrumentId` is the draft's instrument, and
+        the run's `feeBps` and `slippageBps` are at least the paper engine's
+        (3 and 5). A run that counts sets the draft's `backtest` to `passed`
+        if all of these hold, otherwise `failed`: at least 10 out-of-sample sessions (equity points), at least
         one trade, `netPnlPaise` at least 0, and `maxDrawdownBps` at least the
-        tier's minimum above. The latest such completion wins. Runs of a
-        version, failed runs and runs whose parameters no longer match the
-        draft do not change it. Thresholds are fixed server configuration
+        tier's minimum above. The latest run that counts wins. Runs of a
+        version, failed runs and runs that do not count leave it unchanged. Thresholds are fixed server configuration
         examples, not investment advice; demo candles are synthetic. Existing
         drafts are re-evaluated by these rules when this is deployed.
 
@@ -669,9 +670,9 @@ paths:
         draft edits do not change it.
 
         A completed run of revision `draft` sets the draft's `backtest` check
-        by the backtest rule in `sendStrategyCommand`, provided the draft's
-        parameters still equal the ones the run copied. Runs of a version never
-        change a check.
+        when it counts under the backtest rule in `sendStrategyCommand` (same
+        parameters as the current draft, the draft's instrument, and costs at
+        least the paper engine's). Runs of a version never change a check.
         At most three runs per user may be `queued` or `running`; another
         start returns `409`. Requires a valid session and a `session` CSRF
         token; a missing or stale session returns `401` before the CSRF check.

@@ -422,6 +422,25 @@ def test_worker_keeps_an_abandoned_outcome(client: TestClient, clock: FakeClock)
     assert (run["status"], run["message"]) == ("failed", "gone")
 
 
+def test_cancelled_worker_returns_its_run_to_the_queue(client: TestClient) -> None:
+    """Shutdown cancelling the worker right after a claim must not strand the run."""
+    browser = Browser(client)
+    ref = draft_ref(browser)
+    run_id = start(browser, config(ref)).json()["id"]
+
+    def cancelled() -> None:
+        raise asyncio.CancelledError
+
+    service(client)._after_claim = cancelled
+    with pytest.raises(BaseException):  # noqa: B017 - the portal re-raises the cancellation
+        work(client)
+    row = db_rows(_db(), "SELECT status, started_at FROM backtest_runs WHERE id = :id", id=run_id)
+    assert row == [{"status": "queued", "started_at": None}]
+    service(client)._after_claim = None
+    assert work(client)
+    assert browser.get(f"{RUNS}/{run_id}").json()["status"] == "completed"
+
+
 # --------------------------------------------------------------------- validation
 
 
@@ -441,6 +460,8 @@ def test_worker_keeps_an_abandoned_outcome(client: TestClient, clock: FakeClock)
         ({"strategyId": "{sid}:1"}, UNKNOWN_INPUT),
         ({"strategyId": "{sid}:01"}, UNKNOWN_INPUT),
         ({"strategyId": "{sid}:"}, UNKNOWN_INPUT),
+        ({"strategyId": "{sid}:2147483648"}, UNKNOWN_INPUT),
+        ({"strategyId": "{sid}:" + "9" * 27}, UNKNOWN_INPUT),
         ({"from": "2026-10-05", "outOfSampleFrom": "2026-10-07"}, TOO_FEW),
         ({"outOfSampleFrom": "2026-11-22"}, TOO_FEW),  # Nov 22 is a Sunday
         ({"capitalPaise": 99_999}, None),

@@ -44,6 +44,7 @@ OUTSIDE_HISTORY = "Select a run window within the available demo history."
 OUT_OF_ORDER = "The out-of-sample start must fall between the start and end dates."
 UNKNOWN_INPUT = "Select an available demo strategy and instrument."
 RUN_FAILED = "The demo worker could not complete this run. Start it again."
+MAX_VERSION_NUMBER = 2_147_483_647
 RUN_ABANDONED = "The run stopped before it finished. Start it again."
 
 
@@ -85,7 +86,9 @@ def parse_revision_id(value: str) -> tuple[uuid.UUID, int | str] | None:
     if raw_revision == "draft":
         return strategy_id, "draft"
     if raw_revision.isascii() and raw_revision.isdigit() and not raw_revision.startswith("0"):
-        return strategy_id, int(raw_revision)
+        number = int(raw_revision)
+        # Version numbers are PostgreSQL integers; larger values cannot exist.
+        return (strategy_id, number) if number <= MAX_VERSION_NUMBER else None
     return None
 
 
@@ -310,26 +313,45 @@ class BacktestService:
                 run.started_at = now
                 run.updated_at = now
                 run_id, config, parameters = run.id, run.config, run.parameters
-            if self._after_claim is not None:
-                self._after_claim()
-            result: dict[str, Any] | None = None
             try:
-                result = await self._replay(config, parameters)
-            except Exception as exc:
-                logger.warning("backtest_failed", run_id=str(run_id), error_type=type(exc).__name__)
-            async with db.begin():
-                # A run failed as abandoned in the meantime keeps that outcome.
-                await db.execute(
-                    update(BacktestRun)
-                    .where(BacktestRun.id == run_id, BacktestRun.status == "running")
-                    .values(
-                        status="failed" if result is None else "completed",
-                        result=result,
-                        message=RUN_FAILED if result is None else None,
-                        updated_at=self._clock(),
-                    )
-                )
+                await self._finish(db, run_id, config, parameters)
+            except asyncio.CancelledError:
+                # Shutdown cancelled the worker mid-run: put the run back in
+                # the queue so the next worker picks it up straight away.
+                await asyncio.shield(self._requeue(run_id))
+                raise
         return True
+
+    async def _finish(
+        self, db: AsyncSession, run_id: uuid.UUID, config: dict[str, Any], params: dict[str, Any]
+    ) -> None:
+        if self._after_claim is not None:
+            self._after_claim()
+        result: dict[str, Any] | None = None
+        try:
+            result = await self._replay(config, params)
+        except Exception as exc:
+            logger.warning("backtest_failed", run_id=str(run_id), error_type=type(exc).__name__)
+        async with db.begin():
+            # A run failed as abandoned in the meantime keeps that outcome.
+            await db.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run_id, BacktestRun.status == "running")
+                .values(
+                    status="failed" if result is None else "completed",
+                    result=result,
+                    message=RUN_FAILED if result is None else None,
+                    updated_at=self._clock(),
+                )
+            )
+
+    async def _requeue(self, run_id: uuid.UUID) -> None:
+        async with self._factory() as db, db.begin():
+            await db.execute(
+                update(BacktestRun)
+                .where(BacktestRun.id == run_id, BacktestRun.status == "running")
+                .values(status="queued", started_at=None, updated_at=self._clock())
+            )
 
     async def _replay(self, config: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
         accepted = BacktestConfig.model_validate(config)

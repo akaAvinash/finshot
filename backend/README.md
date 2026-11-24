@@ -32,9 +32,11 @@ app/
   api/routes/health.py
   api/routes/auth.py /api/v1/auth/* (see contracts/openapi.yaml)
   api/routes/market.py /api/v1/market/* (read-only)
+  api/routes/brokers.py /api/v1/brokers/preview* (demo connections)
   api/router.py      /api/v1 router
   auth/              models, service, signed CSRF tokens, OTP providers, rate limits
   market/            provider interface, demo provider, search, response models
+  brokers/           read-only adapter protocol, demo adapter, models, service
 migrations/          Alembic
 tests/unit           no external services needed
 tests/integration    real Postgres + Redis
@@ -113,6 +115,31 @@ Implements the three Markets operations in `contracts/openapi.yaml`:
 - **Errors:** `400 INVALID_REQUEST` (bad ID format, unknown timeframe, query
   over 100 characters), `404 UNKNOWN_INSTRUMENT` (well-formed ID not in the
   catalog), `503 MARKET_DATA_UNAVAILABLE`; all with `requestId`.
+
+## Brokers (Phase B2, demo only)
+
+Implements `GET /api/v1/brokers/preview` and
+`POST /api/v1/brokers/preview/{provider}/actions` from `contracts/openapi.yaml`.
+Providers `zerodha` and `fyers`; actions `connect`, `reconnect`, `sync`,
+`disconnect`.
+
+- **No real broker access.** No OAuth, provider requests, tokens or
+  credentials. The adapter protocol (`app/brokers/adapter.py`) is read-only:
+  `authorize` and `fetch_account` only, no order methods (a unit test enforces
+  this). `BROKER_PROVIDER=demo` (default) or `disabled` (every call is 503).
+- **Per user, server-side.** Tables `broker_connections` (one row per user and
+  provider, deleted on disconnect, `environment = 'DEMO'` enforced by the
+  database) and `broker_events` (append-only). Migration `0003`. A new user
+  starts disconnected with no events. The snapshot returns the 50 most recent
+  events, oldest first.
+- **Rules.** Connected: `sync`, `disconnect`. Expired (at or after
+  `expiresAt`): `reconnect`, `disconnect`. Disconnected: `connect`. Anything
+  else is `409 BROKER_ACTION_CONFLICT`. A demo connection lasts 8 hours.
+- **Safety.** Both endpoints need a valid session (401 first); the POST needs a
+  `session` CSRF token (403). Each action runs in one transaction under a
+  per-user, per-provider advisory lock and writes a broker event and an audit
+  event. An adapter error, timeout (`BROKER_TIMEOUT_SECONDS`) or a sync for a
+  different account returns `503 BROKER_UNAVAILABLE` and writes nothing.
 
 ## Run locally
 

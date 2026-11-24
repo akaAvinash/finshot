@@ -127,11 +127,30 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/market/instruments",
         "/api/v1/market/overview",
         "/api/v1/market/instruments/{instrumentId}/candles",
+        "/api/v1/brokers/preview",
+        "/api/v1/brokers/preview/{provider}/actions",
     }
     # Market data is read-only.
     for path, operations in paths.items():
         if path.startswith("/api/v1/market/"):
             assert set(operations) == {"get"}, path
+    # Broker actions are limited to the four demo connection actions.
+    schema = client.get("/openapi.json").json()["components"]["schemas"]
+    assert set(schema["BrokerActionRequest"]["properties"]["action"]["enum"]) == {
+        "connect",
+        "reconnect",
+        "sync",
+        "disconnect",
+    }
+
+
+def test_broker_adapter_protocol_is_read_only() -> None:
+    """No order placement, modification or cancel method exists on the adapter."""
+    from app.brokers.adapter import BrokerAdapter, DemoBrokerAdapter
+
+    for cls in (BrokerAdapter, DemoBrokerAdapter):
+        public = {name for name in vars(cls) if not name.startswith("_")}
+        assert public == {"authorize", "fetch_account"}, cls
 
 
 def test_access_log_is_json_with_request_id(

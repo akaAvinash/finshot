@@ -39,7 +39,8 @@ def test_migrations_match_the_models(db_url: str) -> None:
     """Autogenerate finds nothing to change: the models and migration 0002 agree."""
 
     async def diff() -> list[object]:
-        import app.auth.models  # noqa: F401
+        import app.auth.models
+        import app.brokers.models  # noqa: F401
 
         engine = create_async_engine(db_url)
         try:

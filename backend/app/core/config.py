@@ -149,6 +149,18 @@ class Settings(BaseSettings):
     # false: both report endpoints return 503 REPORTS_UNAVAILABLE.
     reports_enabled: bool = True
 
+    # --- Advisory agents (Phase E1, deterministic, paper ledger only) ---------
+    # false: every agent endpoint returns 503 AGENTS_UNAVAILABLE and the
+    # worker does not start.
+    agents_enabled: bool = True
+    # The in-process worker that evaluates changed paper accounts. Turn it off
+    # to run the API without evaluations (tests drive the worker directly).
+    agent_worker_enabled: bool = True
+    agent_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    # An agent is `stale` when paper data it has not evaluated changed longer
+    # ago than this.
+    agent_stale_after_seconds: int = Field(default=30, ge=5, le=3600)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

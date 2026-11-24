@@ -3,7 +3,7 @@ contracts/openapi.yaml."""
 
 from fastapi import APIRouter
 
-from app.api.routes import auth, backtests, brokers, market, paper, reports, strategies
+from app.api.routes import agents, auth, backtests, brokers, market, paper, reports, strategies
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -13,3 +13,4 @@ api_router.include_router(strategies.router)
 api_router.include_router(backtests.router)
 api_router.include_router(paper.router)
 api_router.include_router(reports.router)
+api_router.include_router(agents.router)

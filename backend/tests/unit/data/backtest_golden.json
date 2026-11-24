@@ -1,0 +1,1459 @@
+[
+ {
+  "positionSizeBps": 750,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:NIFTY50",
+   "from": "2026-10-05",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-21",
+   "capitalPaise": 50000000,
+   "feeBps": 8,
+   "slippageBps": 5
+  },
+  "result": {
+   "endingEquityPaise": 50051702,
+   "netPnlPaise": 51702,
+   "returnBps": 10,
+   "maxDrawdownBps": -6,
+   "winRateBps": 5000,
+   "totalFeesPaise": 15368,
+   "points": [
+    {
+     "date": "2026-10-21",
+     "equityPaise": 50005457,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 50008704,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 50004757,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 49999461,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 49999461,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 49999461,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 49999461,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 50006268,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 50020436,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 50034793,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 50044897,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 50047941,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 50043826,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 50044288,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 50044288,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 50039721,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 50034246,
+     "drawdownBps": -3
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 50042587,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 50056821,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 50071118,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 50081060,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 50083901,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 50057951,
+     "drawdownBps": -5
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 50051702,
+     "drawdownBps": -6
+    }
+   ],
+   "trades": [
+    {
+     "id": "trade-1",
+     "entryAt": "2026-10-21T03:45:00.000Z",
+     "exitAt": "2026-10-26T03:45:00.000Z",
+     "quantity": 1,
+     "entryPaise": 2381146,
+     "exitPaise": 2384420,
+     "feesPaise": 3813,
+     "pnlPaise": -539
+    },
+    {
+     "id": "trade-2",
+     "entryAt": "2026-10-30T03:45:00.000Z",
+     "exitAt": "2026-11-09T03:45:00.000Z",
+     "quantity": 1,
+     "entryPaise": 2368967,
+     "exitPaise": 2417625,
+     "feesPaise": 3831,
+     "pnlPaise": 44827
+    },
+    {
+     "id": "trade-3",
+     "entryAt": "2026-11-11T03:45:00.000Z",
+     "exitAt": "2026-11-12T03:45:00.000Z",
+     "quantity": 1,
+     "entryPaise": 2409821,
+     "exitPaise": 2403630,
+     "feesPaise": 3851,
+     "pnlPaise": -10042
+    },
+    {
+     "id": "trade-4",
+     "entryAt": "2026-11-13T03:45:00.000Z",
+     "exitAt": "2026-11-23T03:45:00.000Z",
+     "quantity": 1,
+     "entryPaise": 2409328,
+     "exitPaise": 2430657,
+     "feesPaise": 3873,
+     "pnlPaise": 17456
+    }
+   ]
+  }
+ },
+ {
+  "positionSizeBps": 800,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:RELIANCE",
+   "from": "2026-10-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-06",
+   "capitalPaise": 100000,
+   "feeBps": 500,
+   "slippageBps": 500
+  },
+  "result": {
+   "endingEquityPaise": 100000,
+   "netPnlPaise": 0,
+   "returnBps": 0,
+   "maxDrawdownBps": 0,
+   "winRateBps": null,
+   "totalFeesPaise": 0,
+   "points": [
+    {
+     "date": "2026-10-06",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-07",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-12",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-13",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-14",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-15",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-16",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-19",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-20",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-21",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 100000,
+     "drawdownBps": 0
+    }
+   ],
+   "trades": []
+  }
+ },
+ {
+  "positionSizeBps": 10000,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:BANKNIFTY",
+   "from": "2026-10-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-06",
+   "capitalPaise": 1000000000,
+   "feeBps": 0,
+   "slippageBps": 0
+  },
+  "result": {
+   "endingEquityPaise": 1064211238,
+   "netPnlPaise": 64211238,
+   "returnBps": 642,
+   "maxDrawdownBps": -31,
+   "winRateBps": 10000,
+   "totalFeesPaise": 0,
+   "points": [
+    {
+     "date": "2026-10-06",
+     "equityPaise": 1005817566,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-07",
+     "equityPaise": 1010248500,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 1011714732,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 1010108603,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-12",
+     "equityPaise": 1008776895,
+     "drawdownBps": -29
+    },
+    {
+     "date": "2026-10-13",
+     "equityPaise": 1008776895,
+     "drawdownBps": -29
+    },
+    {
+     "date": "2026-10-14",
+     "equityPaise": 1008776895,
+     "drawdownBps": -29
+    },
+    {
+     "date": "2026-10-15",
+     "equityPaise": 1008776895,
+     "drawdownBps": -29
+    },
+    {
+     "date": "2026-10-16",
+     "equityPaise": 1008776895,
+     "drawdownBps": -29
+    },
+    {
+     "date": "2026-10-19",
+     "equityPaise": 1014183526,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-20",
+     "equityPaise": 1020310537,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-21",
+     "equityPaise": 1024674209,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 1026054274,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 1024376107,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 1023563590,
+     "drawdownBps": -24
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 1023563590,
+     "drawdownBps": -24
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 1023563590,
+     "drawdownBps": -24
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 1023563590,
+     "drawdownBps": -24
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 1027683688,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 1033767154,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 1039931824,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 1044270409,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 1045577110,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 1043810320,
+     "drawdownBps": -17
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 1042368346,
+     "drawdownBps": -31
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 1042368346,
+     "drawdownBps": -31
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 1042368346,
+     "drawdownBps": -31
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 1042368346,
+     "drawdownBps": -31
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 1047232318,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 1053435346,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 1059665914,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 1063998466,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 1065236338,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 1065426262,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 1064211238,
+     "drawdownBps": -11
+    }
+   ],
+   "trades": [
+    {
+     "id": "trade-1",
+     "entryAt": "2026-10-06T03:45:00.000Z",
+     "exitAt": "2026-10-12T03:45:00.000Z",
+     "quantity": 199,
+     "entryPaise": 5017895,
+     "exitPaise": 5062000,
+     "feesPaise": 0,
+     "pnlPaise": 8776895
+    },
+    {
+     "id": "trade-2",
+     "entryAt": "2026-10-19T03:45:00.000Z",
+     "exitAt": "2026-10-26T03:45:00.000Z",
+     "quantity": 199,
+     "entryPaise": 5048887,
+     "exitPaise": 5123192,
+     "feesPaise": 0,
+     "pnlPaise": 14786695
+    },
+    {
+     "id": "trade-3",
+     "entryAt": "2026-10-30T03:45:00.000Z",
+     "exitAt": "2026-11-09T03:45:00.000Z",
+     "quantity": 201,
+     "entryPaise": 5085121,
+     "exitPaise": 5178677,
+     "feesPaise": 0,
+     "pnlPaise": 18804756
+    },
+    {
+     "id": "trade-4",
+     "entryAt": "2026-11-13T03:45:00.000Z",
+     "exitAt": "2026-11-23T03:45:00.000Z",
+     "quantity": 204,
+     "entryPaise": 5088541,
+     "exitPaise": 5195614,
+     "feesPaise": 0,
+     "pnlPaise": 21842892
+    }
+   ]
+  }
+ },
+ {
+  "positionSizeBps": 1,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:SBIN",
+   "from": "2026-11-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-11-10",
+   "capitalPaise": 2500000,
+   "feeBps": 20,
+   "slippageBps": 10
+  },
+  "result": {
+   "endingEquityPaise": 2500000,
+   "netPnlPaise": 0,
+   "returnBps": 0,
+   "maxDrawdownBps": 0,
+   "winRateBps": null,
+   "totalFeesPaise": 0,
+   "points": [
+    {
+     "date": "2026-11-10",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 2500000,
+     "drawdownBps": 0
+    }
+   ],
+   "trades": []
+  }
+ },
+ {
+  "positionSizeBps": 550,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:HDFCBANK",
+   "from": "2026-10-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-06",
+   "capitalPaise": 10000000,
+   "feeBps": 3,
+   "slippageBps": 2
+  },
+  "result": {
+   "endingEquityPaise": 10025407,
+   "netPnlPaise": 25407,
+   "returnBps": 25,
+   "maxDrawdownBps": -3,
+   "winRateBps": 10000,
+   "totalFeesPaise": 1158,
+   "points": [
+    {
+     "date": "2026-10-06",
+     "equityPaise": 10002178,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-07",
+     "equityPaise": 10004283,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 10004983,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 10004218,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-12",
+     "equityPaise": 10003705,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-13",
+     "equityPaise": 10003705,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-14",
+     "equityPaise": 10003705,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-15",
+     "equityPaise": 10003705,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-16",
+     "equityPaise": 10003705,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-19",
+     "equityPaise": 10005682,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-20",
+     "equityPaise": 10008597,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-21",
+     "equityPaise": 10010672,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 10011327,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 10010527,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 10010262,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 10010262,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 10010262,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 10010262,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 10011598,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 10014463,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 10017363,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 10019408,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 10020023,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 10019188,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 10018631,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 10018631,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 10018631,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 10018631,
+     "drawdownBps": -1
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 10020275,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 10023155,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 10026045,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 10028050,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 10028625,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 10025850,
+     "drawdownBps": -3
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 10025407,
+     "drawdownBps": -3
+    }
+   ],
+   "trades": [
+    {
+     "id": "trade-1",
+     "entryAt": "2026-10-06T03:45:00.000Z",
+     "exitAt": "2026-10-12T03:45:00.000Z",
+     "quantity": 5,
+     "entryPaise": 94381,
+     "exitPaise": 95179,
+     "feesPaise": 285,
+     "pnlPaise": 3705
+    },
+    {
+     "id": "trade-2",
+     "entryAt": "2026-10-19T03:45:00.000Z",
+     "exitAt": "2026-10-26T03:45:00.000Z",
+     "quantity": 5,
+     "entryPaise": 94968,
+     "exitPaise": 96337,
+     "feesPaise": 288,
+     "pnlPaise": 6557
+    },
+    {
+     "id": "trade-3",
+     "entryAt": "2026-10-30T03:45:00.000Z",
+     "exitAt": "2026-11-09T03:45:00.000Z",
+     "quantity": 5,
+     "entryPaise": 95655,
+     "exitPaise": 97387,
+     "feesPaise": 291,
+     "pnlPaise": 8369
+    },
+    {
+     "id": "trade-4",
+     "entryAt": "2026-11-13T03:45:00.000Z",
+     "exitAt": "2026-11-23T03:45:00.000Z",
+     "quantity": 5,
+     "entryPaise": 96939,
+     "exitPaise": 98353,
+     "feesPaise": 294,
+     "pnlPaise": 6776
+    }
+   ]
+  }
+ },
+ {
+  "positionSizeBps": 1100,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:FINNIFTY",
+   "from": "2026-10-01",
+   "to": "2026-10-09",
+   "outOfSampleFrom": "2026-10-07",
+   "capitalPaise": 333333,
+   "feeBps": 7,
+   "slippageBps": 9
+  },
+  "result": {
+   "endingEquityPaise": 333333,
+   "netPnlPaise": 0,
+   "returnBps": 0,
+   "maxDrawdownBps": 0,
+   "winRateBps": null,
+   "totalFeesPaise": 0,
+   "points": [
+    {
+     "date": "2026-10-07",
+     "equityPaise": 333333,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 333333,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 333333,
+     "drawdownBps": 0
+    }
+   ],
+   "trades": []
+  }
+ },
+ {
+  "positionSizeBps": 10000,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:RELIANCE",
+   "from": "2026-10-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-06",
+   "capitalPaise": 987654321,
+   "feeBps": 500,
+   "slippageBps": 500
+  },
+  "result": {
+   "endingEquityPaise": 476367540,
+   "netPnlPaise": -511286781,
+   "returnBps": -5177,
+   "maxDrawdownBps": -5177,
+   "winRateBps": 0,
+   "totalFeesPaise": 279540722,
+   "points": [
+    {
+     "date": "2026-10-06",
+     "equityPaise": 902297031,
+     "drawdownBps": -864
+    },
+    {
+     "date": "2026-10-07",
+     "equityPaise": 906278466,
+     "drawdownBps": -824
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 907596951,
+     "drawdownBps": -811
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 906155061,
+     "drawdownBps": -825
+    },
+    {
+     "date": "2026-10-12",
+     "equityPaise": 818051360,
+     "drawdownBps": -1717
+    },
+    {
+     "date": "2026-10-13",
+     "equityPaise": 818051360,
+     "drawdownBps": -1717
+    },
+    {
+     "date": "2026-10-14",
+     "equityPaise": 818051360,
+     "drawdownBps": -1717
+    },
+    {
+     "date": "2026-10-15",
+     "equityPaise": 818051360,
+     "drawdownBps": -1717
+    },
+    {
+     "date": "2026-10-16",
+     "equityPaise": 818051360,
+     "drawdownBps": -1717
+    },
+    {
+     "date": "2026-10-19",
+     "equityPaise": 747025740,
+     "drawdownBps": -2436
+    },
+    {
+     "date": "2026-10-20",
+     "equityPaise": 751559148,
+     "drawdownBps": -2390
+    },
+    {
+     "date": "2026-10-21",
+     "equityPaise": 754788132,
+     "drawdownBps": -2358
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 755809218,
+     "drawdownBps": -2347
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 754568946,
+     "drawdownBps": -2360
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 681564237,
+     "drawdownBps": -3099
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 681564237,
+     "drawdownBps": -3099
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 681564237,
+     "drawdownBps": -3099
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 681564237,
+     "drawdownBps": -3099
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 621557475,
+     "drawdownBps": -3707
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 625245423,
+     "drawdownBps": -3669
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 628977591,
+     "drawdownBps": -3632
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 631608681,
+     "drawdownBps": -3605
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 632400219,
+     "drawdownBps": -3597
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 631330095,
+     "drawdownBps": -3608
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 569923107,
+     "drawdownBps": -4230
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 569923107,
+     "drawdownBps": -4230
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 569923107,
+     "drawdownBps": -4230
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 569923107,
+     "drawdownBps": -4230
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 518524263,
+     "drawdownBps": -4750
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 521606934,
+     "drawdownBps": -4719
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 524704337,
+     "drawdownBps": -4687
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 532659617,
+     "drawdownBps": -4607
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 533274678,
+     "drawdownBps": -4601
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 527573394,
+     "drawdownBps": -4658
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 476367540,
+     "drawdownBps": -5177
+    }
+   ],
+   "trades": [
+    {
+     "id": "trade-1",
+     "entryAt": "2026-10-06T03:45:00.000Z",
+     "exitAt": "2026-10-12T03:45:00.000Z",
+     "quantity": 6495,
+     "entryPaise": 144820,
+     "exitPaise": 132577,
+     "feesPaise": 90084676,
+     "pnlPaise": -169602961
+    },
+    {
+     "id": "trade-2",
+     "entryAt": "2026-10-19T03:45:00.000Z",
+     "exitAt": "2026-10-26T03:45:00.000Z",
+     "quantity": 5346,
+     "entryPaise": 145715,
+     "exitPaise": 134179,
+     "feesPaise": 74815667,
+     "pnlPaise": -136487123
+    },
+    {
+     "id": "trade-3",
+     "entryAt": "2026-10-30T03:45:00.000Z",
+     "exitAt": "2026-11-09T03:45:00.000Z",
+     "quantity": 4422,
+     "entryPaise": 146761,
+     "exitPaise": 135634,
+     "feesPaise": 62437536,
+     "pnlPaise": -111641130
+    },
+    {
+     "id": "trade-4",
+     "entryAt": "2026-11-13T03:45:00.000Z",
+     "exitAt": "2026-11-23T03:45:00.000Z",
+     "quantity": 3683,
+     "entryPaise": 147354,
+     "exitPaise": 136126,
+     "feesPaise": 52202843,
+     "pnlPaise": -93555567
+    }
+   ]
+  }
+ },
+ {
+  "positionSizeBps": 5000,
+  "config": {
+   "strategyId": "x",
+   "instrumentId": "NSE:SBIN",
+   "from": "2026-10-01",
+   "to": "2026-11-23",
+   "outOfSampleFrom": "2026-10-06",
+   "capitalPaise": 1234567,
+   "feeBps": 13,
+   "slippageBps": 17
+  },
+  "result": {
+   "endingEquityPaise": 1261515,
+   "netPnlPaise": 26948,
+   "returnBps": 218,
+   "maxDrawdownBps": -28,
+   "winRateBps": 10000,
+   "totalFeesPaise": 6085,
+   "points": [
+    {
+     "date": "2026-10-06",
+     "equityPaise": 1236493,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-07",
+     "equityPaise": 1239048,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-08",
+     "equityPaise": 1239895,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-09",
+     "equityPaise": 1238971,
+     "drawdownBps": -7
+    },
+    {
+     "date": "2026-10-12",
+     "equityPaise": 1237916,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-13",
+     "equityPaise": 1237916,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-14",
+     "equityPaise": 1237916,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-15",
+     "equityPaise": 1237916,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-16",
+     "equityPaise": 1237916,
+     "drawdownBps": -16
+    },
+    {
+     "date": "2026-10-19",
+     "equityPaise": 1239593,
+     "drawdownBps": -2
+    },
+    {
+     "date": "2026-10-20",
+     "equityPaise": 1243128,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-21",
+     "equityPaise": 1245648,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-22",
+     "equityPaise": 1246446,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-10-23",
+     "equityPaise": 1245480,
+     "drawdownBps": -8
+    },
+    {
+     "date": "2026-10-26",
+     "equityPaise": 1242955,
+     "drawdownBps": -28
+    },
+    {
+     "date": "2026-10-27",
+     "equityPaise": 1242955,
+     "drawdownBps": -28
+    },
+    {
+     "date": "2026-10-28",
+     "equityPaise": 1242955,
+     "drawdownBps": -28
+    },
+    {
+     "date": "2026-10-29",
+     "equityPaise": 1242955,
+     "drawdownBps": -28
+    },
+    {
+     "date": "2026-10-30",
+     "equityPaise": 1243849,
+     "drawdownBps": -21
+    },
+    {
+     "date": "2026-11-02",
+     "equityPaise": 1247328,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-03",
+     "equityPaise": 1250856,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-04",
+     "equityPaise": 1253334,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-05",
+     "equityPaise": 1254083,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-06",
+     "equityPaise": 1253075,
+     "drawdownBps": -8
+    },
+    {
+     "date": "2026-11-09",
+     "equityPaise": 1251954,
+     "drawdownBps": -17
+    },
+    {
+     "date": "2026-11-10",
+     "equityPaise": 1251954,
+     "drawdownBps": -17
+    },
+    {
+     "date": "2026-11-11",
+     "equityPaise": 1251954,
+     "drawdownBps": -17
+    },
+    {
+     "date": "2026-11-12",
+     "equityPaise": 1251954,
+     "drawdownBps": -17
+    },
+    {
+     "date": "2026-11-13",
+     "equityPaise": 1253221,
+     "drawdownBps": -7
+    },
+    {
+     "date": "2026-11-16",
+     "equityPaise": 1256714,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-17",
+     "equityPaise": 1260228,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-18",
+     "equityPaise": 1262664,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-19",
+     "equityPaise": 1263364,
+     "drawdownBps": 0
+    },
+    {
+     "date": "2026-11-20",
+     "equityPaise": 1262503,
+     "drawdownBps": -7
+    },
+    {
+     "date": "2026-11-23",
+     "equityPaise": 1261515,
+     "drawdownBps": -15
+    }
+   ],
+   "trades": [
+    {
+     "id": "trade-1",
+     "entryAt": "2026-10-06T03:45:00.000Z",
+     "exitAt": "2026-10-12T03:45:00.000Z",
+     "quantity": 7,
+     "entryPaise": 82091,
+     "exitPaise": 82784,
+     "feesPaise": 1502,
+     "pnlPaise": 3349
+    },
+    {
+     "id": "trade-2",
+     "entryAt": "2026-10-19T03:45:00.000Z",
+     "exitAt": "2026-10-26T03:45:00.000Z",
+     "quantity": 7,
+     "entryPaise": 82601,
+     "exitPaise": 83537,
+     "feesPaise": 1513,
+     "pnlPaise": 5039
+    },
+    {
+     "id": "trade-3",
+     "entryAt": "2026-10-30T03:45:00.000Z",
+     "exitAt": "2026-11-09T03:45:00.000Z",
+     "quantity": 7,
+     "entryPaise": 83197,
+     "exitPaise": 84701,
+     "feesPaise": 1529,
+     "pnlPaise": 8999
+    },
+    {
+     "id": "trade-4",
+     "entryAt": "2026-11-13T03:45:00.000Z",
+     "exitAt": "2026-11-23T03:45:00.000Z",
+     "quantity": 7,
+     "entryPaise": 83806,
+     "exitPaise": 85392,
+     "feesPaise": 1541,
+     "pnlPaise": 9561
+    }
+   ]
+  }
+ }
+]

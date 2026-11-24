@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -18,6 +20,7 @@ from app.auth.crypto import Keys
 from app.auth.otp import ConsoleOtpProvider, DisabledOtpProvider, OtpProvider
 from app.auth.ratelimit import RateLimiter
 from app.auth.service import AuthService, Clock, utc_now
+from app.backtests.service import BacktestService
 from app.brokers.adapter import BrokerAdapter, DemoBrokerAdapter
 from app.brokers.service import BrokerService
 from app.cache.redis import create_redis
@@ -87,10 +90,25 @@ def create_app(
             clock=clock,
             enabled=settings.strategies_enabled,
         )
+        app.state.backtests = BacktestService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.backtests_enabled,
+            stale_after_seconds=settings.backtest_stale_after_seconds,
+        )
+        worker: asyncio.Task[None] | None = None
+        if settings.backtests_enabled and settings.backtest_worker_enabled:
+            worker = asyncio.create_task(
+                app.state.backtests.run_worker(settings.backtest_worker_poll_seconds)
+            )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:
             yield
         finally:
+            if worker is not None:
+                worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
             await app.state.redis.aclose()
             await app.state.db_engine.dispose()
             logger.info("shutdown")

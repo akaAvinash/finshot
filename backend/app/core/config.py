@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     # false: every strategy endpoint returns 503 STRATEGY_UNAVAILABLE.
     strategies_enabled: bool = True
 
+    # --- Backtests (Phase C2, demo candles only) -------------------------------
+    # false: every backtest endpoint returns 503 BACKTEST_UNAVAILABLE and the
+    # worker does not start.
+    backtests_enabled: bool = True
+    # The in-process worker that completes queued runs. Turn it off to run
+    # the API without completing runs (tests drive the worker directly).
+    backtest_worker_enabled: bool = True
+    backtest_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    # A run still `running` after this long is failed as abandoned.
+    backtest_stale_after_seconds: int = Field(default=300, ge=10, le=3600)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

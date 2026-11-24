@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.7.0
+  version: 0.8.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
     strategy versions with automatic backtest and risk checks, demo backtest
-    jobs (simulated data only) and a paper trading engine (simulated fills
-    over demo data, no broker). The frontend uses deterministic demo responses in
+    jobs (simulated data only), a paper trading engine (simulated fills
+    over demo data, no broker) and read-only reports over the paper ledger. The frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels a real
     order; paper orders exist only in the server's paper ledger.
@@ -41,6 +41,13 @@ tags:
       halt (kill switch). Simulated fills only: no broker, live data or real
       order. Promoted from `contracts/auto-trading.openapi.yaml` with session,
       CSRF and error semantics; see the operations for the differences.
+  - name: Reports
+    description: >
+      Read-only reports over the caller's paper ledger: realised and
+      unrealised P&L, a daily calendar, a trade journal, a strategy breakdown
+      and a reconciliation of the paper account against its ledger. Every
+      figure is derived from server-side paper fills over demo data; there is
+      no live broker, so no broker statement or tax field is reported.
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -864,7 +871,132 @@ paths:
           $ref: '#/components/responses/PaperConflict'
         '503':
           $ref: '#/components/responses/PaperUnavailable'
+  /api/v1/reports/paper:
+    get:
+      operationId: getPaperReport
+      tags: [Reports]
+      summary: Read the paper P&L report
+      description: |
+        Returns a report over the caller's paper fills (every replay, not only
+        the current one). All amounts are integer paise. Dates are IST
+        calendar dates of the demo session a fill belongs to.
+
+        - `status: empty` (with no `data`) when the caller has no paper fill
+          at all and has never assigned a strategy. Otherwise `ready`.
+        - `from` and `to` filter fills by session date, both inclusive. Each
+          is optional; an open side is unbounded. `period` echoes the given
+          dates and fills an open side with the earliest (`from`) or latest
+          (`to`) fill date in the period, or `null` when the period has no
+          fill.
+        - `summary`, `daily`, `strategies` and `journal` cover only fills in
+          the period. `daily` lists only dates with at least one fill,
+          oldest first. `journal` lists the period's fills newest first, at
+          most 500; `journalTruncated` is true when more exist (use
+          `exportPaperTrades` for all of them).
+        - Realised P&L of a fill is its `pnlPaise` (zero for a buy; for a
+          sell, proceeds minus cost minus both sides' fees). `netPaise` is
+          `realisedPaise + unrealisedPaise`.
+        - `openPosition` is the current replay's open position, marked at the
+          close of the last replayed session, whatever the period; `null`
+          when flat. `unrealisedPaise` in `summary` is that position's
+          unrealised P&L (mark value minus cost minus the entry fee, before
+          any exit fee), or `0` when flat.
+        - `strategies` groups the period's fills by the strategy version that
+          made them (the version pinned when the replay was assigned),
+          ordered by strategy name then version. Fills recorded before the
+          server kept this attribution have `strategy: null` and are grouped
+          last under `strategy: null`.
+        - `reconciliation` replays the current replay's ledger from the paper
+          capital: cash = capital − Σ(buy fill × quantity + fees) +
+          Σ(sell fill × quantity − fees); quantity = Σ buys − Σ sells. It is
+          `matched` when both equal the paper account's values, otherwise
+          `mismatch` (which a correct server never produces; a client shows
+          it as an error). `null` when no strategy has ever been assigned.
+
+        `stale` is reserved and not emitted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The caller's paper report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResult'
+        '400':
+          $ref: '#/components/responses/ReportInvalidRequest'
+        '401':
+          $ref: '#/components/responses/ReportUnauthenticated'
+        '503':
+          $ref: '#/components/responses/ReportUnavailable'
+  /api/v1/reports/paper/trades.csv:
+    get:
+      operationId: exportPaperTrades
+      tags: [Reports]
+      summary: Export paper fills as CSV
+      description: |
+        Returns every paper fill in the period as CSV (RFC 4180, UTF-8, CRLF
+        line endings, no byte-order mark), oldest first, with the same
+        `from`/`to` rules as `getPaperReport`. The header row is always
+        present, also when there are no fills:
+
+        `date,filled_at,replay,strategy,version,instrument,side,quantity,fill_inr,fees_inr,pnl_inr,reason,trade_id`
+
+        - `date` is the IST session date (`YYYY-MM-DD`); `filled_at` the
+          RFC 3339 UTC time.
+        - Money columns are rupees with exactly two decimals and no grouping
+          (`-1234.50`), converted exactly from paise.
+        - `strategy` is the strategy name and `version` its version number;
+          both are empty for an unattributed fill. A field that contains a comma,
+          quote or line break is quoted, with quotes doubled. A field that
+          starts with `=`, `+`, `-` or `@` and is not a number is prefixed
+          with `'` so spreadsheets do not run it as a formula.
+        - `Content-Disposition: attachment; filename="tradeo-paper-trades.csv"`.
+
+        PDF export is not served by the API; the client prints the report.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReportFrom'
+        - $ref: '#/components/parameters/ReportTo'
+      responses:
+        '200':
+          description: The period's paper fills as CSV.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/ReportInvalidRequest'
+        '401':
+          $ref: '#/components/responses/ReportUnauthenticated'
+        '503':
+          $ref: '#/components/responses/ReportUnavailable'
 components:
+  parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: First IST session date to include (`YYYY-MM-DD`). Must not be after `to`.
+      schema:
+        type: string
+        format: date
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: Last IST session date to include (`YYYY-MM-DD`).
+      schema:
+        type: string
+        format: date
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -2116,6 +2248,247 @@ components:
         requestId:
           type: string
           description: Same value as the `X-Request-ID` response header.
+    ReportResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status:
+              enum: [ready, stale]
+            data:
+              $ref: '#/components/schemas/PaperReport'
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status:
+              const: empty
+    PaperReport:
+      type: object
+      required: [source, environment, asOf, period, summary, openPosition, daily, strategies, journal, journalTruncated, reconciliation]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: PAPER
+        asOf:
+          type: string
+          format: date-time
+        period:
+          type: object
+          required: [from, to]
+          additionalProperties: false
+          properties:
+            from:
+              type: [string, 'null']
+              format: date
+            to:
+              type: [string, 'null']
+              format: date
+        summary:
+          $ref: '#/components/schemas/ReportSummary'
+        openPosition:
+          oneOf:
+            - $ref: '#/components/schemas/ReportOpenPosition'
+            - type: 'null'
+        daily:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportDay'
+        strategies:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportStrategy'
+        journal:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ReportTrade'
+        journalTruncated:
+          type: boolean
+        reconciliation:
+          oneOf:
+            - $ref: '#/components/schemas/ReportReconciliation'
+            - type: 'null'
+    ReportSummary:
+      type: object
+      required: [realisedPaise, unrealisedPaise, netPaise, feesPaise, fills, closedTrades, winningTrades, losingTrades]
+      additionalProperties: false
+      properties:
+        realisedPaise:
+          type: integer
+        unrealisedPaise:
+          type: integer
+        netPaise:
+          type: integer
+        feesPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        fills:
+          type: integer
+          minimum: 0
+        closedTrades:
+          type: integer
+          minimum: 0
+          description: Sell fills in the period (each closes a position).
+        winningTrades:
+          type: integer
+          minimum: 0
+          description: Sell fills with `pnlPaise > 0`.
+        losingTrades:
+          type: integer
+          minimum: 0
+          description: Sell fills with `pnlPaise < 0`.
+    ReportOpenPosition:
+      type: object
+      required: [instrument, quantity, entryPaise, markPaise, markedAt, unrealisedPaise]
+      additionalProperties: false
+      properties:
+        instrument:
+          type: string
+          minLength: 1
+        quantity:
+          type: integer
+          minimum: 1
+        entryPaise:
+          type: integer
+          minimum: 1
+        markPaise:
+          type: integer
+          minimum: 1
+          description: Close of the last replayed demo session.
+        markedAt:
+          type: string
+          format: date-time
+          description: That session's time.
+        unrealisedPaise:
+          type: integer
+    ReportDay:
+      type: object
+      required: [date, realisedPaise, feesPaise, fills]
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+        realisedPaise:
+          type: integer
+        feesPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        fills:
+          type: integer
+          minimum: 1
+    ReportStrategyRef:
+      type: object
+      required: [id, name, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+        version:
+          type: integer
+          minimum: 1
+    ReportStrategy:
+      type: object
+      required: [strategy, realisedPaise, feesPaise, fills, closedTrades]
+      additionalProperties: false
+      properties:
+        strategy:
+          description: The strategy version that made these fills; `null` groups unattributed fills.
+          oneOf:
+            - $ref: '#/components/schemas/ReportStrategyRef'
+            - type: 'null'
+        realisedPaise:
+          type: integer
+        feesPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        fills:
+          type: integer
+          minimum: 1
+        closedTrades:
+          type: integer
+          minimum: 0
+    ReportTrade:
+      type: object
+      required: [id, date, replay, strategy, instrument, side, quantity, fillPaise, feesPaise, pnlPaise, filledAt, reason]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        date:
+          type: string
+          format: date
+        replay:
+          type: integer
+          minimum: 1
+        strategy:
+          description: The strategy version that made the fill; `null` when unattributed.
+          oneOf:
+            - $ref: '#/components/schemas/ReportStrategyRef'
+            - type: 'null'
+        instrument:
+          type: string
+          minLength: 1
+        side:
+          enum: [Buy, Sell]
+        quantity:
+          type: integer
+          minimum: 1
+        fillPaise:
+          type: integer
+          minimum: 1
+        feesPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        pnlPaise:
+          type: integer
+        filledAt:
+          type: string
+          format: date-time
+        reason:
+          enum: [entry, signal-exit, stop-loss, end-of-replay]
+    ReportReconciliation:
+      type: object
+      required: [status, replay, ledgerCashPaise, accountCashPaise, ledgerQuantity, accountQuantity]
+      additionalProperties: false
+      properties:
+        status:
+          enum: [matched, mismatch]
+        replay:
+          type: integer
+          minimum: 1
+        ledgerCashPaise:
+          type: integer
+        accountCashPaise:
+          $ref: '#/components/schemas/NonnegativePaise'
+        ledgerQuantity:
+          type: integer
+        accountQuantity:
+          type: integer
+          minimum: 0
+    ReportError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - REPORTS_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
   responses:
     AuthInvalidRequest:
       description: The request body is missing, malformed or has an invalid field.
@@ -2392,3 +2765,30 @@ components:
           example:
             code: PAPER_UNAVAILABLE
             message: Paper trading is temporarily unavailable. Try again shortly.
+    ReportInvalidRequest:
+      description: A date is malformed, or `from` is after `to`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReportError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    ReportUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReportError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    ReportUnavailable:
+      description: Reports are disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReportError'
+          example:
+            code: REPORTS_UNAVAILABLE
+            message: Reports are temporarily unavailable. Try again shortly.

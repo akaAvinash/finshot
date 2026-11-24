@@ -45,10 +45,17 @@ from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.market.demo import DemoMarketDataProvider
 from app.paper import engine as paper
-from app.paper.models import PaperAccount, PaperOrder, PaperReplay, PaperTrade
+from app.paper.models import (
+    PaperAccount,
+    PaperOrder,
+    PaperReplay,
+    PaperReplayFinish,
+    PaperTrade,
+)
 
 logger = structlog.get_logger(__name__)
 
+MAX_SEQ = 2**63 - 1  # PostgreSQL bigint
 _CURSOR = re.compile(r"v1:(\*|[a-z-]{1,32}):([1-9][0-9]{0,18})")
 
 
@@ -83,7 +90,10 @@ def decode_cursor(cursor: str, agent_id: AgentId | None) -> int:
         or encode_cursor(agent_id, int(match.group(2))) != cursor
     ):
         raise invalid_cursor()
-    return int(match.group(2))
+    seq = int(match.group(2))
+    if seq > MAX_SEQ:
+        raise invalid_cursor()
+    return seq
 
 
 class AgentService:
@@ -225,7 +235,7 @@ class AgentService:
                 )
                 .on_conflict_do_nothing(index_elements=[AgentRun.user_id])
             )
-            run = await db.scalar(
+            pending = (
                 select(AgentRun)
                 .join(PaperAccount, PaperAccount.user_id == AgentRun.user_id)
                 .where(
@@ -235,12 +245,17 @@ class AgentService:
                         AgentRun.data_as_of.is_distinct_from(PaperAccount.updated_at),
                     ),
                 )
-                .order_by(PaperAccount.updated_at)
+            )
+            run = await db.scalar(
+                pending.order_by(PaperAccount.updated_at)
                 .limit(1)
                 .with_for_update(of=AgentRun, skip_locked=True)
             )
             if run is None:
-                # Every user is evaluated: this pass has ended.
+                # SKIP LOCKED hides users another worker holds; the pass has
+                # ended only when no user is pending at all.
+                if await db.scalar(select(pending.exists())):
+                    return False
                 await db.execute(
                     insert(AgentWorker)
                     .values(id=1, pass_ended_at=now)
@@ -363,26 +378,44 @@ class AgentService:
                 .order_by(PaperOrder.seq)
             )
         ).all()
-        summary = None
-        if account.finished and account.replay >= 1:
-            totals = (
-                await db.execute(
-                    select(
-                        func.count(),
-                        func.count().filter(
-                            and_(PaperTrade.side == "Sell", PaperTrade.pnl_paise > 0)
-                        ),
-                        func.coalesce(func.sum(PaperTrade.pnl_paise), 0),
-                        func.max(PaperTrade.filled_at),
-                    ).where(PaperTrade.user_id == user_id, PaperTrade.replay == account.replay)
+        summarised = select(AgentEvent.id).where(
+            AgentEvent.user_id == user_id,
+            AgentEvent.agent_id == "strategy-analyst",
+            AgentEvent.dedupe_key == func.concat("replay:", cast(PaperReplayFinish.replay, String)),
+        )
+        replay_fills = and_(
+            PaperTrade.user_id == PaperReplayFinish.user_id,
+            PaperTrade.replay == PaperReplayFinish.replay,
+        )
+        finished = (
+            await db.execute(
+                select(
+                    PaperReplayFinish.replay,
+                    PaperReplayFinish.finished_at,
+                    select(func.count()).where(replay_fills).scalar_subquery(),
+                    select(func.count())
+                    .where(replay_fills, PaperTrade.side == "Sell", PaperTrade.pnl_paise > 0)
+                    .scalar_subquery(),
+                    select(func.coalesce(func.sum(PaperTrade.pnl_paise), 0))
+                    .where(replay_fills)
+                    .scalar_subquery(),
+                    select(func.max(PaperTrade.filled_at)).where(replay_fills).scalar_subquery(),
                 )
-            ).one()
-            summary = rules.ReplaySummary(
-                fills=int(totals[0]),
-                winning_sells=int(totals[1]),
-                realised_paise=int(totals[2]),
-                last_fill_at=totals[3],
+                .where(PaperReplayFinish.user_id == user_id, ~summarised.exists())
+                .order_by(PaperReplayFinish.replay)
             )
+        ).all()
+        summaries = [
+            rules.ReplaySummary(
+                replay=int(r[0]),
+                finished_at=r[1],
+                fills=int(r[2]),
+                winning_sells=int(r[3]),
+                realised_paise=int(r[4]),
+                last_fill_at=r[5],
+            )
+            for r in finished
+        ]
         closes: list[rules.Close] = []
         if account.instrument_id is not None:
             candles = await self._market.get_candles(account.instrument_id, "1D")
@@ -394,7 +427,6 @@ class AgentService:
         return rules.Observation(
             replay=account.replay,
             engine=account.engine,
-            finished=account.finished,
             changed_at=account.updated_at,
             symbol=symbol,
             sessions_done=account.sessions_done,
@@ -426,7 +458,7 @@ class AgentService:
                 for o in cancelled
             ],
             reconciled=reconciled if account.replay >= 1 else None,
-            summary=summary,
+            summaries=summaries,
         )
 
     async def run_worker(self, poll_seconds: float) -> None:

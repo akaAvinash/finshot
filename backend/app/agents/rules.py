@@ -98,6 +98,8 @@ class Close:
 
 @dataclass(frozen=True)
 class ReplaySummary:
+    replay: int
+    finished_at: datetime
     fills: int
     winning_sells: int
     realised_paise: int
@@ -108,7 +110,6 @@ class ReplaySummary:
 class Observation:
     replay: int
     engine: str
-    finished: bool
     changed_at: datetime  # the paper account's updated_at
     symbol: str | None
     sessions_done: int
@@ -116,7 +117,7 @@ class Observation:
     trades: Sequence[Trade]  # fills after memory's tradeSeq, by seq
     cancelled: Sequence[CancelledOrder]
     reconciled: bool | None  # None before the first assignment
-    summary: ReplaySummary | None  # the current replay's, when it has finished
+    summaries: Sequence[ReplaySummary]  # finished replays not yet summarised
 
 
 @dataclass(frozen=True)
@@ -229,28 +230,26 @@ def _scan(obs: Observation, out: Result) -> None:
 
 
 def _analyse(obs: Observation, out: Result) -> None:
-    summary = obs.summary
-    if summary is None or not obs.finished:
-        return
-    out.events.append(
-        NewEvent(
-            agent_id="strategy-analyst",
-            dedupe_key=f"replay:{obs.replay}",
-            reason_code="REPLAY_SUMMARY",
-            severity="info",
-            message=(
-                f"Replay {obs.replay} finished with {summary.fills} fill(s),"
-                f" {summary.winning_sells} winning sell(s) and realised P&L of"
-                f" {paper.rupees(summary.realised_paise)}."
-            ),
-            recommendation=(
-                "Compare this replay with the strategy's backtest before changing parameters."
-            ),
-            link_kind="paper-replay",
-            link_id=str(obs.replay),
-            data_as_of=summary.last_fill_at or obs.changed_at,
+    for summary in obs.summaries:
+        out.events.append(
+            NewEvent(
+                agent_id="strategy-analyst",
+                dedupe_key=f"replay:{summary.replay}",
+                reason_code="REPLAY_SUMMARY",
+                severity="info",
+                message=(
+                    f"Replay {summary.replay} finished with {summary.fills} fill(s),"
+                    f" {summary.winning_sells} winning sell(s) and realised P&L of"
+                    f" {paper.rupees(summary.realised_paise)}."
+                ),
+                recommendation=(
+                    "Compare this replay with the strategy's backtest before changing parameters."
+                ),
+                link_kind="paper-replay",
+                link_id=str(summary.replay),
+                data_as_of=summary.last_fill_at or summary.finished_at,
+            )
         )
-    )
 
 
 def _explain_risk(obs: Observation, out: Result) -> None:

@@ -7,7 +7,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.agents import rules
-from app.agents.rules import CancelledOrder, Close, Memory, Observation, ReplaySummary, Trade
+from app.agents.rules import (
+    CancelledOrder,
+    Close,
+    Memory,
+    Observation,
+    ReplaySummary,
+    Trade,
+)
 from app.agents.schemas import AgentRosterOut
 from app.paper import engine as paper
 
@@ -22,7 +29,6 @@ def obs(**overrides: Any) -> Observation:
     base = Observation(
         replay=1,
         engine="running",
-        finished=False,
         changed_at=day(100),
         symbol="SBIN",
         sessions_done=0,
@@ -30,7 +36,7 @@ def obs(**overrides: Any) -> Observation:
         trades=[],
         cancelled=[],
         reconciled=True,
-        summary=None,
+        summaries=[],
     )
     return replace(base, **overrides)
 
@@ -115,16 +121,27 @@ def test_scanner_checks_each_session_once_per_replay() -> None:
 # ----------------------------------------------------------- strategy analyst
 
 
-def test_analyst_summarises_a_finished_replay() -> None:
-    summary = ReplaySummary(fills=4, winning_sells=1, realised_paise=-12_345, last_fill_at=day(9))
-    result = rules.evaluate(obs(finished=True, engine="idle", summary=summary), Memory())
-    assert codes(result) == ["REPLAY_SUMMARY"]
-    event = result.events[0]
-    assert event.dedupe_key == "replay:1"
-    assert event.data_as_of == day(9)
-    assert "4 fill(s)" in event.message and "1 winning" in event.message
-    assert paper.rupees(-12_345) in event.message
-    assert rules.evaluate(obs(summary=summary), Memory()).events == []  # not finished
+def test_analyst_summarises_each_finished_replay() -> None:
+    first = ReplaySummary(
+        replay=1,
+        finished_at=day(10),
+        fills=4,
+        winning_sells=1,
+        realised_paise=-12_345,
+        last_fill_at=day(9),
+    )
+    # Replay 1 finished and replay 2 was assigned before the agents ran.
+    second = ReplaySummary(
+        replay=2, finished_at=day(20), fills=0, winning_sells=0, realised_paise=0, last_fill_at=None
+    )
+    result = rules.evaluate(obs(replay=3, summaries=[first, second]), Memory())
+    assert codes(result) == ["REPLAY_SUMMARY", "REPLAY_SUMMARY"]
+    one, two = result.events
+    assert (one.dedupe_key, one.link_id, one.data_as_of) == ("replay:1", "1", day(9))
+    assert "4 fill(s)" in one.message and "1 winning" in one.message
+    assert paper.rupees(-12_345) in one.message
+    assert (two.dedupe_key, two.data_as_of) == ("replay:2", day(20))  # no fills: finish time
+    assert rules.evaluate(obs(), Memory()).events == []
 
 
 # -------------------------------------------------------------- risk explainer

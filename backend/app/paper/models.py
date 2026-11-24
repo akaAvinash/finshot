@@ -1,5 +1,5 @@
-"""Paper tables: paper_accounts, paper_replays, paper_orders, paper_trades,
-paper_events.
+"""Paper tables: paper_accounts, paper_replays, paper_replay_finishes,
+paper_orders, paper_trades, paper_events.
 
 One paper account per user. `replay` numbers the account's replays: `assign`
 starts a new one, and orders and trades belong to the replay that made them,
@@ -109,6 +109,21 @@ class PaperReplay(Base):
     strategy_name: Mapped[str] = mapped_column(String(64))
     instrument_id: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperReplayFinish(Base):
+    """When a replay finished (replayed its last session). Written by the paper
+    engine in the tick that finishes it (migration 0008), append-only. Agents
+    read it so a finished replay is summarised even if it is reassigned
+    before they run."""
+
+    __tablename__ = "paper_replay_finishes"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    replay: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PaperOrder(Base):

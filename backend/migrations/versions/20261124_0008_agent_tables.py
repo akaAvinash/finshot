@@ -1,4 +1,5 @@
-"""Advisory agent tables: agent_events, agent_runs and agent_worker.
+"""Advisory agent tables (agent_events, agent_runs, agent_worker) and
+paper_replay_finishes.
 
 Revision ID: 0008
 Revises: 0007
@@ -6,8 +7,13 @@ Create Date: 2026-11-24
 
 agent_events is append-only, like the paper ledger (it reuses the
 paper_ledger_append_only() trigger function from 0006); DELETE stays possible
-so deleting a user can cascade. Both tables start empty: the agent worker
-evaluates existing paper accounts on its first pass, so no backfill is needed.
+so deleting a user can cascade. The agent tables start empty: the agent worker
+evaluates existing paper accounts on its first pass.
+
+paper_replay_finishes records when each replay finished, written by the paper
+engine (append-only, same trigger). Backfill: each account whose current
+replay has finished, at the account's updated_at. Earlier finished replays
+were not recorded, so agents do not summarise them.
 """
 
 from collections.abc import Sequence
@@ -99,8 +105,32 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_agent_worker")),
     )
 
+    op.create_table(
+        "paper_replay_finishes",
+        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("replay", sa.Integer(), nullable=False),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_paper_replay_finishes_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("user_id", "replay", name=op.f("pk_paper_replay_finishes")),
+    )
+    op.execute(
+        "CREATE TRIGGER paper_replay_finishes_no_update BEFORE UPDATE ON paper_replay_finishes"
+        " FOR EACH ROW EXECUTE FUNCTION paper_ledger_append_only()"
+    )
+    op.execute(
+        "INSERT INTO paper_replay_finishes (user_id, replay, finished_at)"
+        " SELECT user_id, replay, updated_at FROM paper_accounts"
+        " WHERE finished AND replay >= 1"
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("paper_replay_finishes")
     op.drop_table("agent_worker")
     op.drop_table("agent_runs")
     op.drop_table("agent_events")

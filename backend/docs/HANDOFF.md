@@ -66,6 +66,13 @@ after the contract merges (CodeRabbit skips PRs based on other branches).
   (user, agent, dedupe key), so re-evaluation never duplicates. When nothing
   is pending it records the pass end in `agent_worker` (one row), which
   health uses to report a stopped worker as `stale`.
+- `paper_replay_finishes` (also migration `0008`, append-only) is written by
+  the paper engine in the tick that finishes a replay, so the strategy
+  analyst summarises every finished replay even if the user reassigns before
+  the agents run. Backfill covers only each account's current finished
+  replay.
+- An empty claim (SKIP LOCKED) does not end a pass: the worker records the
+  pass end only when a non-locking check finds no pending user.
 - `agent_events` is append-only (the `paper_ledger_append_only()` trigger).
   Event links are re-verified against the reader's own paper rows on every
   read; links to records that no longer exist or belong to someone else are

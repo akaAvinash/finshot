@@ -148,14 +148,26 @@ def test_every_endpoint_requires_a_session(browser: Browser, contract: Any) -> N
     assert browser.get(EVENTS, params={"limit": "0", "cursor": "!"}).status_code == 401
 
 
-def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> None:
-    browser = Browser(make_app(agents_enabled=False, agent_worker_enabled=False))
-    browser.login()
+def test_disabled_is_503_and_starts_no_worker(
+    make_app: Callable[..., TestClient], contract: Any
+) -> None:
+    # The worker setting is on: only AGENTS_ENABLED keeps the worker off.
+    client = make_app(
+        agents_enabled=False,
+        agent_worker_enabled=True,
+        agent_worker_poll_seconds=0.05,
+        paper_worker_enabled=False,
+        backtest_worker_enabled=False,
+    )
+    browser = assigned(client)
     for path in (ROSTER, HEALTH, EVENTS):
         response = browser.get(path)
         assert response.status_code == 503, path
         check(contract, "AgentError", response.json())
         assert response.json()["code"] == "AGENTS_UNAVAILABLE"
+    time.sleep(0.5)  # ten worker polls, had it started
+    assert db_rows(_db(), "SELECT 1 FROM agent_runs") == []
+    assert db_rows(_db(), "SELECT 1 FROM agent_worker") == []
 
 
 @pytest.mark.parametrize(
@@ -222,12 +234,20 @@ def test_agents_never_write_paper_data(client: TestClient, clock: FakeClock) -> 
     for _ in range(4):
         tick(client)
         clock.advance(TICK)
-    paper_tables = ("paper_accounts", "paper_orders", "paper_trades", "paper_events")
+    paper_tables = (
+        "paper_accounts",
+        "paper_replays",
+        "paper_replay_finishes",
+        "paper_orders",
+        "paper_trades",
+        "paper_events",
+    )
 
     def paper_rows() -> list[Any]:
         return [db_rows(_db(), f"SELECT * FROM {t} ORDER BY 1") for t in paper_tables]
 
     before = paper_rows()
+    assert before[1], "the baseline should hold the replay row"
     assert evaluate(client) == 1
     assert paper_rows() == before
     assert db_rows(_db(), "SELECT count(*) AS n FROM agent_events")[0]["n"] >= 0
@@ -381,11 +401,16 @@ def test_pagination_is_stable_while_events_arrive(
     evaluate(client)
     rest = []
     cursor = first["nextCursor"]
-    while cursor is not None:
+    for _ in range(1000):
+        if cursor is None:
+            break
         page = get_ok(browser, EVENTS, limit=2, cursor=cursor)
         assert len(page["items"]) <= 2
+        assert page["nextCursor"] != cursor, "pagination did not advance"
         rest.extend(page["items"])
         cursor = page["nextCursor"]
+    else:
+        raise AssertionError("pagination did not end")
     assert first["items"] + rest == everything
     fresh = get_ok(browser, EVENTS, limit=1)["items"][0]
     assert (fresh["reasonCode"], fresh["agentId"]) == ("ENGINE_HALTED", "risk-explainer")
@@ -489,17 +514,27 @@ def test_users_see_only_their_own_events_and_links(
     for agent_id in AGENT_IDS:
         assert all_events(other, contract, agentId=agent_id) == []
 
+    # The other user gets a paper account of their own (replay 1 too), so the
+    # owner's records below exist and differ from the reader's only in owner.
+    (owner_id,) = [r["user_id"] for r in db_rows(_db(), "SELECT user_id FROM paper_accounts")]
+    ok(other, {"action": "assign", "strategyId": active_strategy(other)})
+    (other_id,) = [
+        r["user_id"]
+        for r in db_rows(
+            _db(), "SELECT user_id FROM paper_accounts WHERE user_id <> :o", o=owner_id
+        )
+    ]
+    trade_id = db_rows(_db(), "SELECT id FROM paper_trades WHERE user_id = :o LIMIT 1", o=owner_id)
+    order_id = db_rows(_db(), "SELECT id FROM paper_orders WHERE user_id = :o LIMIT 1", o=owner_id)
+    assert trade_id and order_id
     # An event of the other user that points at the owner's records keeps
     # its link hidden: the link must belong to the reader.
-    trade_id = db_rows(_db(), "SELECT id FROM paper_trades LIMIT 1")[0]["id"]
-    other_id = db_rows(
-        _db(), "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM paper_accounts)"
-    )[0]["id"]
     for kind, link in (
-        ("paper-trade", str(trade_id)),
-        ("paper-replay", "1"),
+        ("paper-trade", str(trade_id[0]["id"])),
+        ("paper-order", str(order_id[0]["id"])),
         ("paper-order", str(uuid.uuid4())),
         ("paper-trade", "not-a-uuid"),
+        ("paper-replay", "2"),
     ):
         db_rows(
             _db(),
@@ -513,8 +548,19 @@ def test_users_see_only_their_own_events_and_links(
             link=link,
         )
     seen = all_events(other, contract)
-    assert len(seen) == 4
+    assert len(seen) == 5
     assert {e["link"] is None for e in seen} == {True}
+    # The same kind of link to the reader's own replay is shown.
+    db_rows(
+        _db(),
+        "INSERT INTO agent_events (user_id, agent_id, dedupe_key, reason_code, severity,"
+        " message, link_kind, link_id, data_as_of, created_at)"
+        " VALUES (:u, 'strategy-analyst', 'own', 'REPLAY_SUMMARY', 'info', 'm',"
+        " 'paper-replay', '1', now(), now())",
+        u=other_id,
+    )
+    newest = get_ok(other, EVENTS, limit=1)["items"][0]
+    assert newest["link"] == {"kind": "paper-replay", "id": "1"}
     # The owner's view is unchanged.
     assert all_events(owner, contract) == owner_events
 
@@ -522,22 +568,55 @@ def test_users_see_only_their_own_events_and_links(
 # --------------------------------------------------------- worker and database
 
 
-def test_contending_workers_evaluate_a_user_once(client: TestClient) -> None:
-    """Two passes at once evaluate the user once: the other pass skips the
-    locked row (or, after it commits, finds the user up to date)."""
+def test_a_locked_user_is_skipped_and_ends_no_pass(client: TestClient) -> None:
+    """While another worker holds one pending user (FOR UPDATE), a pass
+    evaluates the other user without waiting, and records no pass end until
+    the held user is evaluated too."""
     assigned(client)
+    assigned(client, phone=OTHER_PHONE)
+    db_rows(
+        _db(),
+        "INSERT INTO agent_runs (user_id, state) SELECT user_id, '{}'::jsonb FROM paper_accounts",
+    )
+    held, free = (r["user_id"] for r in db_rows(_db(), "SELECT user_id FROM agent_runs"))
     assert client.portal is not None
     service = agents(client)
 
-    async def both() -> list[bool]:
+    async def scenario() -> tuple[list[bool], list[Any], list[Any]]:
         import asyncio
 
-        return list(await asyncio.gather(service.run_once(), service.run_once()))
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
 
-    results = client.portal.call(both)
-    assert sorted(results) == [False, True]
-    assert evaluate(client) == 0
-    assert db_rows(_db(), "SELECT count(*) AS n FROM agent_runs")[0]["n"] == 1
+        engine = create_async_engine(_db())
+        try:
+            async with engine.connect() as conn:
+                await conn.begin()
+                await conn.execute(
+                    text("SELECT 1 FROM agent_runs WHERE user_id = :u FOR UPDATE"), {"u": held}
+                )
+                first = await asyncio.wait_for(service.run_once(), timeout=5)
+                second = await asyncio.wait_for(service.run_once(), timeout=5)
+                async with engine.connect() as peek:
+                    runs = (
+                        await peek.execute(
+                            text("SELECT user_id, last_run_at FROM agent_runs ORDER BY 1")
+                        )
+                    ).all()
+                    beat = (await peek.execute(text("SELECT * FROM agent_worker"))).all()
+                await conn.rollback()  # release the lock
+            return [first, second], list(runs), list(beat)
+        finally:
+            await engine.dispose()
+
+    results, runs, beat = client.portal.call(scenario)
+    assert results == [True, False]
+    assert {r[0] for r in runs if r[1] is not None} == {free}
+    assert beat == [], "a pass must not end while a pending user is held"
+    # The lock is released: the held user is evaluated and the pass ends.
+    assert evaluate(client) == 1
+    assert db_rows(_db(), "SELECT 1 FROM agent_runs WHERE last_run_at IS NULL") == []
+    assert db_rows(_db(), "SELECT pass_ended_at FROM agent_worker")
 
 
 def test_the_background_worker_evaluates_changes(make_app: Callable[..., TestClient]) -> None:
@@ -549,11 +628,13 @@ def test_the_background_worker_evaluates_changes(make_app: Callable[..., TestCli
     browser = assigned(client)
     deadline = time.monotonic() + 10
     status = None
-    while time.monotonic() < deadline and status != "ok":
+    pass_ended: list[dict[str, Any]] = []
+    while time.monotonic() < deadline and (status != "ok" or not pass_ended):
         status = browser.get(HEALTH).json()["status"]
+        pass_ended = db_rows(_db(), "SELECT pass_ended_at FROM agent_worker")
         time.sleep(0.05)
     assert status == "ok"
-    assert db_rows(_db(), "SELECT pass_ended_at FROM agent_worker")
+    assert pass_ended
 
 
 def test_agent_events_are_append_only(client: TestClient, clock: FakeClock) -> None:
@@ -577,12 +658,14 @@ def test_agent_migration_rolls_back_and_forward(db_url: str) -> None:
         rows = db_rows(db_url, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         return {r["tablename"] for r in rows}
 
-    tables = {"agent_events", "agent_runs", "agent_worker"}
+    tables = {"agent_events", "agent_runs", "agent_worker", "paper_replay_finishes"}
     assert tables <= present()
-    command.downgrade(_alembic(db_url), "0007")
-    assert not (tables & present())
-    assert "paper_trades" in present()
-    command.upgrade(_alembic(db_url), "head")
+    try:
+        command.downgrade(_alembic(db_url), "0007")
+        assert not (tables & present())
+        assert "paper_trades" in present()
+    finally:
+        command.upgrade(_alembic(db_url), "head")
     assert tables <= present()
 
 
@@ -601,3 +684,41 @@ def test_strategy_commands_unaffected(browser: Browser) -> None:
     response = browser.post(STRATEGY_COMMANDS, json={"action": "approve"})
     assert response.status_code == 400
     assert browser.post(PAPER_COMMANDS, json={"action": "agent"}).status_code == 400
+
+
+def test_cursor_sequence_is_bounded_by_bigint(browser: Browser, contract: Any) -> None:
+    browser.login()
+    largest = get_ok(browser, EVENTS, cursor=encode_cursor(None, 2**63 - 1))
+    assert largest["items"] == [] and largest["nextCursor"] is None
+    response = browser.get(EVENTS, params={"cursor": encode_cursor(None, 2**63)})
+    assert response.status_code == 400
+    check(contract, "AgentError", response.json())
+
+
+def test_a_replay_reassigned_before_evaluation_is_still_summarised(
+    client: TestClient, clock: FakeClock, contract: Any
+) -> None:
+    browser = assigned(client)
+    ok(browser, {"action": "start"})
+    for _ in range(len(sessions("NSE:SBIN")) + 1):
+        if not tick(client):
+            break
+        clock.advance(TICK)
+    finishes = db_rows(_db(), "SELECT replay FROM paper_replay_finishes")
+    assert finishes == [{"replay": 1}]
+    # Reassign at once: the account now shows replay 2, unfinished.
+    sid = db_rows(_db(), "SELECT strategy_id FROM paper_accounts")[0]["strategy_id"]
+    ok(browser, {"action": "assign", "strategyId": str(sid)})
+    assert db_rows(_db(), "SELECT replay, finished FROM paper_accounts") == [
+        {"replay": 2, "finished": False}
+    ]
+    evaluate(client)
+    summaries = [e for e in all_events(browser, contract) if e["reasonCode"] == "REPLAY_SUMMARY"]
+    assert [e["link"] for e in summaries] == [{"kind": "paper-replay", "id": "1"}]
+    trades = db_rows(_db(), "SELECT 1 FROM paper_trades WHERE replay = 1")
+    assert f"{len(trades)} fill(s)" in summaries[0]["message"]
+    # Evaluating again does not repeat it.
+    db_rows(_db(), "UPDATE agent_runs SET data_as_of = NULL")
+    evaluate(client)
+    again = [e for e in all_events(browser, contract) if e["reasonCode"] == "REPLAY_SUMMARY"]
+    assert len(again) == 1

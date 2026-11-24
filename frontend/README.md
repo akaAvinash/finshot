@@ -1,6 +1,6 @@
 # Tradeo frontend
 
-Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Upcoming modules have labeled placeholder pages.
+Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Upcoming modules have labeled placeholder pages.
 
 ## Local development
 
@@ -26,6 +26,8 @@ The [proposed paper automation contract](../contracts/auto-trading.openapi.yaml)
 
 In **Brokers**, filter Zerodha and Fyers by connection status, check masked account details, and try connect, reconnect, sync or disconnect. The demo clock advances with each action, and the activity log stays available after disconnect. State lives in memory for the current page visit. The [proposed broker preview contract](../contracts/brokers.openapi.yaml) documents the demo adapter. Real integrations require provider authorization, secure server-side token storage and separate backend work.
 
+In **Strategies**, search by name or instrument, filter by status or risk, and switch between cards and a table. Open a strategy to inspect its parameters, backtest and risk checks, and immutable version history. Create and edit sample drafts, pause an active demo, or activate the prequalified HDFC Mean Reversion draft. New and edited drafts need a fresh backtest and risk review before activation. Demo edits reset when the page is reloaded. The [proposed strategy preview contract](../contracts/strategies.openapi.yaml) describes a future adapter. The preview runs no backtests and sends no orders.
+
 ## Verification
 
 ```sh
@@ -37,7 +39,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading and Brokers screenshots in the ignored `screenshots/` directory.
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers and Strategies screenshots in the ignored `screenshots/` directory.
 
 Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
 

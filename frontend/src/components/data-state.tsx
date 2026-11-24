@@ -22,9 +22,9 @@ export function DataState({ title, description, action, error = false, icon: Ico
   );
 }
 
-export function DashboardSkeleton() {
+export function DashboardSkeleton({ label = "Loading dashboard" }: { label?: string } = {}) {
   return (
-    <div role="status" aria-label="Loading dashboard" className="space-y-4">
+    <div role="status" aria-label={label} className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[0, 1, 2, 3].map((item) => (
           <Card key={item} aria-hidden className="h-27 p-4">

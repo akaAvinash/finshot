@@ -1,10 +1,13 @@
-"""Phase C3 tables: paper_accounts, paper_orders, paper_trades, paper_events.
+"""Paper tables: paper_accounts, paper_replays, paper_orders, paper_trades,
+paper_events.
 
 One paper account per user. `replay` numbers the account's replays: `assign`
 starts a new one, and orders and trades belong to the replay that made them,
-so the workspace shows only the current replay's. Trades and events are
-append-only: a database trigger rejects UPDATE (migration 0006). Rows are only
-removed by cascade when a user is deleted."""
+so the workspace shows only the current replay's. `paper_replays` records the
+strategy version each replay used (migration 0007), so reports can attribute
+fills. Replays, trades and events are append-only: a database trigger rejects
+UPDATE (migrations 0006 and 0007). Rows are only removed by cascade when a
+user is deleted."""
 
 from __future__ import annotations
 
@@ -87,6 +90,25 @@ class PaperAccount(Base):
     last_tick_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperReplay(Base):
+    __tablename__ = "paper_replays"
+    __table_args__ = (
+        CheckConstraint("replay >= 1", name="replay_positive"),
+        CheckConstraint("version_number >= 1", name="version_positive"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    replay: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    version_number: Mapped[int] = mapped_column(Integer)
+    # The version's name, copied at assignment like its parameters.
+    strategy_name: Mapped[str] = mapped_column(String(64))
+    instrument_id: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PaperOrder(Base):

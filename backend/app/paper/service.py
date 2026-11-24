@@ -24,7 +24,7 @@ from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.market.demo import DemoMarketDataProvider
 from app.paper import engine as rules
-from app.paper.models import PaperAccount, PaperEvent, PaperOrder, PaperTrade
+from app.paper.models import PaperAccount, PaperEvent, PaperOrder, PaperReplay, PaperTrade
 from app.paper.schemas import (
     RECENT_EVENTS,
     RECENT_ORDERS,
@@ -351,6 +351,17 @@ class PaperService:
         account.version_parameters = raw
         account.instrument_id = instrument_id
         account.replay += 1
+        db.add(
+            PaperReplay(
+                user_id=account.user_id,
+                replay=account.replay,
+                strategy_id=strategy.id,
+                version_number=number,
+                strategy_name=params.name,
+                instrument_id=instrument_id,
+                created_at=now,
+            )
+        )
         account.cash_paise = account.capital_paise
         _clear_position(account)
         account.sessions_done = 0

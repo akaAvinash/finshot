@@ -37,6 +37,7 @@ from app.db.session import create_engine, create_session_factory
 from app.market.demo import DemoMarketDataProvider
 from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
 from app.paper.service import PaperService
+from app.reports.service import ReportService
 from app.strategies.service import StrategyService
 
 logger = structlog.get_logger(__name__)
@@ -103,6 +104,11 @@ def create_app(
             clock=clock,
             enabled=settings.paper_enabled,
             tick_seconds=settings.paper_tick_seconds,
+        )
+        app.state.reports = ReportService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.reports_enabled,
         )
         workers: list[asyncio.Task[None]] = []
         if settings.backtests_enabled and settings.backtest_worker_enabled:

@@ -145,6 +145,10 @@ class Settings(BaseSettings):
     paper_tick_seconds: float = Field(default=3.0, ge=0.5, le=300)
     paper_worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
 
+    # --- Reports (Phase D, paper ledger only) ---------------------------------
+    # false: both report endpoints return 503 REPORTS_UNAVAILABLE.
+    reports_enabled: bool = True
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

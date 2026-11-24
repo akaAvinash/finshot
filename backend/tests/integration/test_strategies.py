@@ -537,3 +537,29 @@ def test_result_as_of_is_the_time_the_result_is_read(browser: Browser, clock: Fa
     assert parse(response.json()["asOf"]) == started + timedelta(seconds=5)
     audit = db_rows(_db(), "SELECT created_at FROM audit_events WHERE action = 'strategy.create'")
     assert [row["created_at"] for row in audit] == [started]
+
+
+@pytest.mark.parametrize(
+    ("name", "description"),
+    [
+        (" " + "a" * 64 + " ", " " + "d" * 240 + " "),  # valid once trimmed
+        ("a" * 64, "d" * 240),
+        ("\tabc\n", "   "),
+        ("a" * 65, ""),  # too long after trimming
+        ("  ab  ", ""),  # too short after trimming
+        ("abc", "d" * 241),
+        ("     ", ""),
+    ],
+)
+def test_contract_and_server_agree_on_trimmed_lengths(
+    browser: Browser, contract: Any, name: str, description: str
+) -> None:
+    """The command schema and the server accept exactly the same names and
+    descriptions: lengths count after surrounding whitespace is trimmed."""
+    browser.login()
+    body = {"action": "create", "parameters": {**PARAMS, "name": name, "description": description}}
+    schema = {"$ref": "#/components/schemas/StrategyCommand", "components": contract["components"]}
+    contract_accepts = Draft202012Validator(schema).is_valid(body)
+    response = send(browser, body)
+    assert response.status_code in (200, 400), response.text
+    assert (response.status_code == 200) == contract_accepts

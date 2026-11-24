@@ -75,8 +75,10 @@ class BrokerService:
         self._adapter = adapter
         self._clock = clock
         self._timeout = timeout_seconds
-        # Test seam: runs between the two snapshot reads.
+        # Test seams: between the two snapshot reads, and after an action
+        # commits but before its result is read.
         self._between_snapshot_reads: Callable[[], None] | None = None
+        self._before_result_snapshot: Callable[[], None] | None = None
 
     def _require_adapter(self) -> BrokerAdapter:
         if self._adapter is None:
@@ -130,7 +132,12 @@ class BrokerService:
                         created_at=now,
                     )
                 )
-            return await self._snapshot(db, user_id, now)
+        # Read the result in a new session: the action's session still holds
+        # the objects it wrote, which would hide anything committed since.
+        if self._before_result_snapshot is not None:
+            self._before_result_snapshot()
+        async with self._factory() as fresh:
+            return await self._snapshot(fresh, user_id, now)
 
     async def _perform(
         self,

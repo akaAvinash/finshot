@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     market_data_provider: Literal["demo", "disabled"] = "demo"
     market_data_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
 
+    # --- Brokers (Phase B2, demo only) -----------------------------------------
+    # "demo": simulated, per-user connections with no provider requests.
+    # "disabled": every broker endpoint returns 503 BROKER_UNAVAILABLE.
+    # Live broker adapters need a separately approved phase.
+    broker_provider: Literal["demo", "disabled"] = "demo"
+    broker_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

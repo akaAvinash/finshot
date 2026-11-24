@@ -18,6 +18,8 @@ from app.auth.crypto import Keys
 from app.auth.otp import ConsoleOtpProvider, DisabledOtpProvider, OtpProvider
 from app.auth.ratelimit import RateLimiter
 from app.auth.service import AuthService, Clock, utc_now
+from app.brokers.adapter import BrokerAdapter, DemoBrokerAdapter
+from app.brokers.service import BrokerService
 from app.cache.redis import create_redis
 from app.core.config import Environment, Settings, get_settings
 from app.core.errors import ApiError, error_response
@@ -40,10 +42,13 @@ def create_app(
     otp_provider: OtpProvider | None = None,
     clock: Clock = utc_now,
     market_provider: MarketDataProvider | None = None,
+    broker_adapter: BrokerAdapter | None = None,
 ) -> FastAPI:
-    """`otp_provider`, `clock` and `market_provider` are injection points for
-    tests. Production wiring picks the OTP provider from OTP_PROVIDER and the
-    market data provider from MARKET_DATA_PROVIDER."""
+    """`otp_provider`, `clock`, `market_provider` and `broker_adapter` are
+    injection points for tests. Production wiring picks the OTP provider from
+    OTP_PROVIDER, the market data provider from MARKET_DATA_PROVIDER and the
+    broker adapter from BROKER_PROVIDER (an injected adapter is ignored when
+    BROKER_PROVIDER=disabled)."""
     settings = settings or get_settings()
     configure_logging(settings)
     provider: OtpProvider = otp_provider or (
@@ -65,6 +70,16 @@ def create_app(
             provider=provider,
             keys=keys,
             clock=clock,
+        )
+        app.state.brokers = BrokerService(
+            session_factory=app.state.session_factory,
+            adapter=(
+                (broker_adapter or DemoBrokerAdapter())
+                if settings.broker_provider == "demo"
+                else None
+            ),
+            clock=clock,
+            timeout_seconds=settings.broker_timeout_seconds,
         )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:

@@ -1,0 +1,173 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Broker Preview API Proposal
+  version: 0.4.0
+  description: >
+    Proposed interface for the demo broker workspace. The frontend responds
+    locally. A real integration would use a separate server-side provider
+    authorization flow and server-held credentials.
+tags:
+  - name: Broker preview
+    description: Sample read-only broker accounts and simulated connection actions.
+paths:
+  /api/v1/brokers/preview:
+    get:
+      tags: [Broker preview]
+      operationId: getBrokers
+      summary: Read the demo broker accounts
+      responses:
+        '200':
+          description: Dated broker snapshot or empty demo workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/brokers/preview/{provider}/actions:
+    post:
+      tags: [Broker preview]
+      operationId: sendBrokerAction
+      summary: Apply a simulated broker account action
+      description: >
+        Available only for fresh, authorized demo sessions. Connect requires
+        a disconnected account, reconnect requires an expired account, and
+        sync requires a valid connection. Disconnect clears the demo account
+        and keeps the event log. The actions perform no provider requests.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/BrokerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              additionalProperties: false
+              properties:
+                action:
+                  $ref: '#/components/schemas/BrokerAction'
+      responses:
+        '200':
+          description: Updated broker snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerSnapshot'
+        '400':
+          description: Invalid provider or action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The requested action conflicts with the current connection state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  responses:
+    Forbidden:
+      description: Access to the demo workspace or action was denied.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+    Unavailable:
+      description: The demo workspace is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+  schemas:
+    BrokerId:
+      type: string
+      enum: [zerodha, fyers]
+    BrokerAction:
+      type: string
+      enum: [connect, reconnect, sync, disconnect]
+    BrokerResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/BrokerSnapshot' }
+        - type: object
+          required: [status]
+          properties:
+            status: { const: empty }
+    BrokerSnapshot:
+      type: object
+      required: [source, environment, asOf, connections, events]
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        connections:
+          type: array
+          items: { $ref: '#/components/schemas/BrokerConnection' }
+        events:
+          type: array
+          description: Demo activity in chronological order.
+          items: { $ref: '#/components/schemas/BrokerEvent' }
+    BrokerConnection:
+      type: object
+      required: [provider, account]
+      properties:
+        provider: { $ref: '#/components/schemas/BrokerId' }
+        account:
+          description: Null for a disconnected provider.
+          oneOf:
+            - $ref: '#/components/schemas/BrokerAccount'
+            - type: 'null'
+    BrokerAccount:
+      type: object
+      required: [maskedAccountId, connectedAt, expiresAt, lastSyncedAt, scopes]
+      properties:
+        maskedAccountId:
+          type: string
+          pattern: '^•••• [0-9]{4}$'
+          examples: ['•••• 4821']
+        connectedAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          description: The demo connection is expired at or after this instant.
+        lastSyncedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Null until the first sync for the current demo connection.
+        scopes:
+          type: array
+          uniqueItems: true
+          description: Tradeo demo labels for read-only access.
+          items:
+            type: string
+            enum: [profile_read, holdings_read, orders_read]
+    BrokerEvent:
+      type: object
+      required: [id, provider, action, at]
+      properties:
+        id: { type: string }
+        provider: { $ref: '#/components/schemas/BrokerId' }
+        action: { $ref: '#/components/schemas/BrokerAction' }
+        at: { type: string, format: date-time }
+    BrokerError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }

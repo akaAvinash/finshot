@@ -35,6 +35,7 @@ from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.market.demo import DemoMarketDataProvider
 from app.strategies.models import Strategy, StrategyVersion
+from app.strategies.rules import backtest_verdict, run_counts
 from app.strategies.schemas import StrategyParameters
 
 logger = structlog.get_logger(__name__)
@@ -328,22 +329,78 @@ class BacktestService:
         if self._after_claim is not None:
             self._after_claim()
         result: dict[str, Any] | None = None
+        by_symbol: dict[str, str] = {}
         try:
             result = await self._replay(config, params)
+            by_symbol = {i.symbol: i.id for i in await self._instruments()}
         except Exception as exc:
+            result = None
             logger.warning("backtest_failed", run_id=str(run_id), error_type=type(exc).__name__)
         async with db.begin():
+            now = self._clock()
             # A run failed as abandoned in the meantime keeps that outcome.
-            await db.execute(
+            finished = await db.execute(
                 update(BacktestRun)
                 .where(BacktestRun.id == run_id, BacktestRun.status == "running")
                 .values(
                     status="failed" if result is None else "completed",
                     result=result,
                     message=RUN_FAILED if result is None else None,
-                    updated_at=self._clock(),
+                    updated_at=now,
                 )
+                .returning(BacktestRun.user_id, BacktestRun.strategy_id)
             )
+            row = finished.first()
+            if row is not None and result is not None:
+                await self._set_draft_check(
+                    db, row.user_id, row.strategy_id, config, params, result, by_symbol, now
+                )
+
+    async def _set_draft_check(
+        self,
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        strategy_id: uuid.UUID,
+        config: dict[str, Any],
+        params: dict[str, Any],
+        result: dict[str, Any],
+        by_symbol: dict[str, str],
+        now: datetime,
+    ) -> None:
+        """Apply the backtest rule to the strategy's current draft, in the
+        transaction that completes the run. The strategy row lock orders this
+        against save-draft and activation, so the latest counting completion
+        wins and a run never grades a draft edited after it was queued."""
+        reference = parse_revision_id(str(config.get("strategyId", "")))
+        if reference is None or reference[1] != "draft":
+            return
+        strategy = await db.scalar(
+            select(Strategy)
+            .where(Strategy.id == strategy_id, Strategy.user_id == user_id)
+            .with_for_update()
+        )
+        if strategy is None or strategy.draft_parameters is None:
+            return
+        draft = StrategyParameters.model_validate(strategy.draft_parameters)
+        if not run_counts(
+            config=config,
+            run_parameters=params,
+            draft_parameters=strategy.draft_parameters,
+            draft_instrument_id=by_symbol.get(draft.instrument),
+        ):
+            return
+        strategy.draft_backtest = backtest_verdict(draft, result)
+        strategy.updated_at = now
+        db.add(
+            AuditEvent(
+                user_id=user_id,
+                actor="system:backtest-worker",
+                action=f"strategy.backtest_{strategy.draft_backtest}",
+                resource=f"strategy:{strategy_id}",
+                metadata_redacted={"environment": "DEMO"},
+                created_at=now,
+            )
+        )
 
     async def _requeue(self, run_id: uuid.UUID) -> None:
         async with self._factory() as db, db.begin():

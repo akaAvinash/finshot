@@ -35,6 +35,7 @@ from app.core.middleware import (
 from app.db.session import create_engine, create_session_factory
 from app.market.demo import DemoMarketDataProvider
 from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
+from app.paper.service import PaperService
 from app.strategies.service import StrategyService
 
 logger = structlog.get_logger(__name__)
@@ -96,17 +97,30 @@ def create_app(
             enabled=settings.backtests_enabled,
             stale_after_seconds=settings.backtest_stale_after_seconds,
         )
-        worker: asyncio.Task[None] | None = None
+        app.state.paper = PaperService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.paper_enabled,
+            tick_seconds=settings.paper_tick_seconds,
+        )
+        workers: list[asyncio.Task[None]] = []
         if settings.backtests_enabled and settings.backtest_worker_enabled:
-            worker = asyncio.create_task(
-                app.state.backtests.run_worker(settings.backtest_worker_poll_seconds)
+            workers.append(
+                asyncio.create_task(
+                    app.state.backtests.run_worker(settings.backtest_worker_poll_seconds)
+                )
+            )
+        if settings.paper_enabled and settings.paper_worker_enabled:
+            workers.append(
+                asyncio.create_task(app.state.paper.run_worker(settings.paper_worker_poll_seconds))
             )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:
             yield
         finally:
-            if worker is not None:
+            for worker in workers:
                 worker.cancel()
+            for worker in workers:
                 with contextlib.suppress(asyncio.CancelledError):
                     await worker
             await app.state.redis.aclose()

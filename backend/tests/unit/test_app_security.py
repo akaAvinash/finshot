@@ -134,6 +134,8 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/backtests/preview",
         "/api/v1/backtests/preview/runs",
         "/api/v1/backtests/preview/runs/{runId}",
+        "/api/v1/auto-trading/paper",
+        "/api/v1/auto-trading/paper/commands",
     }
     # Market data is read-only.
     for path, operations in paths.items():

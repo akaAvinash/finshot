@@ -1,8 +1,8 @@
-"""Phase C1 strategy endpoints over real PostgreSQL and Redis.
+"""Strategy endpoints over real PostgreSQL and Redis.
 
-The API cannot pass a backtest or approve a risk review yet, so tests that
-exercise activation mark the draft's checks directly in the database, the way
-the later backtest and risk phases will."""
+Risk reviews are set by the tier rule on create and save-draft. A passing
+backtest needs a completed demo run (covered in test_backtests.py), so tests
+that exercise activation mark the draft's checks directly in the database."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def test_create_makes_an_unreviewed_draft(browser: Browser, contract: Any) -> No
     assert strategy["versions"] == []
     assert strategy["metrics"] is None
     assert strategy["draft"]["backtest"] == "unavailable"
-    assert strategy["draft"]["riskReview"] == "pending"
+    assert strategy["draft"]["riskReview"] == "approved"
     assert strategy["draft"]["parameters"] == {**PARAMS, "name": "Spaced name", "description": "d"}
     audit = db_rows(_db(), "SELECT action, resource FROM audit_events WHERE action LIKE 'strat%'")
     assert audit == [{"action": "strategy.create", "resource": f"strategy:{strategy['id']}"}]
@@ -196,7 +196,7 @@ def test_version_lifecycle(browser: Browser, clock: FakeClock, contract: Any) ->
     ).json()
     s = find(edited, sid)
     assert s["status"] == "active" and len(s["versions"]) == 1
-    assert s["draft"]["backtest"] == "unavailable" and s["draft"]["riskReview"] == "pending"
+    assert s["draft"]["backtest"] == "unavailable" and s["draft"]["riskReview"] == "approved"
 
     paused = find(send(browser, {"action": "pause", "id": sid}).json(), sid)
     assert paused["status"] == "paused"
@@ -228,7 +228,56 @@ def test_save_draft_resets_checks(browser: Browser) -> None:
     sid = create(browser)["id"]
     approve(sid)
     s = find(send(browser, {"action": "save-draft", "id": sid, "parameters": PARAMS}).json(), sid)
-    assert (s["draft"]["backtest"], s["draft"]["riskReview"]) == ("unavailable", "pending")
+    assert (s["draft"]["backtest"], s["draft"]["riskReview"]) == ("unavailable", "approved")
+
+
+@pytest.mark.parametrize(
+    ("tier", "size", "stop", "review"),
+    [
+        ("low", 600, 100, "approved"),
+        ("low", 601, 100, "rejected"),
+        ("low", 600, 101, "rejected"),
+        ("medium", 1000, 200, "approved"),
+        ("medium", 1001, 200, "rejected"),
+        ("medium", 1000, 201, "rejected"),
+        ("high", 1500, 300, "approved"),
+        ("high", 1501, 300, "rejected"),
+        ("high", 1500, 301, "rejected"),
+    ],
+)
+def test_risk_review_follows_tier_limits(
+    browser: Browser, tier: str, size: int, stop: int, review: str
+) -> None:
+    browser.login()
+    created = create(browser, riskTier=tier, positionSizeBps=size, stopLossBps=stop)
+    assert created["draft"]["riskReview"] == review
+    # save-draft applies the same rule, in both directions.
+    other = {"riskTier": "high", "positionSizeBps": 1600, "stopLossBps": 50}
+    s = find(
+        send(
+            browser,
+            {"action": "save-draft", "id": created["id"], "parameters": {**PARAMS, **other}},
+        ).json(),
+        created["id"],
+    )
+    assert s["draft"]["riskReview"] == "rejected"
+    s = find(
+        send(
+            browser,
+            {
+                "action": "save-draft",
+                "id": created["id"],
+                "parameters": {
+                    **PARAMS,
+                    "riskTier": tier,
+                    "positionSizeBps": size,
+                    "stopLossBps": stop,
+                },
+            },
+        ).json(),
+        created["id"],
+    )
+    assert s["draft"]["riskReview"] == review
 
 
 def test_pause_requires_active(browser: Browser) -> None:

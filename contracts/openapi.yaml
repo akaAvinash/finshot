@@ -1001,11 +1001,11 @@ components:
           type: string
           minLength: 3
           maxLength: 64
-          description: Length is checked after trimming surrounding whitespace.
+          description: Stored trimmed. Commands use StrategyParametersInput.
         description:
           type: string
           maxLength: 240
-          description: Length is checked after trimming surrounding whitespace.
+          description: Stored trimmed. Commands use StrategyParametersInput.
         instrument:
           enum: [NIFTY 50, BANKNIFTY, FINNIFTY, RELIANCE, HDFCBANK, SBIN]
         timeframe:
@@ -1020,6 +1020,33 @@ components:
           type: integer
           minimum: 1
           maximum: 10000
+    StrategyParametersInput:
+      description: >-
+        Parameters as sent in a command. The server trims surrounding
+        whitespace from name and description before storing them, so the
+        length limits apply to the trimmed values: name 3-64 characters,
+        description up to 240. The patterns encode exactly those limits.
+        Stored and returned values use StrategyParameters.
+      type: object
+      required: [name, description, instrument, timeframe, riskTier, positionSizeBps, stopLossBps]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: '^\s*\S[\s\S]{1,62}\S\s*$'
+        description:
+          type: string
+          pattern: '^\s*(\S([\s\S]{0,238}\S)?)?\s*$'
+        instrument:
+          $ref: '#/components/schemas/StrategyParameters/properties/instrument'
+        timeframe:
+          $ref: '#/components/schemas/StrategyParameters/properties/timeframe'
+        riskTier:
+          $ref: '#/components/schemas/StrategyParameters/properties/riskTier'
+        positionSizeBps:
+          $ref: '#/components/schemas/StrategyParameters/properties/positionSizeBps'
+        stopLossBps:
+          $ref: '#/components/schemas/StrategyParameters/properties/stopLossBps'
     StrategyMetrics:
       type: object
       required: [pnlPaise, winRateBps]
@@ -1043,7 +1070,7 @@ components:
             action:
               const: create
             parameters:
-              $ref: '#/components/schemas/StrategyParameters'
+              $ref: '#/components/schemas/StrategyParametersInput'
         - type: object
           required: [action, id, parameters]
           additionalProperties: false
@@ -1054,7 +1081,7 @@ components:
               type: string
               minLength: 1
             parameters:
-              $ref: '#/components/schemas/StrategyParameters'
+              $ref: '#/components/schemas/StrategyParametersInput'
         - type: object
           required: [action, id]
           additionalProperties: false

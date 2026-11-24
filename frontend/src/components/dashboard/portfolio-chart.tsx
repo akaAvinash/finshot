@@ -6,8 +6,14 @@ import { useTheme } from "next-themes";
 import type { PortfolioPoint } from "@/lib/api/types";
 
 const axisFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+const formatAmount = (value: number) => `₹${axisFormatter.format(value)}`;
 
-export function PortfolioChart({ points }: { points: PortfolioPoint[] }) {
+export function PortfolioChart({ points, label = "Sample portfolio chart", formatValue = formatAmount, tone = "gold" }: {
+  points: readonly PortfolioPoint[];
+  label?: string;
+  formatValue?: (value: number) => string;
+  tone?: "gold" | "negative";
+}) {
   const host = useRef<HTMLDivElement>(null);
   const { resolvedTheme } = useTheme();
 
@@ -37,19 +43,19 @@ export function PortfolioChart({ points }: { points: PortfolioPoint[] }) {
     });
 
     const series = chart.addSeries(AreaSeries, {
-      lineColor: color("--chart-line"),
-      topColor: color("--chart-fill"),
+      lineColor: color(tone === "negative" ? "--negative" : "--chart-line"),
+      topColor: tone === "negative" ? `${color("--negative")}35` : color("--chart-fill"),
       bottomColor: "transparent",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      priceFormat: { type: "custom", formatter: (value: number) => `₹${axisFormatter.format(value)}` },
+      priceFormat: { type: "custom", formatter: formatValue },
     });
     series.setData(points.map(({ date, value }) => ({ time: date, value })));
     chart.timeScale().fitContent();
 
     return () => chart.remove();
-  }, [points, resolvedTheme]);
+  }, [points, resolvedTheme, formatValue, tone]);
 
-  return <div role="group" aria-label="Sample portfolio chart" ref={host} className="absolute inset-0" />;
+  return <div role="group" aria-label={label} ref={host} className="absolute inset-0" />;
 }

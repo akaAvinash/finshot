@@ -1,0 +1,215 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Backtesting Preview API Proposal
+  version: 0.6.0
+  description: >
+    Proposed DTOs for a frontend-only Backtesting preview. The current client
+    uses synthetic daily candles and an in-memory demo queue. Completed results
+    do not certify a strategy revision for deployment.
+paths:
+  /api/v1/backtests/preview:
+    get:
+      operationId: getBacktestWorkspace
+      summary: List demo inputs and recent runs
+      responses:
+        '200':
+          description: Dated workspace. An empty runs array permits a first run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkspaceResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/backtests/preview/runs:
+    post:
+      operationId: startBacktest
+      summary: Queue a demo backtest
+      description: >
+        Requires a current demo workspace, an available strategy revision and
+        instrument, at least three warm-up sessions, and two holdout sessions.
+        Signals use completed daily candles and fills occur at subsequent opens.
+        Only holdout sessions contribute to results. Fees and adverse slippage
+        apply on both sides. The preview performs no external calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BacktestConfig' }
+      responses:
+        '202':
+          description: Accepted demo run. Poll its ID for status and results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestRun' }
+        '400':
+          description: Invalid dates, revision, instrument, capital, or costs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Workspace is stale or cannot accept a new run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/backtests/preview/runs/{runId}:
+    get:
+      operationId: getBacktestRun
+      summary: Read one demo run
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Current status and, when completed, an ordered equity curve and closed trades.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestRun' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Run unavailable in the requesting workspace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  responses:
+    Forbidden:
+      description: Access to the demo workspace or action denied.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/BacktestError' }
+    Unavailable:
+      description: Demo workspace or worker temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/BacktestError' }
+  schemas:
+    WorkspaceResult:
+      type: object
+      required: [status, data]
+      additionalProperties: false
+      properties:
+        status: { enum: [ready, stale] }
+        data: { $ref: '#/components/schemas/BacktestWorkspace' }
+    BacktestWorkspace:
+      type: object
+      required: [source, environment, asOf, from, to, strategies, instruments, runs]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        strategies:
+          type: array
+          items: { $ref: '#/components/schemas/BacktestStrategy' }
+        instruments:
+          type: array
+          items: { $ref: '#/components/schemas/BacktestInstrument' }
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/BacktestRun' }
+    BacktestStrategy:
+      type: object
+      required: [id, name, revision, instrumentId, positionSizeBps]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+        revision:
+          oneOf:
+            - { type: integer, minimum: 1 }
+            - { const: draft }
+        instrumentId: { type: string, minLength: 1 }
+        positionSizeBps: { type: integer, minimum: 1, maximum: 10000 }
+    BacktestInstrument:
+      type: object
+      required: [id, symbol]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        symbol: { type: string, minLength: 1 }
+    BacktestConfig:
+      type: object
+      required: [strategyId, instrumentId, from, to, outOfSampleFrom, capitalPaise, feeBps, slippageBps]
+      additionalProperties: false
+      properties:
+        strategyId: { type: string, minLength: 1 }
+        instrumentId: { type: string, minLength: 1 }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        outOfSampleFrom: { type: string, format: date }
+        capitalPaise: { type: integer, minimum: 100000, maximum: 1000000000 }
+        feeBps: { type: integer, minimum: 0, maximum: 500 }
+        slippageBps: { type: integer, minimum: 0, maximum: 500 }
+    BacktestRun:
+      type: object
+      required: [id, source, environment, asOf, queuedAt, config, status]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        queuedAt: { type: string, format: date-time }
+        config: { $ref: '#/components/schemas/BacktestConfig' }
+        status: { enum: [queued, running, completed, failed] }
+        result: { $ref: '#/components/schemas/BacktestResult' }
+        message: { type: string }
+      allOf:
+        - if: { properties: { status: { const: completed } } }
+          then: { required: [result] }
+          else: { not: { required: [result] } }
+        - if: { properties: { status: { const: failed } } }
+          then: { required: [message] }
+          else: { not: { required: [message] } }
+    BacktestResult:
+      type: object
+      required: [endingEquityPaise, netPnlPaise, returnBps, maxDrawdownBps, winRateBps, totalFeesPaise, points, trades]
+      additionalProperties: false
+      properties:
+        endingEquityPaise: { type: integer, minimum: 0 }
+        netPnlPaise: { type: integer }
+        returnBps: { type: integer }
+        maxDrawdownBps: { type: integer, maximum: 0 }
+        winRateBps: { type: [integer, 'null'], minimum: 0, maximum: 10000 }
+        totalFeesPaise: { type: integer, minimum: 0 }
+        points:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/BacktestPoint' }
+        trades:
+          type: array
+          items: { $ref: '#/components/schemas/BacktestTrade' }
+    BacktestPoint:
+      type: object
+      required: [date, equityPaise, drawdownBps]
+      additionalProperties: false
+      properties:
+        date: { type: string, format: date }
+        equityPaise: { type: integer, minimum: 0 }
+        drawdownBps: { type: integer, maximum: 0 }
+    BacktestTrade:
+      type: object
+      required: [id, entryAt, exitAt, quantity, entryPaise, exitPaise, feesPaise, pnlPaise]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        entryAt: { type: string, format: date-time }
+        exitAt: { type: string, format: date-time }
+        quantity: { type: integer, minimum: 1 }
+        entryPaise: { type: integer, minimum: 1 }
+        exitPaise: { type: integer, minimum: 1 }
+        feesPaise: { type: integer, minimum: 0 }
+        pnlPaise: { type: integer }
+    BacktestError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { enum: [INVALID_REQUEST, FORBIDDEN, NOT_FOUND, CONFLICT, UNAVAILABLE] }
+        message: { type: string }

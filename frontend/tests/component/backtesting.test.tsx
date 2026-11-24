@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Backtesting } from "@/components/backtesting/backtesting";
+import * as apiClient from "@/lib/api/client";
 
 vi.mock("@/components/dashboard/portfolio-chart", () => ({
   PortfolioChart: ({ label }: { label: string }) => <div role="group" aria-label={label} />,
@@ -47,5 +48,39 @@ describe("Backtesting", () => {
     await user.click(await screen.findByRole("button", { name: "Run demo backtest" }));
     expect(await screen.findByRole("heading", { name: "Demo backtest failed" }, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run demo backtest" })).toBeEnabled();
+  });
+
+  it("resumes polling after a status request fails and unlocks the controls", async () => {
+    const user = userEvent.setup();
+    const client = apiClient.createTradeoClient();
+    const workspace = await client.getBacktestWorkspace();
+    if (workspace.status !== "ready") throw new Error("Expected a ready demo workspace.");
+    const sample = workspace.data.runs[0];
+    if (sample?.status !== "completed") throw new Error("Expected a completed demo run.");
+
+    vi.spyOn(client, "getBacktestWorkspace").mockResolvedValue({
+      status: "ready", data: { ...workspace.data, runs: [] },
+    });
+    const poll = vi.spyOn(client, "getBacktestRun")
+      .mockRejectedValueOnce(new Error("Status unavailable"))
+      .mockResolvedValueOnce({ ...sample, id: "backtest-1" });
+    const factory = vi.spyOn(apiClient, "createTradeoClient").mockReturnValue(client);
+
+    try {
+      render(<Backtesting />);
+      await user.click(await screen.findByRole("button", { name: "Run demo backtest" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Run status could not refresh.");
+      expect(screen.getByRole("button", { name: "Demo run in progress" })).toBeDisabled();
+      expect(screen.getByRole("combobox", { name: "Backtest preview data" })).toBeDisabled();
+
+      await user.click(screen.getByRole("button", { name: "Retry run status" }));
+      expect(await screen.findByRole("heading", { name: "Demo backtest results" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run demo backtest" })).toBeEnabled();
+      expect(screen.getByRole("combobox", { name: "Backtest preview data" })).toBeEnabled();
+      expect(poll).toHaveBeenCalledTimes(2);
+    } finally {
+      factory.mockRestore();
+    }
   });
 });

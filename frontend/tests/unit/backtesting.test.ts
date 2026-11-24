@@ -22,7 +22,8 @@ describe("demo backtest replay", () => {
     expect(result.trades).toHaveLength(1);
     const [trade] = result.trades;
     expect(trade).toMatchObject({ entryAt: candles[3].time, exitAt: candles[5].time, entryPaise: 10426, exitPaise: 6982 });
-    expect(trade.feesPaise).toBeGreaterThan(0);
+    expect(trade.feesPaise).toBe(820);
+    expect(result.totalFeesPaise).toBe(820);
     expect(result.endingEquityPaise).toBe(config.capitalPaise + trade.pnlPaise);
     expect(result.netPnlPaise).toBe(trade.pnlPaise);
     expect(result.maxDrawdownBps).toBeLessThan(0);
@@ -30,6 +31,14 @@ describe("demo backtest replay", () => {
     const differentFirstHoldoutClose = candles.map((bar, index) => index === 3 ? { ...bar, close: 90 } : bar);
     const changed = replayDemoBacktest(config, differentFirstHoldoutClose, 5000);
     expect(changed.trades[0]).toMatchObject({ entryAt: trade.entryAt, entryPaise: trade.entryPaise, quantity: trade.quantity });
+  });
+
+  it("closes at the final session open even when the signal stays long", () => {
+    const rising = candles.map((bar, index) => index === 4 ? { ...bar, close: 115, high: 115 } : bar);
+    const result = replayDemoBacktest(config, rising, 5000);
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0]).toMatchObject({ entryAt: candles[3].time, exitAt: candles[5].time, exitPaise: 6982 });
+    expect(result.endingEquityPaise).toBe(config.capitalPaise + result.trades[0].pnlPaise);
   });
 
   it("handles zero fills and rejects bad windows and costs", () => {

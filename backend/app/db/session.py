@@ -39,6 +39,13 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+async def begin_consistent_read(db: AsyncSession) -> None:
+    """Start the session's transaction as REPEATABLE READ, READ ONLY, so that
+    several SELECTs that build one response all see the same committed state.
+    Call it first inside `async with db.begin():`."""
+    await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+
+
 async def ping_database(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))

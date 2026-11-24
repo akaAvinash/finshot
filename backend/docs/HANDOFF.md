@@ -17,26 +17,26 @@ the development kit is the roadmap.
 | Foundation (FastAPI, Postgres/Alembic, Redis, logging, Docker) | #2 |
 | A: auth (OTP, sessions, CSRF, audit) | #4 contract, #7 |
 | B1: read-only market data (demo provider) | #10, #12 |
+| B2: demo broker connections | #13 contract, #14 |
+| C1: strategy drafts and immutable versions | #15 contract, #16 |
 
-## Open
+## Merge policy
 
-| PR | Branch | Base | Status |
-|---|---|---|---|
-| #13 Broker endpoints in the API contract | `feat/brokers-contract` | `main` | Contract-only. CodeRabbit findings fixed. Awaiting owner review. |
-| #14 Phase B2 demo broker connections | `feat/backend-brokers` | `feat/brokers-contract` | Draft. CodeRabbit's second round fixed in f910710 (fresh-session result read, stricter no-write test). Retarget to `main` after #13 merges. |
-| #15 Strategy endpoints in the API contract | `feat/strategies-contract` | `feat/backend-brokers` | Contract-only, draft (stacked to avoid `openapi.yaml` conflicts). Awaiting owner review. |
-| #16 Phase C1 strategy drafts and versions | `feat/backend-strategies` | `feat/strategies-contract` | Draft. Same fresh-session fix (82afaa1). |
-
-Merge order: #13 → #14 → #15 → #16. Retarget each to `main` after the one
-before it merges.
+Since 2026-11-24 the owner allows Claude to merge its own backend PRs once
+every review thread is resolved, CodeRabbit is clean on the latest commit and
+Ruff, strict mypy and the full pytest suite (real Postgres and Redis) pass.
+Merge commits, one PR per phase, contract PRs before implementation PRs.
+Still pause for infrastructure changes, real credentials, production deploys
+and live trading.
 
 ## Blockers
 
-- Each PR in the stack depends on the one before it.
 - Strategy activation stays blocked (409) until backtest jobs and a risk
-  review flow exist. Who approves a risk review is an open product decision.
-- Frontend wiring (Next.js same-origin proxy, switching the broker client from
-  the mock) is Codex's work and is not done by the backend.
+  review flow exist. Who approves a risk review is deferred to the risk phase
+  (see #15); nothing can set `approved` until then.
+- Frontend wiring (Next.js same-origin proxy, switching the broker and
+  strategy clients from the mocks) is Codex's work and is not done by the
+  backend.
 
 ## Next backend task
 

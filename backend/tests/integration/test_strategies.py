@@ -424,3 +424,72 @@ def test_check_constraints_keep_their_intended_names() -> None:
         "ck_strategy_versions_number_positive",
         "ck_strategy_versions_hash_format",
     }
+
+
+def test_concurrent_activations_create_one_version(client: TestClient) -> None:
+    browser = Browser(client)
+    browser.login()
+    sid = create(browser)["id"]
+    approve(sid)
+    active = browser.activate()
+    headers = {
+        **browser.headers(),
+        "Cookie": "; ".join(f"{c.name}={c.value}" for c in browser.jar.jar),
+    }
+    active.cookies.clear()
+
+    def attempt(_: int) -> int:
+        response = active.post(COMMANDS, json={"action": "activate", "id": sid}, headers=headers)
+        return int(response.status_code)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        statuses = list(pool.map(attempt, range(4)))
+    assert statuses.count(200) == 1
+    assert statuses.count(409) == 3
+    assert db_rows(_db(), "SELECT number FROM strategy_versions") == [{"number": 1}]
+    (row,) = db_rows(_db(), "SELECT status, draft_parameters FROM strategies")
+    assert row == {"status": "active", "draft_parameters": None}
+    activations = db_rows(_db(), "SELECT 1 FROM audit_events WHERE action = 'strategy.activate'")
+    assert len(activations) == 1
+
+
+def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
+    """An activation committed between the snapshot's two reads must not show
+    the draft and the new version together."""
+    browser.login()
+    sid = create(browser)["id"]
+    service = browser.client.app.state.strategies  # type: ignore[attr-defined]
+    stored = json.dumps(
+        {
+            "name": PARAMS["name"],
+            "description": PARAMS["description"],
+            "instrument": PARAMS["instrument"],
+            "timeframe": PARAMS["timeframe"],
+            "risk_tier": PARAMS["riskTier"],
+            "position_size_bps": PARAMS["positionSizeBps"],
+            "stop_loss_bps": PARAMS["stopLossBps"],
+        }
+    )
+
+    def commit_activation() -> None:
+        sql = (
+            "WITH s AS (UPDATE strategies SET status = 'active', draft_parameters = NULL,"
+            " draft_backtest = NULL, draft_risk_review = NULL WHERE id = :id"
+            " RETURNING id, user_id)"
+            " INSERT INTO strategy_versions"
+            " (strategy_id, user_id, number, parameters, parameters_hash, activated_at)"
+            " SELECT id, user_id, 1, CAST(:p AS jsonb), repeat('a', 64), now() FROM s"
+        )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(db_rows, _db(), sql, id=sid, p=stored).result()
+
+    service._between_snapshot_reads = commit_activation
+    try:
+        before = find(browser.get(BASE).json()["data"], sid)
+    finally:
+        service._between_snapshot_reads = None
+    assert before["status"] == "draft" and before["draft"] is not None
+    assert before["versions"] == []
+    after = find(browser.get(BASE).json()["data"], sid)
+    assert after["status"] == "active" and after["draft"] is None
+    assert [v["number"] for v in after["versions"]] == [1]

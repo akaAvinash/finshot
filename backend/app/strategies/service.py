@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.models import AuditEvent
 from app.core.errors import ApiError
+from app.db.session import begin_consistent_read
 from app.strategies.models import Strategy, StrategyVersion
 from app.strategies.schemas import (
     MAX_STRATEGIES,
@@ -71,6 +72,8 @@ class StrategyService:
         self._factory = session_factory
         self._clock = clock
         self._enabled = enabled
+        # Test seam: runs between the two snapshot reads.
+        self._between_snapshot_reads: Callable[[], None] | None = None
 
     def _require_enabled(self) -> None:
         if not self._enabled:
@@ -184,18 +187,24 @@ class StrategyService:
     async def _snapshot(
         self, db: AsyncSession, user_id: uuid.UUID, now: datetime
     ) -> StrategySnapshotOut:
-        strategies = (
-            await db.scalars(
-                select(Strategy).where(Strategy.user_id == user_id).order_by(Strategy.seq)
-            )
-        ).all()
-        versions = (
-            await db.scalars(
-                select(StrategyVersion)
-                .where(StrategyVersion.user_id == user_id)
-                .order_by(StrategyVersion.strategy_id, StrategyVersion.number)
-            )
-        ).all()
+        # Both reads see one committed state, so a strategy never shows its
+        # draft next to the version that a concurrent activation made from it.
+        async with db.begin():
+            await begin_consistent_read(db)
+            strategies = (
+                await db.scalars(
+                    select(Strategy).where(Strategy.user_id == user_id).order_by(Strategy.seq)
+                )
+            ).all()
+            if self._between_snapshot_reads is not None:
+                self._between_snapshot_reads()
+            versions = (
+                await db.scalars(
+                    select(StrategyVersion)
+                    .where(StrategyVersion.user_id == user_id)
+                    .order_by(StrategyVersion.strategy_id, StrategyVersion.number)
+                )
+            ).all()
         by_strategy: dict[uuid.UUID, list[StrategyVersionOut]] = {}
         for v in versions:
             by_strategy.setdefault(v.strategy_id, []).append(

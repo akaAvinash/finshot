@@ -424,3 +424,44 @@ def test_check_constraints_keep_their_intended_names() -> None:
         "ck_broker_events_provider_valid",
         "ck_broker_events_action_valid",
     }
+
+
+def _connection(provider: str) -> dict[str, Any]:
+    return {"provider": provider, "account": None}
+
+
+@pytest.mark.parametrize(
+    "connections",
+    [
+        [],
+        [_connection("zerodha")],
+        [_connection("zerodha"), _connection("zerodha")],
+        [_connection("fyers"), _connection("zerodha")],
+        [_connection("zerodha"), _connection("fyers"), _connection("fyers")],
+    ],
+)
+def test_contract_rejects_wrong_provider_lists(contract: Any, connections: Any) -> None:
+    snapshot = {
+        "source": "demo",
+        "environment": "DEMO",
+        "asOf": "2026-11-24T06:00:00Z",
+        "connections": connections,
+        "events": [],
+    }
+    with pytest.raises(AssertionError):
+        check(contract, "BrokerSnapshot", snapshot)
+
+
+def test_contract_accepts_both_providers_disconnected_and_rejects_extras(contract: Any) -> None:
+    snapshot = {
+        "source": "demo",
+        "environment": "DEMO",
+        "asOf": "2026-11-24T06:00:00Z",
+        "connections": [_connection("zerodha"), _connection("fyers")],
+        "events": [],
+    }
+    check(contract, "BrokerSnapshot", snapshot)
+    with pytest.raises(AssertionError):
+        check(contract, "BrokerSnapshot", {**snapshot, "extra": 1})
+    with pytest.raises(AssertionError):
+        check(contract, "BrokerResult", {"status": "empty", "data": 123})

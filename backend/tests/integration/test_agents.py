@@ -11,6 +11,7 @@ import base64
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -660,12 +661,40 @@ def test_agent_migration_rolls_back_and_forward(db_url: str) -> None:
 
     tables = {"agent_events", "agent_runs", "agent_worker", "paper_replay_finishes"}
     assert tables <= present()
+    finished_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     try:
         command.downgrade(_alembic(db_url), "0007")
         assert not (tables & present())
         assert "paper_trades" in present()
+        # One finished replay and one unfinished account: only the first is backfilled.
+        for phone, replay, finished in (("+919000000101", 3, True), ("+919000000102", 2, False)):
+            db_rows(
+                db_url,
+                "WITH u AS (INSERT INTO users (phone_e164, created_at, updated_at)"
+                " VALUES (:phone, now(), now()) RETURNING id)"
+                " INSERT INTO paper_accounts (user_id, engine, replay, capital_paise,"
+                " cash_paise, position_quantity, position_fees_paise, sessions_done,"
+                " sessions_total, finished, session_pnl_paise, session_fills,"
+                " created_at, updated_at)"
+                " SELECT id, 'idle', :replay, 100, 100, 0, 0, 0, 0, :finished, 0, 0,"
+                " now(), :at FROM u RETURNING user_id",
+                phone=phone,
+                replay=replay,
+                finished=finished,
+                at=finished_at,
+            )
+        command.upgrade(_alembic(db_url), "head")
+        backfilled = db_rows(
+            db_url,
+            "SELECT u.phone_e164, f.replay, f.finished_at FROM paper_replay_finishes f"
+            " JOIN users u ON u.id = f.user_id",
+        )
+        assert backfilled == [
+            {"phone_e164": "+919000000101", "replay": 3, "finished_at": finished_at}
+        ]
     finally:
         command.upgrade(_alembic(db_url), "head")
+        db_rows(db_url, "DELETE FROM users")
     assert tables <= present()
 
 

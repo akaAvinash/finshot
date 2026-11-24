@@ -16,6 +16,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
+from app.auth.cookies import CSRF_COOKIE
 from app.brokers.adapter import (
     AccountData,
     AccountGrant,
@@ -125,6 +126,16 @@ def test_token_from_another_session_is_rejected(make_app: Callable[..., TestClie
     second.login(phone=OTHER_PHONE)
     response = act(second, "zerodha", "connect", headers=second.headers(csrf=first.csrf))
     assert response.status_code == 403
+    # Header and cookie agree but belong to the first session: only the
+    # session-binding check can reject this.
+    for cookie in first.jar.jar:
+        if cookie.name == CSRF_COOKIE:
+            second.jar.jar.set_cookie(cookie)
+    assert second.cookie(CSRF_COOKIE) == first.csrf
+    bound = act(second, "zerodha", "connect", headers=second.headers(csrf=first.csrf))
+    assert bound.status_code == 403
+    assert bound.json()["code"] == "CSRF_FAILED"
+    assert db_rows(_db(), "SELECT 1 FROM broker_events") == []
 
 
 # ---------------------------------------------------------------------- behavior
@@ -529,3 +540,20 @@ def test_action_result_shows_changes_committed_after_it(browser: Browser) -> Non
     assert response.status_code == 200
     synced = account(response.json(), "zerodha")["lastSyncedAt"]
     assert datetime.fromisoformat(synced.replace("Z", "+00:00")) == datetime.fromisoformat(later)
+
+
+def test_result_as_of_is_the_time_the_result_is_read(browser: Browser, clock: FakeClock) -> None:
+    """asOf describes when the returned snapshot was built, not when the
+    action started, while the event keeps the action's time."""
+    browser.login()
+    service = browser.client.app.state.brokers  # type: ignore[attr-defined]
+    started = clock.now
+    service._before_result_snapshot = lambda: clock.advance(5)
+    try:
+        response = act(browser, "zerodha", "connect")
+    finally:
+        service._before_result_snapshot = None
+    assert response.status_code == 200
+    data = response.json()
+    assert parse(data["asOf"]) == started + timedelta(seconds=5)
+    assert parse(data["events"][-1]["at"]) == started

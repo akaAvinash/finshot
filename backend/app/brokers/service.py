@@ -29,6 +29,7 @@ from app.brokers.schemas import (
     BrokerSnapshotOut,
 )
 from app.core.errors import ApiError
+from app.db.session import begin_consistent_read
 
 logger = structlog.get_logger(__name__)
 
@@ -74,6 +75,8 @@ class BrokerService:
         self._adapter = adapter
         self._clock = clock
         self._timeout = timeout_seconds
+        # Test seam: runs between the two snapshot reads.
+        self._between_snapshot_reads: Callable[[], None] | None = None
 
     def _require_adapter(self) -> BrokerAdapter:
         if self._adapter is None:
@@ -168,18 +171,26 @@ class BrokerService:
     async def _snapshot(
         self, db: AsyncSession, user_id: uuid.UUID, now: datetime
     ) -> BrokerSnapshotOut:
-        rows = (
-            await db.scalars(select(BrokerConnection).where(BrokerConnection.user_id == user_id))
-        ).all()
+        # Both reads see one committed state, so connections and events agree
+        # even if another action commits in between.
+        async with db.begin():
+            await begin_consistent_read(db)
+            rows = (
+                await db.scalars(
+                    select(BrokerConnection).where(BrokerConnection.user_id == user_id)
+                )
+            ).all()
+            if self._between_snapshot_reads is not None:
+                self._between_snapshot_reads()
+            events = (
+                await db.scalars(
+                    select(BrokerEvent)
+                    .where(BrokerEvent.user_id == user_id)
+                    .order_by(BrokerEvent.seq.desc())
+                    .limit(MAX_EVENTS)
+                )
+            ).all()
         by_provider = {row.provider: row for row in rows}
-        events = (
-            await db.scalars(
-                select(BrokerEvent)
-                .where(BrokerEvent.user_id == user_id)
-                .order_by(BrokerEvent.seq.desc())
-                .limit(MAX_EVENTS)
-            )
-        ).all()
         return BrokerSnapshotOut(
             as_of=now,
             connections=[

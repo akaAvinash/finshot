@@ -28,6 +28,8 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.db.session import create_engine, create_session_factory
+from app.market.demo import DemoMarketDataProvider
+from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -37,9 +39,11 @@ def create_app(
     *,
     otp_provider: OtpProvider | None = None,
     clock: Clock = utc_now,
+    market_provider: MarketDataProvider | None = None,
 ) -> FastAPI:
-    """`otp_provider` and `clock` are injection points for tests. Production
-    wiring picks the provider from OTP_PROVIDER."""
+    """`otp_provider`, `clock` and `market_provider` are injection points for
+    tests. Production wiring picks the OTP provider from OTP_PROVIDER and the
+    market data provider from MARKET_DATA_PROVIDER."""
     settings = settings or get_settings()
     configure_logging(settings)
     provider: OtpProvider = otp_provider or (
@@ -80,6 +84,11 @@ def create_app(
         openapi_url="/openapi.json" if docs else None,
     )
     app.state.settings = settings
+    app.state.market_provider = market_provider or (
+        DemoMarketDataProvider()
+        if settings.market_data_provider == "demo"
+        else DisabledMarketDataProvider()
+    )
 
     # Error bodies follow the contract's error shape in contracts/openapi.yaml
     # ({"code": UPPER_SNAKE, "message": str}). requestId is an extra field the

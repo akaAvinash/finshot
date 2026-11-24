@@ -1,9 +1,10 @@
 # Tradeo backend
 
 FastAPI service for Tradeo. It provides configuration, database and cache
-wiring, migrations, health probes, logging, container setup and (Phase A)
-phone-OTP authentication with server-side sessions. It has **no market,
-broker or trading endpoints yet** and **no order placement of any kind**.
+wiring, migrations, health probes, logging, container setup, (Phase A)
+phone-OTP authentication with server-side sessions and (Phase B1) read-only
+market data backed by demo fixtures. It has **no broker or trading endpoints
+yet**, **no live market feed** and **no order placement of any kind**.
 
 ## Stack
 
@@ -30,8 +31,10 @@ app/
   cache/redis.py     Redis client
   api/routes/health.py
   api/routes/auth.py /api/v1/auth/* (see contracts/openapi.yaml)
+  api/routes/market.py /api/v1/market/* (read-only)
   api/router.py      /api/v1 router
   auth/              models, service, signed CSRF tokens, OTP providers, rate limits
+  market/            provider interface, demo provider, search, response models
 migrations/          Alembic
 tests/unit           no external services needed
 tests/integration    real Postgres + Redis
@@ -83,6 +86,33 @@ alembic upgrade head && uvicorn app.asgi:app
 ```
 
 The code appears in that terminal as `OTP for +91******3210: 123456`, not in any log.
+
+## Market data (Phase B1, read-only)
+
+Implements the three Markets operations in `contracts/openapi.yaml`:
+`GET /api/v1/market/instruments?query=`, `GET /api/v1/market/overview` and
+`GET /api/v1/market/instruments/{instrumentId}/candles?timeframe=`
+(`1m`, `5m`, `15m`, `30m`, `1h`, `1D`). No authentication, as in the contract.
+
+- **Provider interface:** routes depend on `MarketDataProvider`
+  (`app/market/provider.py`); `create_app(market_provider=...)` injects one.
+  `MARKET_DATA_PROVIDER=demo` (default) or `disabled` (every call is 503).
+- **Demo data:** `app/market/demo.py` is a deterministic port of
+  `frontend/src/lib/api/market-fixture.ts`: same 12 NSE instruments, IDs,
+  aliases and numbers, snapshot dated 2026-11-23 (session closed). Every quote
+  and candle response says `"source": "demo"`. Not real prices. The calendar
+  skips weekends but not NSE holidays.
+- **Search:** case-insensitive over symbol, ID, name and aliases, ignoring
+  spaces and punctuation, ranked exact > prefix > name prefix > substring
+  (same rules as `frontend/src/lib/market/search.ts`).
+- **Guarantees:** the response models reject negative prices or volumes,
+  high/low that do not bound open and close, non-UTC times, and candles that
+  are out of order or share a timestamp. A provider that returns such data, raises
+  `MarketDataUnavailableError` or exceeds `MARKET_DATA_TIMEOUT_SECONDS`
+  produces `503 MARKET_DATA_UNAVAILABLE`, never bad data.
+- **Errors:** `400 INVALID_REQUEST` (bad ID format, unknown timeframe, query
+  over 100 characters), `404 UNKNOWN_INSTRUMENT` (well-formed ID not in the
+  catalog), `503 MARKET_DATA_UNAVAILABLE`; all with `requestId`.
 
 ## Run locally
 
@@ -147,8 +177,7 @@ ruff check . && ruff format --check . && mypy app
 The shared contract is `contracts/openapi.yaml` (owned outside `backend/`; do
 not edit it from here). This service follows it:
 
-- Routes live under `/api/v1`. The auth endpoints are implemented; the
-  contract's Markets endpoints are not yet.
+- Routes live under `/api/v1`. The auth and Markets endpoints are implemented.
 - Errors use the contract's shape: `{"code": "UPPER_SNAKE", "message": "..."}`,
   plus `requestId` when available (`app/core/errors.py`). Invalid parameters
   return **400 `INVALID_REQUEST`**, not FastAPI's default 422. Unhandled errors

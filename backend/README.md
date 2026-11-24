@@ -1,8 +1,9 @@
 # Tradeo backend
 
-FastAPI service foundation for Tradeo. It provides configuration, database and
-cache wiring, migrations, health probes, logging and container setup. It has
-**no business endpoints yet** and **no order placement of any kind**.
+FastAPI service for Tradeo. It provides configuration, database and cache
+wiring, migrations, health probes, logging, container setup and (Phase A)
+phone-OTP authentication with server-side sessions. It has **no market,
+broker or trading endpoints yet** and **no order placement of any kind**.
 
 ## Stack
 
@@ -28,11 +29,60 @@ app/
   db/                engine, session dependency, declarative Base
   cache/redis.py     Redis client
   api/routes/health.py
-  api/router.py      /api/v1 router (empty until contracts are agreed)
+  api/routes/auth.py /api/v1/auth/* (see contracts/openapi.yaml)
+  api/router.py      /api/v1 router
+  auth/              models, service, signed CSRF tokens, OTP providers, rate limits
 migrations/          Alembic
 tests/unit           no external services needed
 tests/integration    real Postgres + Redis
 ```
+
+## Authentication (Phase A)
+
+Implements the `/api/v1/auth/*` endpoints in `contracts/openapi.yaml`:
+`csrf`, `otp/request`, `otp/verify`, `me`, `logout`, `logout-all`, `sessions`.
+
+- **OTP:** six random digits (OS CSPRNG), stored only as an HMAC digest bound to
+  the challenge, 5 minute life, single use, at most 5 verify attempts, resend
+  cooldown, and Redis rate limits per phone, IP and browser context (`429`
+  with `Retry-After`). Verification marks the challenge used with one atomic
+  `UPDATE`, so concurrent requests cannot both succeed.
+- **Sessions:** random 256-bit token in a cookie; only its HMAC digest is stored.
+  Idle (default 30 min) and absolute (default 12 h) expiry, revocation on
+  logout, `logout-all`, and rotation on login.
+- **Cookies:** `__Host-tradeo_session` and `__Host-tradeo_csrf`, host-only,
+  `HttpOnly; Secure; SameSite=Lax; Path=/`, each in its own `Set-Cookie` field.
+- **CSRF:** signed token (HMAC) bound to the valid server-side session, or to a
+  pre-login context for the OTP flow. A code requested in one browser context
+  cannot be verified from another. A stale session cookie counts as pre-login,
+  and `GET /auth/csrf` clears it.
+- **OTP delivery:** `OTP_PROVIDER=disabled` (default) sends nothing and returns
+  503. `OTP_PROVIDER=console` is opt-in, development only (refused in every other
+  `APP_ENV`), and prints the code only to an interactive terminal, bypassing the
+  logging system. Run it from a terminal, not Docker. Tests inject their own
+  provider; no fixed-code path exists in application code. Real SMS is not
+  implemented.
+- **Data:** `users`, `otp_challenges`, `sessions`, `audit_events` (migration
+  `0002`). Audit rows never hold phone numbers, codes or tokens. Purge expired
+  digests and dead sessions with `python -m app.auth.maintenance` on a schedule.
+- **Behind the Next.js proxy:** set `TRUSTED_PROXY_HOPS=1` so rate limits use the
+  real client IP. The proxy wiring itself is separate work and must forward each
+  `Set-Cookie` field separately (the contract spells this out).
+
+Not done yet: real SMS provider, passkeys/TOTP step-up, per-user row-level
+security in Postgres (queries filter on `user_id`; isolation is covered by tests),
+least-privilege database roles.
+
+### Local manual test with the console provider
+
+```bash
+export APP_ENV=development OTP_PROVIDER=console AUTH_SECRET_KEY=$(openssl rand -hex 32)
+export ALLOWED_HOSTS=localhost PUBLIC_ORIGIN=http://localhost:3000
+# plus DATABASE_URL and REDIS_URL, then:
+alembic upgrade head && uvicorn app.asgi:app
+```
+
+The code appears in that terminal as `OTP for +91******3210: 123456`, not in any log.
 
 ## Run locally
 
@@ -59,12 +109,13 @@ Or the whole stack: `docker compose up --build` (API on http://127.0.0.1:8000).
 ## Configuration
 
 All settings are environment variables (see `.env.example`). Required:
-`DATABASE_URL` (must be `postgresql+asyncpg://`) and `REDIS_URL`.
+`DATABASE_URL` (must be `postgresql+asyncpg://`), `REDIS_URL`, `AUTH_SECRET_KEY`
+(32+ characters, placeholders rejected) and `PUBLIC_ORIGIN`.
 
 In `APP_ENV=staging|production` the service **refuses to start** if:
 CORS allows `*` or plain `http://` origins, `ALLOWED_HOSTS` is empty or `*`,
 docs are enabled, logs are not JSON, log level is DEBUG, or the database or
-Redis URL has no password. Validation errors never echo the input values.
+Redis URL has no password, or `PUBLIC_ORIGIN` is not https. Validation errors never echo the input values.
 
 ## Secure defaults
 
@@ -84,6 +135,7 @@ Redis URL has no password. Validation errors never echo the input values.
 
 ```bash
 pytest                       # unit tests; integration tests skip
+# Integration tests TRUNCATE the auth tables and FLUSHDB Redis: use throwaway instances.
 TEST_DATABASE_URL=postgresql+asyncpg://user:pw@localhost:5432/tradeo_test \
 TEST_REDIS_URL=redis://:pw@localhost:6379/15 \
 pytest                       # also runs integration tests (upgrades/downgrades that DB)
@@ -95,8 +147,8 @@ ruff check . && ruff format --check . && mypy app
 The shared contract is `contracts/openapi.yaml` (owned outside `backend/`; do
 not edit it from here). This service follows it:
 
-- Business routes live under `/api/v1` (`app/api/router.py`). None are
-  implemented yet; the contract's Markets endpoints come next.
+- Routes live under `/api/v1`. The auth endpoints are implemented; the
+  contract's Markets endpoints are not yet.
 - Errors use the contract's shape: `{"code": "UPPER_SNAKE", "message": "..."}`,
   plus `requestId` when available (`app/core/errors.py`). Invalid parameters
   return **400 `INVALID_REQUEST`**, not FastAPI's default 422. Unhandled errors

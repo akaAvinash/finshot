@@ -1,6 +1,9 @@
-"""Versioned API router. Business endpoints will be added here once their
-shapes are agreed in contracts/openapi.yaml."""
+"""Versioned API router. Routes are added as their shapes are agreed in
+contracts/openapi.yaml."""
 
 from fastapi import APIRouter
 
-api_router = APIRouter(prefix="/api/v1")
+from app.api.routes import auth
+
+api_router = APIRouter()
+api_router.include_router(auth.router)

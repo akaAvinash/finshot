@@ -14,9 +14,13 @@ from fastapi.responses import JSONResponse
 from app import __version__
 from app.api.router import api_router
 from app.api.routes import health
+from app.auth.crypto import Keys
+from app.auth.otp import ConsoleOtpProvider, DisabledOtpProvider, OtpProvider
+from app.auth.ratelimit import RateLimiter
+from app.auth.service import AuthService, Clock, utc_now
 from app.cache.redis import create_redis
 from app.core.config import Environment, Settings, get_settings
-from app.core.errors import error_response
+from app.core.errors import ApiError, error_response
 from app.core.logging import configure_logging
 from app.core.middleware import (
     HostAllowlistMiddleware,
@@ -28,9 +32,19 @@ from app.db.session import create_engine, create_session_factory
 logger = structlog.get_logger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    otp_provider: OtpProvider | None = None,
+    clock: Clock = utc_now,
+) -> FastAPI:
+    """`otp_provider` and `clock` are injection points for tests. Production
+    wiring picks the provider from OTP_PROVIDER."""
     settings = settings or get_settings()
     configure_logging(settings)
+    provider: OtpProvider = otp_provider or (
+        ConsoleOtpProvider() if settings.otp_provider == "console" else DisabledOtpProvider()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -39,6 +53,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.db_engine = create_engine(settings)
         app.state.session_factory = create_session_factory(app.state.db_engine)
         app.state.redis = create_redis(settings)
+        keys = Keys.from_secret(settings.auth_secret_key.get_secret_value())
+        app.state.auth = AuthService(
+            settings=settings,
+            session_factory=app.state.session_factory,
+            limiter=RateLimiter(app.state.redis, keys),
+            provider=provider,
+            keys=keys,
+            clock=clock,
+        )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:
             yield
@@ -61,6 +84,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Error bodies follow the contract's error shape in contracts/openapi.yaml
     # ({"code": UPPER_SNAKE, "message": str}). requestId is an extra field the
     # contract permits, so clients can quote it when reporting a problem.
+    @app.exception_handler(ApiError)
+    async def api_error(request: Request, exc: ApiError) -> JSONResponse:
+        return error_response(
+            request,
+            exc.status_code,
+            exc.code,
+            exc.message,
+            retry_after_seconds=exc.retry_after_seconds,
+        )
+
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
         # The contract uses 400 INVALID_REQUEST, not FastAPI's default 422.

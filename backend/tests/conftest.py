@@ -13,6 +13,8 @@ from app.main import create_app
 UNREACHABLE_DB = "postgresql+asyncpg://tradeo:pw@127.0.0.1:1/tradeo"
 UNREACHABLE_REDIS = "redis://:pw@127.0.0.1:1/0"
 
+TEST_SECRET = "test-secret-0123456789abcdef0123456789abcdef"
+
 _ENV_KEYS = [
     "APP_ENV",
     "LOG_LEVEL",
@@ -23,6 +25,10 @@ _ENV_KEYS = [
     "CORS_ALLOWED_ORIGINS",
     "DOCS_ENABLED",
     "HEALTH_CHECK_TIMEOUT_SECONDS",
+    "AUTH_SECRET_KEY",
+    "PUBLIC_ORIGIN",
+    "OTP_PROVIDER",
+    "TRUSTED_PROXY_HOPS",
 ]
 
 
@@ -44,6 +50,8 @@ def make_settings() -> SettingsFactory:
             "redis_url": UNREACHABLE_REDIS,
             "allowed_hosts": ["testserver", "localhost"],
             "health_check_timeout_seconds": 1.0,
+            "auth_secret_key": TEST_SECRET,
+            "public_origin": "https://testserver",
         }
         values.update(overrides)
         return Settings(_env_file=None, **values)

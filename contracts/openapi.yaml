@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.8.0
+  version: 0.9.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
     strategy versions with automatic backtest and risk checks, demo backtest
     jobs (simulated data only), a paper trading engine (simulated fills
-    over demo data, no broker) and read-only reports over the paper ledger. The frontend uses deterministic demo responses in
+    over demo data, no broker), read-only reports over the paper ledger and
+    deterministic advisory agents that watch it (no language model). The
+    frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels a real
     order; paper orders exist only in the server's paper ledger.
@@ -48,6 +50,15 @@ tags:
       and a reconciliation of the paper account against its ledger. Every
       figure is derived from server-side paper fills over demo data; there is
       no live broker, so no broker statement or tax field is reported.
+  - name: Agents
+    description: >
+      Deterministic advisory agents that watch the caller's paper ledger and
+      the demo candles it replays, and record reason-coded events. Agents are
+      rule-based: no language model, broker, credential or live data is
+      involved. Their output is advisory only. They never place, modify or
+      cancel a paper order, change a risk limit, send a paper command or
+      authorise anything; the paper engine, its risk engine and the halt do
+      not read agent output. Every agent endpoint is read-only (`GET`).
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -979,6 +990,131 @@ paths:
           $ref: '#/components/responses/ReportUnauthenticated'
         '503':
           $ref: '#/components/responses/ReportUnavailable'
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      tags: [Agents]
+      summary: List the advisory agents
+      description: |
+        Returns the fixed roster of advisory agents, in the order shown, with
+        the reason codes each one can record. The roster is the same for
+        every user; use `getAgentHealth` for the caller's per-agent health and
+        `listAgentEvents` for what each agent recorded.
+
+        - `market-scanner` checks each replayed demo session of the caller's
+          assigned instrument and records `LARGE_MOVE` when the close moved
+          at least 3% from the previous session's close.
+        - `strategy-analyst` records `REPLAY_SUMMARY` when a replay
+          finishes: the replay's fills, winning sells and realised P&L, linked to the replay.
+        - `risk-explainer` explains deterministic risk outcomes that already
+          happened: `STOP_LOSS_EXIT` for each stop-loss fill (linked to the
+          fill), `LOSS_LIMIT_REACHED` and `TRADE_LIMIT_REACHED` once per
+          replayed session that reached the limit, and `ENGINE_HALTED` when
+          it observes the engine halted after last seeing it not halted.
+        - `execution-monitor` records `ORDER_CANCELLED` for each cancelled
+          paper order (linked to the order), `RECONCILIATION_MISMATCH` when
+          the current replay's ledger stops matching the paper account (same
+          rule as the report's `reconciliation`), and
+          `RECONCILIATION_MATCHED` when it matches again after a mismatch.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The agent roster.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRoster'
+        '401':
+          $ref: '#/components/responses/AgentUnauthenticated'
+        '503':
+          $ref: '#/components/responses/AgentUnavailable'
+  /api/v1/agents/health:
+    get:
+      operationId: getAgentHealth
+      tags: [Agents]
+      summary: Read the caller's agent health
+      description: |
+        Returns, for each agent in roster order, whether its view of the
+        caller's paper data is current. A server-side worker evaluates each
+        user's paper data every few seconds; health is computed at read time
+        from the last evaluation.
+
+        Per agent:
+        - `unavailable` with `NO_PAPER_ACTIVITY` when the caller has never
+          assigned a paper strategy. `lastRunAt` and `dataAsOf` are null.
+        - `unavailable` with `NOT_YET_EVALUATED` when the caller has paper
+          activity, the agent has not evaluated it yet, and the paper data
+          last changed less than `staleAfterSeconds` ago.
+        - `stale` with `DATA_STALE` when the paper data changed more than
+          `staleAfterSeconds` ago and the agent has not evaluated that change
+          (it is behind, or the worker is stopped). Its events may be
+          incomplete.
+        - Otherwise `ok` with `reasonCode: null`. An idle engine stays `ok`:
+          unchanged data does not go stale.
+
+        `dataAsOf` is the time of the paper data the agent last evaluated
+        (the paper account's last change), `lastRunAt` when it last did so.
+        `status` overall is `ok` when every agent is `ok`, `unavailable` when
+        every agent is `unavailable`, and `degraded` otherwise.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's agent health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentHealthReport'
+        '401':
+          $ref: '#/components/responses/AgentUnauthenticated'
+        '503':
+          $ref: '#/components/responses/AgentUnavailable'
+  /api/v1/agents/events:
+    get:
+      operationId: listAgentEvents
+      tags: [Agents]
+      summary: List the caller's advisory events
+      description: |
+        Returns the caller's advisory events, newest first, one page at a
+        time. Only the caller's own events are ever returned.
+
+        - Events are ordered by a server-assigned sequence, newest first; ties
+          in `at` keep that order. Events are append-only and never change.
+        - `nextCursor` is null on the last page. Pass it as `cursor` with the
+          same `agentId` to read the next page. A cursor is opaque; pages stay
+          stable when new events are recorded meanwhile (new events appear
+          only on a fresh first page). A malformed cursor, or one used with a
+          different `agentId`, returns `400`.
+        - `link` names the paper record an event is about (`paper-trade` and
+          `paper-order` ids are the ids in `getPaperTrading`; a
+          `paper-replay` id is the replay number, as in the CSV export). It is
+          present only when the server verified, at read time, that the
+          record exists and belongs to the caller; otherwise it is null.
+        - `dataAsOf` is the time of the paper or demo data the event is about
+          (a fill, or a demo session); `at` is when the agent recorded it.
+        - An empty first page (`items: []`) means no event has been recorded
+          yet; see `getAgentHealth` for whether that is because there is no
+          paper activity or the agents are behind.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/AgentIdFilter'
+        - $ref: '#/components/parameters/AgentCursor'
+        - $ref: '#/components/parameters/AgentLimit'
+      responses:
+        '200':
+          description: One page of the caller's advisory events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentEventPage'
+        '400':
+          $ref: '#/components/responses/AgentInvalidRequest'
+        '401':
+          $ref: '#/components/responses/AgentUnauthenticated'
+        '503':
+          $ref: '#/components/responses/AgentUnavailable'
 components:
   parameters:
     ReportFrom:
@@ -997,6 +1133,32 @@ components:
       schema:
         type: string
         format: date
+    AgentIdFilter:
+      name: agentId
+      in: query
+      required: false
+      description: Only this agent's events. Omit for every agent.
+      schema:
+        $ref: '#/components/schemas/AgentId'
+    AgentCursor:
+      name: cursor
+      in: query
+      required: false
+      description: The previous page's `nextCursor`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    AgentLimit:
+      name: limit
+      in: query
+      required: false
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -2473,6 +2635,180 @@ components:
         accountQuantity:
           type: integer
           minimum: 0
+    AgentId:
+      enum: [market-scanner, strategy-analyst, risk-explainer, execution-monitor]
+    AgentReasonCode:
+      enum:
+        - LARGE_MOVE
+        - REPLAY_SUMMARY
+        - STOP_LOSS_EXIT
+        - LOSS_LIMIT_REACHED
+        - TRADE_LIMIT_REACHED
+        - ENGINE_HALTED
+        - ORDER_CANCELLED
+        - RECONCILIATION_MISMATCH
+        - RECONCILIATION_MATCHED
+    AgentRoster:
+      type: object
+      required: [source, environment, agents]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: PAPER
+        agents:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/Agent'
+    Agent:
+      type: object
+      required: [id, name, description, role, inputs, reasonCodes]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/AgentId'
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
+        role:
+          const: advisory
+          description: Agents only record events; they cannot act.
+        inputs:
+          type: array
+          minItems: 1
+          description: The server data the agent reads.
+          items:
+            enum: [paper-account, paper-orders, paper-trades, paper-replays, demo-candles]
+        reasonCodes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AgentReasonCode'
+    AgentHealthReport:
+      type: object
+      required: [source, environment, asOf, status, agents]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: PAPER
+        asOf:
+          type: string
+          format: date-time
+          description: When the server computed this health.
+        status:
+          enum: [ok, degraded, unavailable]
+        agents:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/AgentHealth'
+    AgentHealth:
+      type: object
+      required: [agentId, status, reasonCode, lastRunAt, dataAsOf, staleAfterSeconds]
+      additionalProperties: false
+      properties:
+        agentId:
+          $ref: '#/components/schemas/AgentId'
+        status:
+          enum: [ok, stale, unavailable]
+        reasonCode:
+          description: Null when `ok`.
+          enum: [NO_PAPER_ACTIVITY, NOT_YET_EVALUATED, DATA_STALE, null]
+        lastRunAt:
+          type: [string, 'null']
+          format: date-time
+        dataAsOf:
+          type: [string, 'null']
+          format: date-time
+        staleAfterSeconds:
+          type: integer
+          minimum: 1
+    AgentEventPage:
+      type: object
+      required: [source, environment, items, nextCursor]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: PAPER
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AgentEvent'
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 128
+    AgentEvent:
+      type: object
+      required: [id, agentId, at, dataAsOf, severity, reasonCode, message, recommendation, link]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        agentId:
+          $ref: '#/components/schemas/AgentId'
+        at:
+          type: string
+          format: date-time
+        dataAsOf:
+          type: string
+          format: date-time
+        severity:
+          enum: [info, warning]
+        reasonCode:
+          $ref: '#/components/schemas/AgentReasonCode'
+        message:
+          type: string
+          minLength: 1
+          description: What the agent observed, in plain words.
+        recommendation:
+          type: [string, 'null']
+          minLength: 1
+          description: Advisory only; the server never acts on it.
+        link:
+          oneOf:
+            - $ref: '#/components/schemas/AgentLink'
+            - type: 'null'
+    AgentLink:
+      type: object
+      required: [kind, id]
+      additionalProperties: false
+      properties:
+        kind:
+          enum: [paper-trade, paper-order, paper-replay]
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+    AgentError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - AGENTS_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     ReportError:
       type: object
       required: [code, message]
@@ -2792,3 +3128,30 @@ components:
           example:
             code: REPORTS_UNAVAILABLE
             message: Reports are temporarily unavailable. Try again shortly.
+    AgentInvalidRequest:
+      description: An unknown `agentId`, a `limit` out of range, or a malformed or mismatched `cursor`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AgentError'
+          example:
+            code: INVALID_REQUEST
+            message: The request parameters are invalid.
+    AgentUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AgentError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+    AgentUnavailable:
+      description: Agents are disabled or temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AgentError'
+          example:
+            code: AGENTS_UNAVAILABLE
+            message: Agents are temporarily unavailable. Try again shortly.

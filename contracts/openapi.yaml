@@ -695,6 +695,7 @@ components:
       oneOf:
         - type: object
           required: [status, data]
+          additionalProperties: false
           properties:
             status:
               enum: [ready, stale]
@@ -702,12 +703,14 @@ components:
               $ref: '#/components/schemas/BrokerSnapshot'
         - type: object
           required: [status]
+          additionalProperties: false
           properties:
             status:
               const: empty
     BrokerSnapshot:
       type: object
       required: [source, environment, asOf, connections, events]
+      additionalProperties: false
       properties:
         source:
           const: demo
@@ -720,8 +723,20 @@ components:
         connections:
           type: array
           description: Exactly one entry per provider, in the order zerodha, fyers.
-          items:
-            $ref: '#/components/schemas/BrokerConnection'
+          minItems: 2
+          maxItems: 2
+          prefixItems:
+            - allOf:
+                - $ref: '#/components/schemas/BrokerConnection'
+                - properties:
+                    provider:
+                      const: zerodha
+            - allOf:
+                - $ref: '#/components/schemas/BrokerConnection'
+                - properties:
+                    provider:
+                      const: fyers
+          items: false
         events:
           type: array
           maxItems: 50
@@ -731,6 +746,7 @@ components:
     BrokerConnection:
       type: object
       required: [provider, account]
+      additionalProperties: false
       properties:
         provider:
           $ref: '#/components/schemas/BrokerId'
@@ -742,6 +758,7 @@ components:
     BrokerAccount:
       type: object
       required: [maskedAccountId, connectedAt, expiresAt, lastSyncedAt, scopes]
+      additionalProperties: false
       properties:
         maskedAccountId:
           type: string
@@ -769,6 +786,7 @@ components:
     BrokerEvent:
       type: object
       required: [id, provider, action, at]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -783,6 +801,7 @@ components:
     BrokerError:
       type: object
       required: [code, message]
+      additionalProperties: false
       properties:
         code:
           enum:

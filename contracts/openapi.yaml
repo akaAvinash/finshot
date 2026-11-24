@@ -1067,6 +1067,7 @@ components:
     StrategyError:
       type: object
       required: [code, message]
+      additionalProperties: false
       properties:
         code:
           enum:

@@ -830,9 +830,10 @@ paths:
         plus fees would exceed cash, the quantity is reduced to fit; if that
         leaves zero the order is cancelled. A blocked or zero-quantity buy is
         recorded as an event instead of an order. Paper limits are fixed configuration
-        examples, not recommendations: capital ₹25,000, daily loss ₹2,500,
+        examples, not recommendations: capital ₹10,00,000, daily loss ₹25,000,
         10 fills per session, per-trade risk 1% of capital, 3 bps fees and
-        5 bps slippage.
+        5 bps slippage. The capital is large enough for a low-tier size limit
+        (6%) to buy at least one unit of every demo instrument.
 
         Every applied command and every fill writes an event. Requires a valid
         session and a `session` CSRF token; a missing or stale session returns

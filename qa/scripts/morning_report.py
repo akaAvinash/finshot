@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from qa.scripts.nightly_candidates import gh
+
 REQUIRED = ["backend", "qa", "frontend-unit", "secret-scan", "dependency-audit", "npm-audit"]
 E2E_SOURCE = "frontend-e2e"
 UNKNOWN_SHA = "current-commit-unknown"  # never equals a tested sha, so a failed lookup fails closed
@@ -79,8 +81,6 @@ def current_sha_for(m: dict, repo: str, token: str, default_branch: str = "main"
     """Tip the candidate should match now: the PR head, or the default branch tip. None if unknown."""
     if not repo or not token:
         return None
-    from qa.scripts.nightly_candidates import gh
-
     try:
         if m.get("pr"):
             return gh(f"/repos/{repo}/pulls/{m['pr']}", token)["head"]["sha"]  # type: ignore[index]

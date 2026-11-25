@@ -111,6 +111,7 @@ qa/tests/framework/test_harness_regressions.py::test_e2e_result_set_is_required_
 qa/tests/framework/test_harness_regressions.py::test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings,framework,QA-GATE-003,high,no,no,pr+nightly,cancelled candidate is not eligible but plain failures stay warnings
 qa/tests/framework/test_harness_regressions.py::test_report_compares_against_the_current_commit_and_fails_closed,framework,QA-GATE-004,high,no,no,pr+nightly,report compares against the current commit and fails closed
 qa/tests/framework/test_harness_regressions.py::test_merge_script_stops_at_the_first_failed_fetch,framework,QA-GATE-004,high,no,no,pr+nightly,merge script stops at the first failed fetch
+qa/tests/framework/test_harness_regressions.py::test_morning_report_entry_point_runs_as_module_from_repo_root,framework,,high,no,no,pr+nightly,"The nightly job installs only report deps, so `qa` resolves from the repo root via -m."
 qa/tests/policy/test_independence.py::test_qa_code_never_imports_product_code,policy,QA-POL-001,high,no,no,pr+nightly,Expected values must not come from the implementation under test.
 qa/tests/policy/test_independence.py::test_no_real_endpoints_or_credentials_in_qa_code,policy,QA-POL-002,high,no,no,pr+nightly,no real endpoints or credentials in qa code
 qa/tests/policy/test_independence.py::test_synthetic_contact_data_only,policy,QA-POL-003,high,no,no,pr+nightly,Emails in the framework use the reserved .invalid TLD.

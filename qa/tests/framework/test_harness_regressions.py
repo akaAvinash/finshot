@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from decimal import Decimal as D
@@ -534,3 +535,31 @@ def test_merge_script_stops_at_the_first_failed_fetch(tmp_path):
         ["bash", str(script)], cwd=repo, env={**env, "HEAD_SHA": "not-a-sha"}, capture_output=True, text=True
     )
     assert bad.returncode == 2
+
+
+def test_morning_report_entry_point_runs_as_module_from_repo_root():
+    """The nightly job installs only report deps, so `qa` resolves from the repo root via -m."""
+    root = Path(__file__).resolve().parents[3]
+    wf = (root / ".github/workflows/qa-nightly.yml").read_text()
+    assert "python -m qa.scripts.morning_report " in wf
+    assert "python qa/scripts/morning_report.py" not in wf
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run(
+        [sys.executable, "-m", "qa.scripts.morning_report", "--help"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    # Run as a plain script (what the workflow used to do), `qa` is not importable.
+    bad = subprocess.run(
+        [sys.executable, "qa/scripts/morning_report.py", "--help"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert bad.returncode != 0 and "No module named 'qa'" in bad.stderr

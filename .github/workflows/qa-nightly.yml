@@ -125,7 +125,7 @@ jobs:
           OPENAI_API_KEY: ${{ vars.QA_AI_PROVIDER == 'openai' && secrets.QA_OPENAI_API_KEY || '' }}
         run: |
           if [ -n "$QA_AI_PROVIDER" ]; then python -m pip install 'anthropic>=1,<2' 'openai>=1,<3' >/dev/null || true; fi
-          python qa/scripts/morning_report.py --results results --matrix "$MATRIX" \
+          python -m qa.scripts.morning_report --results results --matrix "$MATRIX" \
             --candidates results/nightly-candidates/candidates.json --out morning --run-url "$RUN_URL" \
             --run-e2e "$RUN_E2E" --candidate-result "$CANDIDATE_RESULT"
           cat morning/MORNING_REPORT.md >> "$GITHUB_STEP_SUMMARY"

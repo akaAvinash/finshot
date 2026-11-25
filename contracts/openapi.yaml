@@ -266,7 +266,12 @@ tags:
       Recovery codes (`regenerateRecoveryCodes`, `loginWithRecoveryCode`) let
       a person who lost the authenticator sign in once and enrol a new one. If
       they have none left, the owner resets the authenticator with a
-      server-side command.
+      server-side command. A recovery code is valid only for the authenticator
+      that was active when it was issued: removing the authenticator
+      (`disableTotp`, the owner's server-side reset, or `loginWithRecoveryCode`)
+      invalidates every recovery code of the account at that moment, and a
+      later authenticator starts with no codes until `regenerateRecoveryCodes`
+      is called again.
 
       **Step-up.** A sensitive action (named in the operation that needs it)
       requires the caller to have proved a current TOTP code recently.
@@ -548,8 +553,8 @@ paths:
         then CSRF, and a new session-bound `csrfToken` in the body). The code
         is spent, and the authenticator and every remaining recovery code of
         the account are removed in the same step, so the account is back to
-        having no authenticator (`session.totpEnabled` is false and the step-up
-        window is closed). The new session is fresh enough to call
+        having no authenticator (`user.totpEnabled` is false and
+        `session.stepUpUntil` is null). The new session is fresh enough to call
         `enrollTotp` right away; the client then enrols a new authenticator and
         creates a new set of recovery codes. The action is recorded in the
         audit log without the code. A wrong, used or replaced code, a number
@@ -741,7 +746,8 @@ paths:
         Removes the caller's TOTP secret when `code` is a valid current code,
         and closes the step-up window on every session of the caller. The
         action is recorded in the audit log. After it, step-up is unavailable
-        until the caller enrols again.
+        until the caller enrols again. Every recovery code of the account is
+        invalidated in the same step.
       security:
         - sessionCookie: []
           csrfHeader: []

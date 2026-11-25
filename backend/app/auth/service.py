@@ -264,6 +264,12 @@ class AuthService:
                     select(SessionRow, User, TotpCredential.confirmed_at)
                     .join(User, User.id == SessionRow.user_id)
                     .outerjoin(TotpCredential, TotpCredential.user_id == User.id)
+                    # Revoking an invite ends access at once, even for a session a
+                    # concurrent verification created just before the revocation.
+                    .join(
+                        Invite,
+                        (Invite.phone_e164 == User.phone_e164) & Invite.revoked_at.is_(None),
+                    )
                     .where(
                         SessionRow.session_digest == digest,
                         SessionRow.revoked_at.is_(None),
@@ -424,22 +430,41 @@ class AuthService:
         return self._provider
 
     async def _enforce_spend_limits(self, phone: str, now: datetime, *, count: bool) -> None:
-        """Per-day delivery caps. Only real deliveries are counted, but a reached
-        cap answers every request, invited or not, so the 503 reveals nothing
-        about who is invited. Nothing is created over a cap."""
+        """Per-day delivery caps; a reached cap answers every request the same way.
+
+        The per-phone cap counts every request for that number, invited or not,
+        so an invited number cannot be told apart by when it hits the cap. (A
+        third party can already exhaust a number's request limit; this adds no
+        new lever.) The global cap counts real deliveries only, and is checked
+        without counting for the rest. A request rejected by either cap leaves
+        the global counter unchanged."""
         s = self.settings
         day = now.strftime("%Y%m%d")
-        for kind, subject, limit in (
-            ("otp_spend_all", day, s.otp_daily_delivery_limit),
-            ("otp_spend_phone", f"{day}:{phone}", s.otp_daily_delivery_limit_per_phone),
+        phone_subject = f"{day}:{phone}"
+        if (
+            await self._limiter.exceeded("otp_spend_all", day, s.otp_daily_delivery_limit)
+            is not None
+            or await self._limiter.exceeded(
+                "otp_spend_phone", phone_subject, s.otp_daily_delivery_limit_per_phone
+            )
+            is not None
         ):
-            if count:
-                over = await self._limiter.hit(kind, subject, limit, 86_400)
-            else:
-                over = await self._limiter.exceeded(kind, subject, limit)
-            if over is not None:
-                logger.warning("otp_spend_limit_reached", kind=kind)
-                raise _delivery_unavailable()
+            logger.warning("otp_spend_limit_reached")
+            raise _delivery_unavailable()
+        if (
+            await self._limiter.hit(
+                "otp_spend_phone", phone_subject, s.otp_daily_delivery_limit_per_phone, 86_400
+            )
+            is not None
+        ):
+            logger.warning("otp_spend_limit_reached", kind="otp_spend_phone")
+            raise _delivery_unavailable()
+        if count and (
+            await self._limiter.hit("otp_spend_all", day, s.otp_daily_delivery_limit, 86_400)
+            is not None
+        ):
+            logger.warning("otp_spend_limit_reached", kind="otp_spend_all")
+            raise _delivery_unavailable()
 
     async def verify_otp(
         self,
@@ -593,6 +618,12 @@ class AuthService:
                 at=now,
                 link=("session", str(session_id)),
             )
+        async with self._factory() as db:
+            totp_enabled = (
+                await db.scalar(
+                    select(TotpCredential.confirmed_at).where(TotpCredential.user_id == user_row.id)
+                )
+            ) is not None
         info = SessionInfo(
             session_id=session_id,
             user_id=user_row.id,
@@ -603,6 +634,7 @@ class AuthService:
             last_seen_at=now,
             expires_at=expires_at,
             device_label=label,
+            totp_enabled=totp_enabled,
         )
         csrf = self.issue_token("session", str(session_id), expires_at)
         return info, token, csrf

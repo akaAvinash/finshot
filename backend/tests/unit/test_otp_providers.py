@@ -84,6 +84,16 @@ def test_staging_reader_tolerates_damage(tmp_path: Path) -> None:
     assert read_staging_codes(path, now=0) == {}
     path.write_text("[1, 2]")
     assert read_staging_codes(path, now=0) == {}
+    path.write_text(
+        json.dumps(
+            {
+                "+919876543210": {"expiresAt": 10},  # no code
+                "+918765432109": {"code": "12ab56", "expiresAt": 10},  # not six digits
+                "+917654321098": {"code": "123456", "expiresAt": 10},
+            }
+        )
+    )
+    assert list(read_staging_codes(path, now=0)) == ["+917654321098"]
 
 
 def test_admin_staging_code_lookup(tmp_path: Path) -> None:

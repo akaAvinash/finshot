@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 import structlog
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -226,15 +226,16 @@ class StepUpService:
         self, db: AsyncSession, session_id: uuid.UUID, now: datetime
     ) -> datetime:
         until = now + timedelta(seconds=self._s.step_up_ttl_seconds)
-        capped: datetime | None = await db.scalar(
+        stored: datetime | None = await db.scalar(
             update(SessionRow)
             .where(SessionRow.id == session_id, SessionRow.revoked_at.is_(None))
-            .values(step_up_until=until)
-            .returning(SessionRow.expires_at)
+            # Never past the session's own expiry, in the database as well as the reply.
+            .values(step_up_until=func.least(until, SessionRow.expires_at))
+            .returning(SessionRow.step_up_until)
         )
-        if capped is None:
+        if stored is None:
             raise step_up_required()
-        return min(until, capped)
+        return stored
 
     def _audit(self, db: AsyncSession, user_id: uuid.UUID, action: str, now: datetime) -> None:
         db.add(

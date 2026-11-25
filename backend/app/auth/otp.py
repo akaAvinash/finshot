@@ -156,6 +156,10 @@ def read_staging_codes(path: Path, *, now: float) -> dict[str, dict[str, float |
         k: v
         for k, v in raw.items()
         if isinstance(v, dict)
+        and isinstance(v.get("code"), str)
+        and v["code"].isascii()
+        and v["code"].isdigit()
+        and len(v["code"]) == 6
         and isinstance(v.get("expiresAt"), int | float)
         and v["expiresAt"] > now
     }

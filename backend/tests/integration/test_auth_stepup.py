@@ -274,3 +274,61 @@ def test_disabled_provider_answers_every_number_with_503(make_app: MakeApp) -> N
     assert {k: v for k, v in invited.json().items() if k not in strip} == {
         k: v for k, v in uninvited.json().items() if k not in strip
     }
+
+
+def test_per_phone_cap_is_the_same_for_invited_and_uninvited_numbers(
+    make_app: MakeApp, provider: FixedOtpProvider
+) -> None:
+    """The same request sequence gets the same statuses, so the cap reveals nothing."""
+
+    def statuses(invited: bool) -> list[int]:
+        browser = Browser(make_app(otp_daily_delivery_limit_per_phone=2))
+        browser.get_csrf()
+        phone = PHONE if invited else OTHER_PHONE
+        return [browser.request_otp(phone, invite=invited).status_code for _ in range(4)]
+
+    assert statuses(True) == statuses(False) == [202, 202, 503, 503]
+
+
+def test_requests_rejected_by_the_phone_cap_do_not_spend_the_global_cap(
+    make_app: MakeApp, provider: FixedOtpProvider
+) -> None:
+    browser = Browser(make_app(otp_daily_delivery_limit=3, otp_daily_delivery_limit_per_phone=1))
+    browser.get_csrf()
+    assert browser.request_otp(PHONE).status_code == 202
+    assert browser.request_otp(PHONE).status_code == 503
+    assert browser.request_otp(PHONE).status_code == 503
+    # Only one code was sent, so two other numbers still fit under the global cap of 3.
+    assert browser.request_otp(OTHER_PHONE).status_code == 202
+    assert browser.request_otp("+917654321098").status_code == 202
+
+
+def test_revoking_an_invite_ends_access_even_if_the_session_row_survives(
+    browser: Browser, db_url: str
+) -> None:
+    browser.login()
+    db_rows(db_url, "UPDATE invites SET revoked_at = now() WHERE phone_e164 = :p", p=PHONE)
+    assert browser.get("/api/v1/auth/me").status_code == 401
+
+
+def test_login_reports_an_existing_authenticator(make_app: MakeApp, clock: FakeClock) -> None:
+    app = make_app()
+    first = Browser(app)
+    first.login()
+    enroll_and_confirm(first, clock)
+    second = Browser(app)
+    response = second.login()
+    assert response.json()["user"]["totpEnabled"] is True
+    assert second.get("/api/v1/auth/me").json()["user"]["totpEnabled"] is True
+
+
+def test_stored_step_up_window_never_passes_the_session_expiry(
+    make_app: MakeApp, clock: FakeClock, db_url: str
+) -> None:
+    browser = Browser(make_app(session_absolute_ttl_seconds=300))
+    browser.login()
+    enroll_and_confirm(browser, clock)
+    row = db_rows(db_url, "SELECT step_up_until, expires_at FROM sessions")[0]
+    assert row["step_up_until"] == row["expires_at"]
+    me = browser.get("/api/v1/auth/me").json()["session"]
+    assert me["stepUpUntil"] is not None

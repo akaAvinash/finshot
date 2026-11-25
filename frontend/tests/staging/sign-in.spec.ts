@@ -1,8 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const auth = "/api/v1/auth";
 const origin = "http://127.0.0.1:3101";
 const secureCookieOrigin = "https://127.0.0.1:3101";
+
+async function requestCode(page: Page, phone: string) {
+  return page.evaluate(async ({ auth, phone }) => {
+    const csrfResponse = await fetch(`${auth}/csrf`);
+    if (!csrfResponse.ok) throw new Error(`CSRF request failed: ${csrfResponse.status}`);
+    const { csrfToken } = await csrfResponse.json();
+    const response = await fetch(`${auth}/otp/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ phone }),
+    });
+    return response.status;
+  }, { auth, phone });
+}
 
 test("requires backend sign-in, preserves rotated cookies, and revokes the session on sign-out", async ({ page, context }) => {
   await context.addCookies([{ name: "tradeo-preview-session", value: "phase-1", url: origin }]);
@@ -59,6 +73,12 @@ test("surfaces throttling and unavailable delivery without signing in", async ({
 });
 
 test("limits the proxy to configured auth routes and fails closed on session validation", async ({ page, context }) => {
+  const direct = await context.request.get(`http://127.0.0.1:3103${auth}/csrf`, {
+    headers: { "X-Tradeo-Client-IP": "192.0.2.9", "X-Tradeo-Ingress-Token": "forged-proof", "X-Forwarded-For": "192.0.2.8" },
+  });
+  expect(direct.status()).toBe(403);
+  expect((await direct.json()).code).toBe("UNTRUSTED_INGRESS");
+
   const csrf = await context.request.get(`${auth}/csrf`, { headers: { "X-Forwarded-For": "192.0.2.8" } });
   expect(csrf.status()).toBe(200);
   expect(csrf.headers()["cache-control"]).toBe("no-store");
@@ -82,4 +102,27 @@ test("limits the proxy to configured auth routes and fails closed on session val
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Sign-in is temporarily unavailable");
   await expect(page.getByRole("button", { name: "Request code" })).toHaveCount(0);
+});
+
+test("throttles one ingress client without blocking another and ignores forged IP headers", async ({ page, browser }) => {
+  await page.setExtraHTTPHeaders({ "X-Fixture-Client": "limited", "X-Forwarded-For": "192.0.2.9" });
+  await page.goto("/login");
+  expect(await requestCode(page, "+919876543213")).toBe(202);
+  expect(await requestCode(page, "+919876543214")).toBe(202);
+
+  await page.setExtraHTTPHeaders({
+    "X-Fixture-Client": "limited",
+    "X-Forwarded-For": "192.0.2.10",
+    "X-Tradeo-Client-IP": "192.0.2.10",
+  });
+  expect(await requestCode(page, "+919876543215")).toBe(429);
+
+  const other = await browser.newContext({ baseURL: origin, extraHTTPHeaders: { "X-Fixture-Client": "independent" } });
+  try {
+    const otherPage = await other.newPage();
+    await otherPage.goto("/login");
+    expect(await requestCode(otherPage, "+919876543215")).toBe(202);
+  } finally {
+    await other.close();
+  }
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import { isIP } from "node:net";
 
 const publicOrigin = "http://127.0.0.1:3101";
 const sessionName = "__Host-tradeo_session";
@@ -7,8 +8,33 @@ const csrfName = "__Host-tradeo_csrf";
 const cookieAttrs = "Secure; HttpOnly; SameSite=Lax; Path=/";
 const sessionIds = new Set();
 const challenges = new Map();
+const otpRequestsByIp = new Map();
 const user = { id: randomUUID(), phoneMasked: "+91******3210", displayName: null, createdAt: "2026-11-25T00:00:00Z" };
 const sessionDates = { idleExpiresAt: "2026-11-25T01:00:00Z", expiresAt: "2026-11-25T12:00:00Z" };
+const ingressToken = process.env.TRADEO_AUTH_INGRESS_TOKEN;
+if (!ingressToken) throw new Error("Missing test ingress token");
+
+const fixtureAddresses = new Map([
+  ["primary", "192.0.2.1"],
+  ["limited", "192.0.2.2"],
+  ["independent", "2001:db8::3"],
+]);
+
+createServer((incoming, response) => {
+  const headers = { ...incoming.headers };
+  const clientIp = fixtureAddresses.get(headers["x-fixture-client"]) ?? fixtureAddresses.get("primary");
+  delete headers["x-fixture-client"];
+  delete headers["x-forwarded-for"];
+  headers["x-tradeo-client-ip"] = clientIp;
+  headers["x-tradeo-ingress-token"] = ingressToken;
+
+  const upstream = httpRequest({ hostname: "127.0.0.1", port: 3103, path: incoming.url, method: incoming.method, headers }, (result) => {
+    response.writeHead(result.statusCode, result.headers);
+    result.pipe(response);
+  });
+  upstream.on("error", () => response.destroy());
+  incoming.pipe(upstream);
+}).listen(3101, "127.0.0.1");
 
 function json(response, status, value, headers = {}) {
   response.writeHead(status, { "Content-Type": "application/json", ...headers });
@@ -31,8 +57,11 @@ createServer(async (request, response) => {
   const sessionId = cookies[sessionName];
   const signedIn = sessionIds.has(sessionId);
   const csrfToken = cookies[csrfName];
+  const clientIp = request.headers["x-forwarded-for"];
 
-  if (Object.keys(cookies).some((name) => name !== sessionName && name !== csrfName) || request.headers["x-forwarded-for"]) {
+  if (Object.keys(cookies).some((name) => name !== sessionName && name !== csrfName) ||
+      request.headers["x-tradeo-client-ip"] || request.headers["x-tradeo-ingress-token"] ||
+      (endpoint !== "me" && (typeof clientIp !== "string" || !isIP(clientIp)))) {
     return error(response, 400, "UNEXPECTED_HEADERS");
   }
 
@@ -74,7 +103,10 @@ createServer(async (request, response) => {
   if (endpoint === "otp/request") {
     if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
     if (body.phone === "+919876543212") return error(response, 503, "OTP_DELIVERY_UNAVAILABLE");
-    if (body.phone !== "+919876543210") return error(response, 422, "VALIDATION_ERROR");
+    if (!/^\+91987654321[0345]$/.test(body.phone)) return error(response, 422, "VALIDATION_ERROR");
+    const requests = otpRequestsByIp.get(clientIp) ?? 0;
+    if (requests >= 2) return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+    otpRequestsByIp.set(clientIp, requests + 1);
     const challengeId = randomUUID();
     challenges.set(challengeId, csrfToken);
     return json(response, 202, { challengeId, expiresAt: sessionDates.idleExpiresAt, resendAvailableAt: sessionDates.idleExpiresAt });

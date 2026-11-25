@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { readAuthConfig } from "@/lib/auth/config";
+import { getTrustedClientIp } from "@/lib/auth/ingress";
 import { authCookieHeader, authEndpoints, authProxyResponse, getAuthEndpoint, requestUpstreamAuth } from "@/lib/auth/upstream";
 
 const maxBodyBytes = 1024;
@@ -40,7 +41,10 @@ async function proxy(request: NextRequest, context: Context) {
   }
   if (config.mode === "unavailable") return errorResponse(503, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");
 
-  const headers = new Headers({ Accept: "application/json" });
+  const clientIp = getTrustedClientIp(request.headers, config.ingressToken);
+  if (!clientIp) return errorResponse(403, "UNTRUSTED_INGRESS", "Sign-in must go through the staging ingress.");
+
+  const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp });
   const cookie = authCookieHeader((name) => request.cookies.get(name)?.value);
   if (cookie) headers.set("Cookie", cookie);
   const userAgent = request.headers.get("user-agent");

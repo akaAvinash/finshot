@@ -435,8 +435,9 @@ class AuthService:
         The per-phone cap counts every request for that number, invited or not,
         so an invited number cannot be told apart by when it hits the cap. (A
         third party can already exhaust a number's request limit; this adds no
-        new lever.) The global cap counts real deliveries only, and is checked
-        without counting for the rest. A request rejected by either cap leaves
+        new lever.) The global cap counts each delivery attempt (including one that then
+        fails at the provider; it is not refunded) and is only checked, without
+        counting, for requests that make no attempt. A request rejected by either cap leaves
         the global counter unchanged."""
         s = self.settings
         day = now.strftime("%Y%m%d")

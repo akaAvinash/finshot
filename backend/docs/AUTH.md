@@ -53,9 +53,11 @@ without host, from, username and password.
 
 Two per-UTC-day counters, both in Redis:
 
-- `OTP_DAILY_DELIVERY_LIMIT` (all numbers, default 100) counts only codes that
-  are actually sent. A request that is not sent (uninvited number, no email on
-  file) only checks it, without counting.
+- `OTP_DAILY_DELIVERY_LIMIT` (all numbers, default 100) counts each code handed
+  to a provider, including sends that then fail with a provider error (the
+  counter is not refunded, so an outage can use the cap up). A request that
+  makes no delivery attempt (uninvited number, no email on file) only checks
+  it, without counting.
 - `OTP_DAILY_DELIVERY_LIMIT_PER_PHONE` (default 10) counts every OTP request
   for that number that gets past the availability check, invited or not, and
   whether or not a code is sent. This keeps the cap from revealing who is

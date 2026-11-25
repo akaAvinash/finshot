@@ -579,6 +579,12 @@ class AuthService:
             ).one()
             if user_row.status != "active":
                 raise _invalid_otp()
+            # Read inside the login transaction: if it fails, the code stays unused.
+            totp_enabled = (
+                await db.scalar(
+                    select(TotpCredential.confirmed_at).where(TotpCredential.user_id == user_row.id)
+                )
+            ) is not None
 
             # Rotation: a session that was valid before login does not survive it.
             if current_session is not None:
@@ -618,12 +624,6 @@ class AuthService:
                 at=now,
                 link=("session", str(session_id)),
             )
-        async with self._factory() as db:
-            totp_enabled = (
-                await db.scalar(
-                    select(TotpCredential.confirmed_at).where(TotpCredential.user_id == user_row.id)
-                )
-            ) is not None
         info = SessionInfo(
             session_id=session_id,
             user_id=user_row.id,

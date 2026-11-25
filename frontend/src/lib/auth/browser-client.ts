@@ -11,6 +11,7 @@ let sessionCsrfToken: string | undefined;
 
 export type EmailChallenge = { challengeId: string; expiresAt: string; resendAvailableAt: string };
 export type AuthenticatorEnrollment = { secret: string; otpauthUri: string; expiresAt: string };
+export const recoveryCodePattern = /^[A-Z2-7]{5}-[A-Z2-7]{5}$/;
 
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
@@ -35,7 +36,7 @@ async function readCsrf(context?: CsrfContext) {
   return data.csrfToken as string;
 }
 
-type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "totp/enroll" | "totp/confirm" | "logout";
+type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "logout";
 
 async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, string>) {
   function send(token: string) {
@@ -78,6 +79,10 @@ export async function signInWithAuthenticator(phone: string, code: string) {
   return readSignedIn(await postAuth("login/totp", "pre_login", { phone: `+91${phone}`, code }));
 }
 
+export async function signInWithRecoveryCode(phone: string, recoveryCode: string) {
+  return readSignedIn(await postAuth("login/recovery", "pre_login", { phone: `+91${phone}`, recoveryCode }));
+}
+
 export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
   const data = await (await postAuth("totp/enroll", "session")).json();
   if (typeof data?.secret !== "string" || !/^[A-Z2-7]{16,128}$/.test(data.secret) || typeof data.otpauthUri !== "string" ||
@@ -94,6 +99,15 @@ export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
 export async function confirmAuthenticator(code: string) {
   const data = await (await postAuth("totp/confirm", "session", { code })).json();
   if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil)) throw new AuthError(502);
+}
+
+export async function generateRecoveryCodes(): Promise<string[]> {
+  const data = await (await postAuth("totp/recovery-codes", "session")).json();
+  const codes: unknown = data?.codes;
+  if (!isTimestamp(data?.createdAt) || !Array.isArray(codes) || codes.length !== 10 ||
+      !codes.every((value) => typeof value === "string" && recoveryCodePattern.test(value)) ||
+      new Set(codes).size !== codes.length) throw new AuthError(502);
+  return codes;
 }
 
 export function authRetryMessage(error: AuthError) {

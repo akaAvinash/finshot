@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
 import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
@@ -19,11 +19,22 @@ const registrationNumber = "+919876543219";
 const accountRows = new Map();
 const after = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
 
+function newRecoveryCodes() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const codes = new Set();
+  while (codes.size < 10) {
+    const value = Array.from(randomBytes(10), (byte) => alphabet[byte & 31]).join("");
+    codes.add(`${value.slice(0, 5)}-${value.slice(5)}`);
+  }
+  return [...codes];
+}
+
 function resetAccounts() {
   accountRows.clear();
   for (const number of [returningNumber, registrationNumber]) {
     accountRows.set(number, { id: randomUUID(), phoneMasked: `+91******${number.slice(-4)}`, displayName: null,
-      createdAt: after(0), totpEnabled: number === returningNumber, pending: false, lastCode: null });
+      createdAt: after(0), totpEnabled: number === returningNumber, pending: false, lastCode: null,
+      recoveryCodes: number === returningNumber ? ["ABCDE-FGHIJ", "KLMNO-PQRST"] : [] });
   }
 }
 resetAccounts();
@@ -98,6 +109,12 @@ createServer(async (request, response) => {
     failNextLogout = true;
     return response.writeHead(204).end();
   }
+  if (request.method === "POST" && request.url === "/__fixture/expire-step-up") {
+    for (const session of sessions.values()) {
+      if (session.stepUpUntil) session.stepUpUntil = after(-1);
+    }
+    return response.writeHead(204).end();
+  }
 
   const url = new URL(request.url, publicOrigin);
   if (request.method === "POST" && /^\/__fixture\/report\/(ready|empty|unavailable|mismatch|large)$/.test(url.pathname)) {
@@ -115,6 +132,7 @@ createServer(async (request, response) => {
 
   if (isAlertsFixtureRequest(url.pathname)) {
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
     const writing = request.method === "POST" || request.method === "PUT";
     if (writing && (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken)) {
       return error(response, 403, "CSRF_FAILED");
@@ -148,6 +166,7 @@ createServer(async (request, response) => {
 
   if (request.method === "GET" && ["/api/v1/reports/paper", "/api/v1/reports/paper/trades.csv"].includes(url.pathname)) {
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
     if (reportMode === "unavailable") return error(response, 503, "REPORTS_UNAVAILABLE");
     if (Object.keys(cookies).some((name) => name !== sessionName)) return error(response, 400, "UNEXPECTED_HEADERS");
     const period = { from: url.searchParams.get("from"), to: url.searchParams.get("to") };
@@ -177,7 +196,7 @@ createServer(async (request, response) => {
     return json(response, 200, { csrfToken: token, context, expiresAt: after(30) }, { "Set-Cookie": setCookies });
   }
 
-  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "totp/enroll", "totp/confirm", "logout"].includes(endpoint)) {
+  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "login/recovery", "totp/enroll", "totp/confirm", "totp/recovery-codes", "logout"].includes(endpoint)) {
     return error(response, 404, "NOT_FOUND");
   }
   if (request.headers.origin !== publicOrigin || !csrfToken || request.headers["x-csrf-token"] !== csrfToken) {
@@ -194,7 +213,7 @@ createServer(async (request, response) => {
     return response.end();
   }
 
-  if (endpoint === "totp/enroll" || endpoint === "totp/confirm") {
+  if (endpoint.startsWith("totp/")) {
     if (!session) return error(response, 401, "UNAUTHENTICATED");
     if (csrfToken !== `ses.${sessionId}`) return error(response, 403, "CSRF_FAILED");
   }
@@ -204,6 +223,16 @@ createServer(async (request, response) => {
     account.pending = true;
     const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     return json(response, 200, { secret, otpauthUri: `otpauth://totp/Tradeo:Fixture?secret=${secret}&issuer=Tradeo`, expiresAt: after(10) });
+  }
+  if (endpoint === "totp/recovery-codes") {
+    const account = accountRows.get(session.phone);
+    if (!account.totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (!session.stepUpUntil || Date.parse(session.stepUpUntil) <= Date.now()) return error(response, 403, "STEP_UP_REQUIRED");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    if (chunks.length) return error(response, 400, "INVALID_REQUEST");
+    account.recoveryCodes = newRecoveryCodes();
+    return json(response, 200, { codes: account.recoveryCodes, createdAt: after(0) });
   }
 
   const chunks = [];
@@ -248,6 +277,18 @@ createServer(async (request, response) => {
   }
   if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
   const account = accountRows.get(body.phone);
+  if (endpoint === "login/recovery") {
+    if (Object.keys(body).length !== 2 || !csrfToken.startsWith("pre.") || !account?.totpEnabled || !account.recoveryCodes.includes(body.recoveryCode)) {
+      return error(response, 401, "INVALID_CREDENTIALS");
+    }
+    account.totpEnabled = false;
+    account.lastCode = null;
+    account.recoveryCodes = [];
+    for (const active of sessions.values()) {
+      if (active.phone === body.phone) active.stepUpUntil = null;
+    }
+    return startSession(response, body.phone, sessionId, false);
+  }
   const valid = body.phone === returningNumber ? body.code === "728391" : ["615408", "615409"].includes(body.code);
   if (!csrfToken.startsWith("pre.") || !account?.totpEnabled || !valid || body.code === account.lastCode) {
     return error(response, 401, "INVALID_CREDENTIALS");

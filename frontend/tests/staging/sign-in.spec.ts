@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInStaging } from "./staging-helpers";
 
 const auth = "/api/v1/auth";
 const origin = "http://127.0.0.1:3101";
@@ -121,6 +122,14 @@ test("verifies first-time email, enrols with a local QR, then signs in using a f
   await expect(page.getByRole("main").getByRole("alert")).toContainText("The code is invalid or expired");
   await setupCode.fill("615408");
   await page.getByRole("button", { name: "Confirm authenticator" }).click();
+  const codeRequest = page.waitForRequest((request) => request.url().endsWith(`${auth}/totp/recovery-codes`));
+  await page.getByRole("button", { name: "Generate recovery codes" }).click();
+  expect((await codeRequest).postData()).toBeNull();
+  await expect(page.getByRole("list", { name: "Recovery codes" }).getByRole("listitem")).toHaveCount(10);
+  const continueButton = page.getByRole("button", { name: "Continue to dashboard" });
+  await expect(continueButton).toBeDisabled();
+  await page.getByLabel("I’ve saved my recovery codes.").check();
+  await continueButton.click();
   await expect(page).toHaveURL(/\/dashboard$/);
   page.off("request", trackCsrf);
   expect(extraCsrfReads).toHaveLength(0);
@@ -137,17 +146,135 @@ test("verifies first-time email, enrols with a local QR, then signs in using a f
   await expect(page).toHaveURL(/\/dashboard$/);
 });
 
+test("recovers by phone, protects the workspace, and retires each previous recovery batch", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  const recoveryMethod = page.getByRole("button", { name: "Recovery code", exact: true });
+  const recoveryInput = page.getByLabel("Recovery code", { exact: true });
+  const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+  const codes = page.getByRole("list", { name: "Recovery codes" }).getByRole("listitem");
+
+  async function replaceAuthenticator() {
+    await page.getByRole("button", { name: "Start authenticator setup" }).click();
+    await page.getByLabel("Authenticator code").fill("615408");
+    await page.getByRole("button", { name: "Confirm authenticator" }).click();
+    await page.getByRole("button", { name: "Generate recovery codes" }).click();
+    await expect(page.getByRole("heading", { name: "Save your recovery codes" })).toBeFocused();
+    await expect(codes).toHaveCount(10);
+  }
+
+  async function signOutAndOpenRecovery() {
+    await page.getByLabel("I’ve saved my recovery codes.").check();
+    await page.getByRole("button", { name: "Continue to dashboard" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(codes).toHaveCount(0);
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    await recoveryMethod.click();
+    await page.getByLabel("Mobile number").fill("98765 43218");
+  }
+
+  await page.goto("/login");
+  await recoveryMethod.click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  await page.getByLabel("Mobile number").fill("98765 43218");
+  await recoveryInput.fill("abcde-fghij");
+  const request = page.waitForRequest((candidate) => candidate.url().endsWith(`${auth}/login/recovery`));
+  await signIn.click();
+  expect((await request).postDataJSON()).toEqual({ phone: "+919876543218", recoveryCode: "ABCDE-FGHIJ" });
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  await page.goto("/alerts");
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  const alertStatus = await page.evaluate(async () => (await fetch("/api/v1/alerts")).status);
+  expect(alertStatus).toBe(403);
+
+  await replaceAuthenticator();
+  const firstBatch = await codes.allTextContents();
+  await signOutAndOpenRecovery();
+  await recoveryInput.fill(firstBatch[0]);
+  await signIn.click();
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  await replaceAuthenticator();
+  const secondBatch = await codes.allTextContents();
+  expect(secondBatch.filter((code) => firstBatch.includes(code))).toEqual([]);
+  await signOutAndOpenRecovery();
+  for (const oldCode of ["ABCDE-FGHIJ", "KLMNO-PQRST", ...firstBatch.slice(0, 2)]) {
+    await recoveryInput.fill(oldCode);
+    await signIn.click();
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("The phone number or code is not valid.");
+  }
+});
+
+test("reports expired step-up without reopening authenticator setup", async ({ page, request }) => {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
+  await page.getByLabel("Mobile number").fill("98765 43218");
+  await page.getByLabel("Recovery code", { exact: true }).fill("ABCDE-FGHIJ");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  await page.getByRole("button", { name: "Start authenticator setup" }).click();
+  await page.getByLabel("Authenticator code").fill("615408");
+  await page.getByRole("button", { name: "Confirm authenticator" }).click();
+  await expect(page.getByRole("heading", { name: "Create recovery codes" })).toBeVisible();
+  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
+  await page.getByRole("button", { name: "Generate recovery codes" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("The verification window expired before recovery codes could be created.");
+  await expect(page.getByRole("list", { name: "Recovery codes" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue without recovery codes" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+});
+
+test("rotates recovery codes in one session and accepts only one competing redemption", async ({ browser, page }) => {
+  await signInStaging(page);
+  const batches = await page.evaluate(async (path) => {
+    const { csrfToken } = await (await fetch(`${path}/csrf`)).json();
+    const headers = { "X-CSRF-Token": csrfToken };
+    const create = async (): Promise<string[]> => {
+      const response = await fetch(`${path}/totp/recovery-codes`, { method: "POST", headers });
+      if (!response.ok) throw new Error(`Recovery generation failed (${response.status})`);
+      return (await response.json()).codes;
+    };
+    return [await create(), await create()];
+  }, auth);
+  const [firstBatch, nextBatch] = batches;
+  expect(firstBatch).toHaveLength(10);
+  expect(nextBatch).toHaveLength(10);
+  const contexts = await Promise.all([browser.newContext({ baseURL: origin }), browser.newContext({ baseURL: origin })]);
+
+  try {
+    const clients = await Promise.all(contexts.map(async ({ request }) => {
+      const { csrfToken } = await (await request.get(`${auth}/csrf`)).json();
+      return (recoveryCode: string) => request.post(`${auth}/login/recovery`, {
+        headers: { Origin: origin, "X-CSRF-Token": csrfToken },
+        data: { phone: "+919876543218", recoveryCode },
+      });
+    }));
+    expect((await clients[0](firstBatch[0])).status()).toBe(401);
+    const competing = await Promise.all(clients.map((redeem) => redeem(nextBatch[0])));
+    expect(competing.map((response) => response.status()).sort()).toEqual([200, 401]);
+    const accepted = competing.find((response) => response.ok());
+    expect(await accepted?.json()).toMatchObject({ user: { totpEnabled: false } });
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+  }
+});
+
 test("surfaces throttling and unavailable delivery without signing in", async ({ page }) => {
   await page.goto("/login");
   const phone = page.getByLabel("Mobile number");
   const loginError = page.getByRole("main").getByRole("alert");
   const attempts: string[] = [];
-  page.on("request", (request) => { if (request.url().endsWith(`${auth}/login/totp`)) attempts.push(request.url()); });
+  page.on("request", (request) => { if (["totp", "recovery"].some((method) => request.url().endsWith(`${auth}/login/${method}`))) attempts.push(request.url()); });
   await phone.fill("98765 43211");
   await page.getByLabel("Authenticator code").fill("728391");
   const signIn = page.getByRole("button", { name: "Sign in", exact: true });
   await signIn.click();
   await expect(loginError).toHaveText("Too many attempts. Try again in 30 seconds.");
+  await signIn.click();
+  await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
+  expect(attempts).toHaveLength(1);
+  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
+  await page.getByLabel("Recovery code", { exact: true }).fill("ABCDE-FGHIJ");
   await signIn.click();
   await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
   expect(attempts).toHaveLength(1);
@@ -183,6 +310,9 @@ test("limits the proxy to configured auth routes and fails closed on session val
   expect(missingOrigin.status()).toBe(403);
   expect((await context.request.post(`${auth}/otp/request`, { headers, data: "x".repeat(1025) })).status()).toBe(413);
   expect((await context.request.get(`${auth}/otp/verify`)).status()).toBe(405);
+  expect((await context.request.get(`${auth}/login/recovery`)).status()).toBe(405);
+  const unexpectedBody = await context.request.post(`${auth}/totp/recovery-codes`, { headers, data: {} });
+  expect(unexpectedBody.status()).toBe(400);
   expect((await context.request.get(`${auth}/sessions`)).status()).toBe(404);
 
   await context.addCookies([{ name: "__Host-tradeo_session", value: "not-a-session", url: secureCookieOrigin, httpOnly: true }]);

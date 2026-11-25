@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { AuthError, authRetryMessage, requestEmailCode, signInWithAuthenticator, verifyEmailCode, type EmailChallenge } from "@/lib/auth/browser-client";
+import { AuthError, authRetryMessage, recoveryCodePattern, requestEmailCode, signInWithAuthenticator, signInWithRecoveryCode, verifyEmailCode, type EmailChallenge } from "@/lib/auth/browser-client";
 import { normalizeIndianMobile } from "@/lib/preview-auth/validation";
 
-type Method = "authenticator" | "email";
+const methods = { authenticator: "Authenticator", email: "First-time email", recovery: "Recovery code" } as const;
+type Method = keyof typeof methods;
+type RetryGroup = "authenticator" | "email";
 type EmailVerification = EmailChallenge & { phone: string };
 
 function errorMessage(error: unknown) {
@@ -30,7 +32,7 @@ export function StagingLoginForm() {
   const [challenge, setChallenge] = useState<EmailVerification | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryAt, setRetryAt] = useState<Record<Method, number>>({ authenticator: 0, email: 0 });
+  const [retryAt, setRetryAt] = useState<Record<RetryGroup, number>>({ authenticator: 0, email: 0 });
   const codeField = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -58,15 +60,17 @@ export function StagingLoginForm() {
       return;
     }
     const requesting = method === "email" && (!challenge || resend);
-    const delay = Math.ceil((retryAt[method] - Date.now()) / 1000);
+    const retryGroup = method === "email" ? "email" : "authenticator";
+    const delay = Math.ceil((retryAt[retryGroup] - Date.now()) / 1000);
     const resendDelay = resend && challenge ? Math.ceil((Date.parse(challenge.resendAvailableAt) - Date.now()) / 1000) : 0;
     if (delay > 0 || resendDelay > 0) {
       setError(`Try again in ${Math.max(delay, resendDelay)} seconds.`);
       return;
     }
-    const digits = code.trim();
-    if (!requesting && !/^\d{6}$/.test(digits)) {
-      setError("Enter the six-digit code.");
+    const recovery = method === "recovery";
+    const proof = recovery ? code.trim().toUpperCase() : code.trim();
+    if (!requesting && !(recovery ? recoveryCodePattern : /^\d{6}$/).test(proof)) {
+      setError(recovery ? "Enter a recovery code from your saved list." : "Enter the six-digit code.");
       return;
     }
     if (!requesting && challenge && Date.now() >= Date.parse(challenge.expiresAt)) {
@@ -81,14 +85,15 @@ export function StagingLoginForm() {
         setChallenge({ ...await requestEmailCode(number), phone: number });
         setCode("");
       } else {
-        const enrolled = challenge ? await verifyEmailCode(challenge.challengeId, digits) : await signInWithAuthenticator(number, digits);
+        const enrolled = challenge ? await verifyEmailCode(challenge.challengeId, proof) : recovery ?
+          await signInWithRecoveryCode(number, proof) : await signInWithAuthenticator(number, proof);
         setCode("");
         router.replace(enrolled ? "/dashboard" : "/login/authenticator");
       }
     } catch (error) {
       if (error instanceof AuthError && error.status === 429 && error.retryAfter) {
         const deadline = Date.now() + error.retryAfter * 1000;
-        setRetryAt((previous) => ({ ...previous, [method]: deadline }));
+        setRetryAt((previous) => ({ ...previous, [retryGroup]: deadline }));
       }
       setError(errorMessage(error));
     } finally {
@@ -102,15 +107,17 @@ export function StagingLoginForm() {
   }
 
   const email = method === "email";
+  const recovery = method === "recovery";
   return <>
-    <div role="group" aria-label="Sign-in method" className="mt-5 grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1">
-      <Button type="button" size="sm" variant={email ? "ghost" : "default"} aria-pressed={!email} aria-disabled={pending}
-        onClick={() => changeMethod("authenticator")}>Authenticator</Button>
-      <Button type="button" size="sm" variant={email ? "default" : "ghost"} aria-pressed={email} aria-disabled={pending}
-        onClick={() => changeMethod("email")}>First-time email</Button>
+    <div role="group" aria-label="Sign-in method" className="mt-5 grid grid-cols-3 gap-1 rounded-lg border border-border bg-background p-1">
+      {(Object.keys(methods) as Method[]).map((option) => <Button key={option} type="button" size="sm"
+        variant={option === method ? "default" : "ghost"} aria-pressed={option === method} aria-disabled={pending}
+        className="px-1 text-xs" onClick={() => changeMethod(option)}>{methods[option]}</Button>)}
     </div>
     <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-      {email ? "If your number is invited, we’ll send a code to the email on file." : "Enter your mobile number and the current code from your authenticator app."}
+      {email ? "If your number is invited, we’ll send a code to the email on file." : recovery ?
+        "Use a saved recovery code to sign in and replace your authenticator. This retires your other recovery codes." :
+        "Enter your mobile number and the current code from your authenticator app."}
     </p>
     <form className="mt-5 space-y-4" onSubmit={onSubmit}>
       {!challenge && <div className="space-y-2">
@@ -123,9 +130,10 @@ export function StagingLoginForm() {
       </div>}
       {challenge && <p className="text-sm text-muted-foreground">Code requested for the number ending in {challenge.phone.slice(-4)}.</p>}
       {(!email || challenge) && <div className="space-y-2">
-        <Label htmlFor="staging-code">{email ? "Email verification code" : "Authenticator code"}</Label>
-        <Input id="staging-code" ref={codeField} value={code} onChange={({ target }) => setCode(target.value)} inputMode="numeric"
-          autoComplete="one-time-code" maxLength={6} placeholder="000000" readOnly={pending} required />
+        <Label htmlFor="staging-code">{email ? "Email verification code" : recovery ? "Recovery code" : "Authenticator code"}</Label>
+        <Input id="staging-code" ref={codeField} value={code} onChange={({ target }) => setCode(target.value)} inputMode={recovery ? "text" : "numeric"}
+          autoComplete={recovery ? "off" : "one-time-code"} autoCapitalize={recovery ? "characters" : undefined} spellCheck={false}
+          maxLength={recovery ? 11 : 6} placeholder={recovery ? undefined : "000000"} readOnly={pending} required />
       </div>}
       {error && <p role="alert" className="text-sm text-negative">{error}</p>}
       <Button type="submit" aria-disabled={pending} className="h-11 w-full font-semibold aria-disabled:opacity-50">

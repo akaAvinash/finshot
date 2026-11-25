@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { QRCodeCanvas } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { AuthError, authRetryMessage, confirmAuthenticator, enrollAuthenticator, stagingSignOut, type AuthenticatorEnrollment } from "@/lib/auth/browser-client";
+import { AuthError, authRetryMessage, confirmAuthenticator, enrollAuthenticator, generateRecoveryCodes, stagingSignOut, type AuthenticatorEnrollment } from "@/lib/auth/browser-client";
 
 export function AuthenticatorSetup() {
   const router = useRouter();
   const [setup, setSetup] = useState<AuthenticatorEnrollment | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
@@ -87,8 +88,7 @@ export function AuthenticatorSetup() {
       if (confirm) {
         await confirmAuthenticator(digits);
         clearSetup();
-        setLeaving(true);
-        router.replace("/dashboard");
+        setConfirmed(true);
       } else {
         const enrollment = await enrollAuthenticator();
         setSetup(enrollment);
@@ -118,6 +118,8 @@ export function AuthenticatorSetup() {
     void perform(true);
   }
 
+  if (confirmed) return <RecoveryCodes />;
+
   return <div className="mt-5 space-y-4">
     {setup && <div className="space-y-3">
       <p className="text-sm text-muted-foreground">Scan the QR code in your authenticator app, or use the setup key.</p>
@@ -144,4 +146,64 @@ export function AuthenticatorSetup() {
       className="h-11 w-full aria-disabled:opacity-50" onClick={() => void perform(false)}>{pending ? "Starting setup…" : "Start authenticator setup"}</Button>}
     <Button type="button" variant="ghost" aria-disabled={pending || leaving} className="w-full" onClick={() => void signOut()}>Sign out</Button>
   </div>;
+}
+
+function RecoveryCodes() {
+  const router = useRouter();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryAt, setRetryAt] = useState(0);
+
+  useEffect(() => { heading.current?.focus(); }, [codes]);
+
+  async function generate() {
+    if (pending) return;
+    const delay = Math.ceil((retryAt - Date.now()) / 1000);
+    if (delay > 0) {
+      setError(`Try again in ${delay} seconds.`);
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      setCodes(await generateRecoveryCodes());
+    } catch (error) {
+      if (error instanceof AuthError && error.status === 429) {
+        if (error.retryAfter) setRetryAt(Date.now() + error.retryAfter * 1000);
+        setError(authRetryMessage(error));
+      } else if (error instanceof AuthError && error.code === "STEP_UP_REQUIRED") {
+        setError("The verification window expired before recovery codes could be created.");
+      } else {
+        setError("Recovery codes couldn’t be created. Try again.");
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return <section className="mt-5 space-y-4" aria-labelledby="recovery-heading">
+    <h2 id="recovery-heading" ref={heading} tabIndex={-1} className="text-lg font-semibold">{codes ? "Save your recovery codes" : "Create recovery codes"}</h2>
+    <p className="text-sm text-muted-foreground">{codes ?
+      "Save these somewhere private. They’re shown only once. Using one replaces your authenticator and retires the remaining codes." :
+      "Your authenticator is active. Create recovery codes so you can sign in if you lose access to it."}</p>
+    {codes ? <>
+      <ul aria-label="Recovery codes" className="grid grid-cols-2 gap-2 rounded-md border border-border bg-background p-3 text-center font-mono text-sm">
+        {codes.map((code) => <li className="select-all" key={code}>{code}</li>)}
+      </ul>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1 size-4 shrink-0 accent-primary" checked={saved} onChange={({ target }) => setSaved(target.checked)} />
+        I’ve saved my recovery codes.
+      </label>
+      <Button type="button" disabled={!saved} className="h-11 w-full" onClick={() => router.replace("/dashboard")}>Continue to dashboard</Button>
+    </> : <>
+      {error && <p role="alert" className="text-sm text-negative">{error}</p>}
+      <Button type="button" disabled={pending} className="h-11 w-full" onClick={() => void generate()}>
+        {pending ? "Creating recovery codes…" : "Generate recovery codes"}
+      </Button>
+      <Button type="button" variant="ghost" disabled={pending} className="w-full" onClick={() => router.replace("/dashboard")}>Continue without recovery codes</Button>
+    </>}
+  </section>;
 }

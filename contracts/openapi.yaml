@@ -1954,8 +1954,13 @@ components:
       properties:
         displayName:
           type: string
-          minLength: 1
-          maxLength: 48
+          maxLength: 200
+          pattern: '^\s*[^\s\u0000-\u001f\u007f-\u009f](?:[^\u0000-\u001f\u007f-\u009f]{0,46}[^\s\u0000-\u001f\u007f-\u009f])?\s*$'
+          description: >
+            The server trims this value. After trimming it is 1 to 48
+            characters with no control characters (internal spaces are fine).
+            The pattern encodes that rule, so surrounding spaces do not count
+            toward the 48; `maxLength` only bounds the raw request.
         timezone:
           $ref: '#/components/schemas/SettingsTimezone'
     SessionSummary:

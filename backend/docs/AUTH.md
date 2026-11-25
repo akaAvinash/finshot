@@ -65,6 +65,15 @@ not reveal who is invited. Known residual: a provider that fails at runtime
 (for example SMTP down) fails only for invited numbers, because only they reach
 it. It takes a real outage and leaks one bit per outage.
 
+Policy tradeoff: the per-phone daily delivery cap counts every request for a
+number, invited or not, so the cap cannot reveal who is invited. A third party
+who keeps asking for codes for someone else's number can therefore use up that
+number's daily allowance (default 10) and block its owner until the UTC day
+ends, even after the hourly request limit has reset. Raise
+`OTP_DAILY_DELIVERY_LIMIT_PER_PHONE` to make this harder, or accept a
+detectable cap for invited numbers. Owner decision; the default favours
+not leaking invitations.
+
 ### MSG91 (SMS): not implemented, blocked
 
 I could not fetch MSG91's official API reference from this environment, so the

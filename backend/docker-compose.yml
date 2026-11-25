@@ -13,10 +13,17 @@ x-api-env: &api-env
   ALLOWED_HOSTS: localhost,127.0.0.1
   AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?set AUTH_SECRET_KEY in .env (openssl rand -hex 32)}
   PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3000}
-  # The console OTP provider needs an interactive terminal, which a container
-  # does not have, so it stays disabled here. Run the API from a terminal with
-  # OTP_PROVIDER=console to receive codes locally.
-  OTP_PROVIDER: disabled
+  # Defaults fail closed (no delivery). The console provider needs a terminal a
+  # container does not have; mock and staging are refused in production.
+  OTP_PROVIDER: ${OTP_PROVIDER:-disabled}
+  OTP_EMAIL_PROVIDER: ${OTP_EMAIL_PROVIDER:-disabled}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  OTP_DAILY_DELIVERY_LIMIT: ${OTP_DAILY_DELIVERY_LIMIT:-100}
+  OTP_DAILY_DELIVERY_LIMIT_PER_PHONE: ${OTP_DAILY_DELIVERY_LIMIT_PER_PHONE:-10}
   CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
 
 services:

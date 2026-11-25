@@ -147,6 +147,12 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auth/logout",
         "/api/v1/auth/logout-all",
         "/api/v1/auth/sessions",
+        "/api/v1/auth/sessions/{sessionId}",
+        "/api/v1/settings/profile",
+        "/api/v1/auth/totp/enroll",
+        "/api/v1/auth/totp/confirm",
+        "/api/v1/auth/totp/disable",
+        "/api/v1/auth/step-up",
         "/api/v1/market/instruments",
         "/api/v1/market/overview",
         "/api/v1/market/instruments/{instrumentId}/candles",
@@ -164,6 +170,9 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/agents",
         "/api/v1/agents/health",
         "/api/v1/agents/events",
+        "/api/v1/alerts",
+        "/api/v1/alerts/{alertId}/ack",
+        "/api/v1/alerts/preferences",
     }
     # Market data is read-only.
     for path, operations in paths.items():

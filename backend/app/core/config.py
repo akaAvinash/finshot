@@ -81,10 +81,39 @@ class Settings(BaseSettings):
     # "disabled": no SMS is sent, OTP requests return 503.
     # "console": development only; prints the code to an interactive terminal.
     # Real SMS providers arrive in a later phase.
-    otp_provider: Literal["disabled", "console"] = "disabled"
+    otp_provider: Literal["disabled", "console", "mock", "staging"] = "disabled"
+    # Where email codes go. "smtp" is the only real provider; "mock" and
+    # "staging" follow the same environment rules as the SMS ones.
+    otp_email_provider: Literal["disabled", "mock", "staging", "smtp"] = "disabled"
     otp_ttl_seconds: int = Field(default=300, ge=30, le=300)
     otp_max_attempts: int = Field(default=5, ge=1, le=5)
-    otp_resend_cooldown_seconds: int = Field(default=30, ge=0, le=600)
+    otp_resend_cooldown_seconds: int = Field(default=60, ge=0, le=600)
+
+    # Delivery spending limits, counted per UTC day in Redis. Only real
+    # deliveries to invited numbers count. Over a limit, requests return 503.
+    otp_daily_delivery_limit: int = Field(default=100, ge=1)
+    otp_daily_delivery_limit_per_phone: int = Field(default=10, ge=1)
+    # Staging provider: codes for allowlisted synthetic numbers go to this file
+    # (mode 0600), never to logs or SMS. Read it on the server with
+    # `python -m app.auth.admin staging-otp`.
+    otp_staging_file: str | None = None
+    otp_staging_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # SMTP email delivery. Credentials come from the environment only.
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str | None = None
+    smtp_starttls: bool = True
+    smtp_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # TOTP step-up: how long a proven code opens sensitive actions, and how
+    # recent a sign-in must be to start enrolment.
+    step_up_ttl_seconds: int = Field(default=600, ge=60, le=900)
+    totp_enroll_recent_seconds: int = Field(default=900, ge=60, le=900)
+    totp_pending_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    rate_limit_totp_per_user: int = Field(default=5, ge=1)
+    rate_limit_totp_per_ip: int = Field(default=20, ge=1)
+    rate_limit_totp_window_seconds: int = Field(default=900, ge=1)
 
     session_idle_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
     session_absolute_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
@@ -161,6 +190,20 @@ class Settings(BaseSettings):
     # ago than this.
     agent_stale_after_seconds: int = Field(default=30, ge=5, le=3600)
 
+    # --- Alerts (Phase E2, in-app only) ---------------------------------------
+    # false: every alert endpoint returns 503 ALERTS_UNAVAILABLE and the worker
+    # does not start. Producers keep recording alerts, so none are lost.
+    alerts_enabled: bool = True
+    # The in-process worker that records broker-expiry and reconciliation
+    # alerts. Turn it off to run the API without it (tests drive it directly).
+    alert_worker_enabled: bool = True
+    alert_worker_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+
+    @field_validator("otp_staging_allowlist", mode="before")
+    @classmethod
+    def _parse_allowlist(cls, value: object) -> object:
+        return _split_csv(value)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:
@@ -228,6 +271,36 @@ class Settings(BaseSettings):
         # The console provider prints codes. It must never exist outside local dev.
         if self.otp_provider == "console" and self.app_env != Environment.DEVELOPMENT:
             raise ValueError("OTP_PROVIDER=console is only allowed when APP_ENV=development")
+        # Mock and staging providers expose or fix codes. Production never uses
+        # them, and nothing falls back to them: a misconfigured production
+        # delivers nothing (HTTP 503).
+        providers = {self.otp_provider, self.otp_email_provider}
+        if self.app_env == Environment.PRODUCTION and providers & {"mock", "staging"}:
+            raise ValueError("mock and staging OTP providers are not allowed in production")
+        if "mock" in providers and self.app_env not in (Environment.DEVELOPMENT, Environment.TEST):
+            raise ValueError("the mock OTP provider is only allowed in development and test")
+        if "staging" in providers:
+            if self.app_env == Environment.PRODUCTION:  # pragma: no cover - checked above
+                raise ValueError("the staging OTP provider is not allowed in production")
+            if not self.otp_staging_file or not self.otp_staging_allowlist:
+                raise ValueError(
+                    "the staging OTP provider needs OTP_STAGING_FILE and OTP_STAGING_ALLOWLIST"
+                )
+        if self.otp_email_provider == "smtp":
+            missing = [
+                name
+                for name, value in (
+                    ("SMTP_HOST", self.smtp_host),
+                    ("SMTP_FROM", self.smtp_from),
+                    ("SMTP_USERNAME", self.smtp_username),
+                    ("SMTP_PASSWORD", self.smtp_password),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(f"OTP_EMAIL_PROVIDER=smtp needs {', '.join(missing)}")
+            if not self.smtp_starttls and self.app_env.is_deployed:
+                raise ValueError("SMTP_STARTTLS must stay on outside development")
         return self
 
     @model_validator(mode="after")

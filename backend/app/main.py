@@ -16,12 +16,16 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.agents.service import AgentService
+from app.alerts.service import AlertService
 from app.api.router import api_router
 from app.api.routes import health
 from app.auth.crypto import Keys
-from app.auth.otp import ConsoleOtpProvider, DisabledOtpProvider, OtpProvider
+from app.auth.otp import OtpProvider
+from app.auth.providers import build_email_provider, build_sms_provider
 from app.auth.ratelimit import RateLimiter
 from app.auth.service import AuthService, Clock, utc_now
+from app.auth.smtp import SmtpTransport
+from app.auth.stepup import StepUpService
 from app.backtests.service import BacktestService
 from app.brokers.adapter import BrokerAdapter, DemoBrokerAdapter
 from app.brokers.service import BrokerService
@@ -48,6 +52,8 @@ def create_app(
     settings: Settings | None = None,
     *,
     otp_provider: OtpProvider | None = None,
+    email_provider: OtpProvider | None = None,
+    smtp_transport: SmtpTransport | None = None,
     clock: Clock = utc_now,
     market_provider: MarketDataProvider | None = None,
     broker_adapter: BrokerAdapter | None = None,
@@ -59,9 +65,8 @@ def create_app(
     BROKER_PROVIDER=disabled)."""
     settings = settings or get_settings()
     configure_logging(settings)
-    provider: OtpProvider = otp_provider or (
-        ConsoleOtpProvider() if settings.otp_provider == "console" else DisabledOtpProvider()
-    )
+    provider: OtpProvider = otp_provider or build_sms_provider(settings)
+    email: OtpProvider = email_provider or build_email_provider(settings, smtp_transport)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -76,6 +81,14 @@ def create_app(
             session_factory=app.state.session_factory,
             limiter=RateLimiter(app.state.redis, keys),
             provider=provider,
+            email_provider=email,
+            keys=keys,
+            clock=clock,
+        )
+        app.state.stepup = StepUpService(
+            settings=settings,
+            session_factory=app.state.session_factory,
+            limiter=RateLimiter(app.state.redis, keys),
             keys=keys,
             clock=clock,
         )
@@ -117,6 +130,11 @@ def create_app(
             enabled=settings.agents_enabled,
             stale_after_seconds=settings.agent_stale_after_seconds,
         )
+        app.state.alerts = AlertService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.alerts_enabled,
+        )
         workers: list[asyncio.Task[None]] = []
         if settings.backtests_enabled and settings.backtest_worker_enabled:
             workers.append(
@@ -131,6 +149,10 @@ def create_app(
         if settings.agents_enabled and settings.agent_worker_enabled:
             workers.append(
                 asyncio.create_task(app.state.agents.run_worker(settings.agent_worker_poll_seconds))
+            )
+        if settings.alerts_enabled and settings.alert_worker_enabled:
+            workers.append(
+                asyncio.create_task(app.state.alerts.run_worker(settings.alert_worker_poll_seconds))
             )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:

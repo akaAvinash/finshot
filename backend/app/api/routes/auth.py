@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Request, Response, status
 
 from app.auth.cookies import CSRF_COOKIE, SESSION_COOKIE, clear_cookie, set_cookie
 from app.auth.otp import mask_phone
@@ -19,8 +20,12 @@ from app.auth.schemas import (
     SessionExpiryOut,
     SessionListOut,
     SessionSummaryOut,
+    StepUpResultOut,
+    TotpCodeIn,
+    TotpEnrollmentOut,
 )
 from app.auth.service import AuthService, SessionInfo
+from app.auth.stepup import StepUpService, step_up_required
 from app.core.errors import ApiError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -32,6 +37,14 @@ def get_auth(request: Request) -> AuthService:
 
 
 Auth = Annotated[AuthService, Depends(get_auth)]
+
+
+def get_stepup(request: Request) -> StepUpService:
+    service: StepUpService = request.app.state.stepup
+    return service
+
+
+StepUp = Annotated[StepUpService, Depends(get_stepup)]
 
 
 async def optional_session(request: Request, auth: Auth) -> SessionInfo | None:
@@ -50,17 +63,42 @@ OptionalSession = Annotated[SessionInfo | None, Depends(optional_session)]
 RequiredSession = Annotated[SessionInfo, Depends(required_session)]
 
 
+def ensure_stepped_up(auth: AuthService, session: SessionInfo) -> None:
+    """Raise 403 STEP_UP_REQUIRED unless the session's step-up window is open.
+
+    Call it after the CSRF check and before changing anything, so the order is
+    401, CSRF, step-up."""
+    if session.step_up_until is None or session.step_up_until <= auth.clock():
+        raise step_up_required()
+
+
+async def stepped_up_session(session: RequiredSession, auth: Auth) -> SessionInfo:
+    """Dependency form of `ensure_stepped_up`, for operations that check CSRF
+    in a dependency of their own."""
+    ensure_stepped_up(auth, session)
+    return session
+
+
+SteppedUpSession = Annotated[SessionInfo, Depends(stepped_up_session)]
+
+
 def _user_out(info: SessionInfo) -> AuthUserOut:
     return AuthUserOut(
         id=info.user_id,
         phone_masked=mask_phone(info.phone_e164),
         display_name=info.display_name,
         created_at=info.user_created_at,
+        totp_enabled=info.totp_enabled,
     )
 
 
 def _session_out(auth: AuthService, info: SessionInfo) -> SessionExpiryOut:
-    return SessionExpiryOut(idle_expires_at=auth.idle_expires_at(info), expires_at=info.expires_at)
+    open_until = info.step_up_until
+    return SessionExpiryOut(
+        idle_expires_at=auth.idle_expires_at(info),
+        expires_at=info.expires_at,
+        step_up_until=open_until if open_until is not None and open_until > auth.clock() else None,
+    )
 
 
 @router.get("/csrf", response_model=CsrfTokenOut)
@@ -80,10 +118,13 @@ async def request_otp(
 ) -> OtpChallengeOut:
     claims = auth.enforce_csrf(request, session)
     challenge_id, expires_at, resend_at = await auth.request_otp(
-        request=request, phone=body.phone, context_id=claims.context_id
+        request=request, phone=body.phone, context_id=claims.context_id, channel=body.channel
     )
     return OtpChallengeOut(
-        challenge_id=challenge_id, expires_at=expires_at, resend_available_at=resend_at
+        challenge_id=challenge_id,
+        channel=body.channel,
+        expires_at=expires_at,
+        resend_available_at=resend_at,
     )
 
 
@@ -149,3 +190,71 @@ async def list_sessions(auth: Auth, session: RequiredSession) -> SessionListOut:
             for row, current in rows
         ]
     )
+
+
+@router.delete("/sessions/{sessionId}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    session_id: Annotated[str, Path(alias="sessionId")],
+    request: Request,
+    auth: Auth,
+    session: RequiredSession,
+) -> Response:
+    auth.enforce_csrf(request, session)
+    ensure_stepped_up(auth, session)
+    try:
+        target = uuid.UUID(session_id)
+    except ValueError:
+        raise ApiError(404, "SESSION_NOT_FOUND", "This session was not found.") from None
+    await auth.revoke_other_session(session, target)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/totp/enroll", response_model=TotpEnrollmentOut)
+async def enroll_totp(
+    request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+) -> TotpEnrollmentOut:
+    auth.enforce_csrf(request, session)
+    secret, uri, expires_at = await stepup.enroll(
+        user_id=session.user_id,
+        session_created_at=session.created_at,
+        account=mask_phone(session.phone_e164),
+        ip=auth.client_ip(request),
+    )
+    return TotpEnrollmentOut(secret=secret, otpauth_uri=uri, expires_at=expires_at)
+
+
+@router.post("/totp/confirm", response_model=StepUpResultOut)
+async def confirm_totp(
+    body: TotpCodeIn, request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+) -> StepUpResultOut:
+    auth.enforce_csrf(request, session)
+    until = await stepup.confirm(
+        user_id=session.user_id,
+        session_id=session.session_id,
+        code=body.code,
+        ip=auth.client_ip(request),
+    )
+    return StepUpResultOut(step_up_until=until)
+
+
+@router.post("/step-up", response_model=StepUpResultOut)
+async def step_up(
+    body: TotpCodeIn, request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+) -> StepUpResultOut:
+    auth.enforce_csrf(request, session)
+    until = await stepup.step_up(
+        user_id=session.user_id,
+        session_id=session.session_id,
+        code=body.code,
+        ip=auth.client_ip(request),
+    )
+    return StepUpResultOut(step_up_until=until)
+
+
+@router.post("/totp/disable", status_code=status.HTTP_204_NO_CONTENT)
+async def disable_totp(
+    body: TotpCodeIn, request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+) -> Response:
+    auth.enforce_csrf(request, session)
+    await stepup.disable(user_id=session.user_id, code=body.code, ip=auth.client_ip(request))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -146,8 +146,10 @@ def test_session_loss_limit_blocks_new_buys() -> None:
     assert engine.session_loss(state) >= engine.LOSS_LIMIT_PAISE
     assert out.new_order is None
     assert "Buy signal blocked by the session risk limits." in out.events
+    assert out.risk_blocked  # the paper service raises PAPER_RISK_LIMIT_REACHED on this
     # The next session starts its counters from zero.
-    run(state, bars)
+    nxt = run(state, bars)
+    assert not nxt.risk_blocked
     assert (state.session_pnl_paise, state.session_fills) == (0, 0)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -125,7 +126,11 @@ class Browser:
             self.csrf = response.json()["csrfToken"]
         return response
 
-    def request_otp(self, phone: str = PHONE, **kwargs: Any) -> Any:
+    def request_otp(self, phone: str = PHONE, *, invite: bool = True, **kwargs: Any) -> Any:
+        """Sign-in is invite-only, so by default the number is invited first
+        (pass invite=False to exercise the uninvited path)."""
+        if invite:
+            invite_phone(phone)
         return self.post(
             "/api/v1/auth/otp/request",
             json={"phone": phone},
@@ -154,6 +159,20 @@ class Browser:
 
     def post(self, path: str, **kwargs: Any) -> Any:
         return self.send("POST", path, headers=kwargs.pop("headers", self.headers()), **kwargs)
+
+
+def invite_phone(phone: str, email: str | None = None) -> None:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        return
+    db_rows(
+        url,
+        "INSERT INTO invites (phone_e164, email, created_at) VALUES (:p, :e, now())"
+        " ON CONFLICT (phone_e164) DO UPDATE SET revoked_at = NULL,"
+        " email = COALESCE(:e, invites.email)",
+        p=phone,
+        e=email,
+    )
 
 
 def new_id() -> str:

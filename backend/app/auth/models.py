@@ -11,11 +11,13 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Uuid,
     text,
@@ -33,6 +35,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(r"phone_e164 ~ '^\+91[6-9][0-9]{9}$'", name="phone_format"),
         CheckConstraint("status IN ('active', 'disabled')", name="status_valid"),
+        CheckConstraint("timezone IN ('Asia/Kolkata', 'UTC')", name="timezone_valid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -42,6 +45,7 @@ class User(Base):
     phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(16), server_default="active")
+    timezone: Mapped[str] = mapped_column(String(32), server_default="Asia/Kolkata")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -90,6 +94,8 @@ class Session(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     device_label: Mapped[str | None] = mapped_column(String(100))
+    # End of the TOTP step-up window on this session; null when closed.
+    step_up_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditEvent(Base):
@@ -109,3 +115,37 @@ class AuditEvent(Base):
         JSONB, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Invite(Base):
+    """A phone number allowed to sign in. There is no sign-up and no admin role:
+    the owner manages invites with `python -m app.auth.admin`. Revoking keeps
+    the row (and ends access) so the history stays."""
+
+    __tablename__ = "invites"
+    __table_args__ = (
+        CheckConstraint("email IS NULL OR position('@' in email) > 1", name="email_shape"),
+    )
+
+    phone_e164: Mapped[str] = mapped_column(String(16), primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(254))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TotpCredential(Base):
+    """An authenticator secret, AES-GCM encrypted under a key derived from
+    AUTH_SECRET_KEY. `confirmed_at` null means a pending enrolment that expires
+    at `pending_expires_at`. `last_step` is the last accepted 30-second time
+    step: a code is accepted once."""
+
+    __tablename__ = "totp_credentials"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    secret_enc: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_step: Mapped[int] = mapped_column(BigInteger, server_default="0")

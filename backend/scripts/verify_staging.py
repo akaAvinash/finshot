@@ -32,13 +32,27 @@ SESSION_COOKIE_NAME = "__Host-tradeo_session"
 TIMEOUT_SECONDS = 15
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Return redirects to the caller as HTTP errors instead of following them.
+
+    Following one would copy the session cookie to whatever host (or plain
+    http) the Location header names.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def fetch(base: str, path: str, cookie: str | None) -> tuple[int, object | None]:
     request = urllib.request.Request(base + path, method="GET")  # noqa: S310 (main() enforces https)
     request.add_header("Accept", "application/json")
     if cookie:
         request.add_header("Cookie", f"{SESSION_COOKIE_NAME}={cookie}")
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310
+        with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as exc:
         status, raw = exc.code, exc.read()
@@ -63,6 +77,17 @@ def shape(body: object | None) -> str:
         if isinstance(value, list):
             parts.append(f"{key}[]={len(value)}")
     return " ".join(parts)
+
+
+def passes(status: int, body: object | None, expected: int, key: str | None) -> bool:
+    """A check passes on the expected status and a JSON object body.
+
+    An HTML fallback page, an empty body or JSON null is never a pass, even
+    for endpoints with no required key.
+    """
+    if status != expected or not isinstance(body, dict):
+        return False
+    return key is None or key in body
 
 
 # (path, needs session, expected status, required top-level key or None)
@@ -96,9 +121,9 @@ def main() -> int:
             print(f"SKIP  {path}  (no session cookie)")
             continue
         status, body = fetch(base, path, cookie if needs_session else None)
-        ok = status == expected and (key is None or (isinstance(body, dict) and key in body))
+        ok = passes(status, body, expected, key)
         if path == "/api/v1/market/overview" and ok:
-            ok = isinstance(body, dict) and body.get("source") == "demo"
+            ok = body.get("source") == "demo"
         failed += not ok
         print(f"{'PASS' if ok else 'FAIL'}  {path}  http={status}  {shape(body)}")
     print(f"\n{failed} failed")

@@ -6,54 +6,109 @@ Control session on the owner's machine, with the owner's approval.
 
 ## Pinned revision
 
+Recorded 2026-11-25 by a read-only check on the staging host. Nothing was changed.
+
 | Item | Value | Status |
 |---|---|---|
-| Candidate repo revision | `2bc5602e0b3a8e556347cddded1c7c1eb215ab0a` (main after QA PR #48) | Fact, from git |
-| Backend code | Unchanged by #48. #48 only added `qa/`, `docs/qa/` and workflows. | Fact, from the PR file list |
-| Alembic head | `0012` (recovery codes). The migration chain is `0001` to `0012`. | Fact, from `backend/migrations/versions` |
-| Frontend revision on staging | **Not yet recorded** | Fill in from staging |
-| Backend release on staging | **Not yet recorded.** The last recorded staging release is `9e5cf9b` at `0002` (HANDOFF.md, 2026-11-25 read-only check). | Fill in from staging |
-| Preceding release for rollback | Record the release directory or image that is live before the upgrade. | Fill in from staging |
+| Backend live on staging | `c700c7e37084d5d33760913edeb1c8da4466fdfc` (#45), release dir `~/tradeo-staging/repo`, image `tradeo-staging-api:local` (10570d619226, built 2026-11-25 14:45 UTC) | Fact, from the host |
+| Backend vs main | `c700c7e` is on main. Against main `2bc5602`, `backend/` differs only by `docs/HANDOFF.md`. Staging runs main's backend code. | Fact, from `git diff` |
+| Frontend live on staging | image label `9675ec05eb0975de4b1cb77080e69016bed74986` (image 0a9e423d4671), from branch `codex/account-settings` | Fact, from the host |
+| Frontend vs main | `9675ec0` is not an ancestor of main (#47 landed as the squash `1cabcc0`), but `git diff 9675ec0 origin/main -- frontend` is empty. The frontend tree equals main's. | Fact, from `git diff` |
+| Alembic head, live DB | `0012`, from `SELECT version_num FROM alembic_version` in a read-only transaction. Equals the head in this repo (`0012_recovery_codes`). | Fact, from the host |
+| Preceding backend release | `~/tradeo-staging/repo-8c8e08a` (`8c8e08a1d88460a8481918a955bf9e03d119439a`), then `~/tradeo-staging/repo-9e5cf9b` (migration 0002). Tarballs kept. | Fact, from the host |
+| Rollback frontend image | `tradeo-staging-frontend:rollback-9675ec05...`, which is the build of `36145d11a8b75d467ec782452f89b234a6f41a77` (on main, #44) | Fact, from the host |
+| Rollback API image | None. The API image has only the `:local` tag. | Fact, from the host |
 
-The pin is complete only when the two "on staging" rows above hold real values
-and the verification output below is attached to TRAD-6.
+The Settings and recovery frontend and the c700c7e backend are what the demo
+handoff runs on. Nothing needs deploying for T03 unless the owner wants the
+doc-only commits on main.
 
 ## Health checks
 
-| Check | Expected |
-|---|---|
-| `GET /health/live` | `200 {"status":"ok"}`. The process is up. No dependency check. |
-| `GET /health/ready` | `200` with `{"status":"ok","checks":{"database":"ok","redis":"ok"}}`. `503` means Postgres or Redis failed; details are in the logs, not the response. |
-| `./ops verify` (staging tooling, lives on the server, not in this repo) | All checks pass. |
-| `python backend/scripts/verify_staging.py` | Every check that ran says PASS. Read-only. Needs `STAGING_BASE_URL`, and `STAGING_SESSION_COOKIE` for the signed-in checks. |
+Evidence from the staging host. Inside the api container (`http://127.0.0.1:8000`):
 
-The API does **not** report its migration head, so the earlier runbook step
-"check that the API reports the new migration head" cannot be done. Use the
-database instead (below).
+| Check | Result |
+|---|---|
+| `GET /health/live` | `200 {"status":"ok"}` |
+| `GET /health/ready` | `200`, status ok, database ok, redis ok |
+| `GET /api/v1/market/overview` | `200`, `source: demo`, asOf `2026-11-23T10:00:00Z`, 12 quotes |
+| `GET /api/v1/market/instruments` | `200`, 12 instruments |
+| Frontend `/login` inside the container, and through the ingress at `127.0.0.1:18446` | `200` and `200` |
+
+Through the tailnet origin `https://homelab.tail14603a.ts.net:8446`, `/health/live`,
+`/health/ready`, `/api/v1/market/overview` and `/api/v1/market/instruments`
+all return **404**. The ingress sends everything to the frontend, and at
+`9675ec0` the frontend proxies only `/api/v1/auth/*`, `/api/v1/alerts*`,
+`/api/v1/settings/profile` and `/api/v1/reports/paper/trades.csv`.
+Port `127.0.0.1:8000` on the host belongs to an unrelated container, not to Tradeo.
+
+**Consequence for T09, T10 and T11:** Dashboard, Brokers and Strategies cannot
+reach `market/*`, `brokers/preview`, `strategies/preview`, `auto-trading/paper`
+or `reports/paper` (JSON) through the staging origin until the frontend proxy
+(or the ingress) routes them to the API. That is frontend work (Codex) or an
+infra change (owner approval), not a backend change. Also, `/health/*` is not
+reachable from outside; probe it inside the host.
+
+Run the smoke script on the staging host against the API container, or against
+any origin that routes `/api` and `/health` to the API:
+
+`STAGING_BASE_URL=http://127.0.0.1:<api-port> python backend/scripts/verify_staging.py`
+
+Not run: the full `./ops verify`. Its first step inserts synthetic rows and
+runs `UPDATE users SET updated_at = now()`, so it writes to the staging
+database. The read-only steps passed: Alembic 0012, SCRAM verifiers, HBA,
+backup access, test DB separation, frontend and ingress. The app-role write and
+DDL-denial probe, the Redis ACL probe and the credential-denial probe have not
+run. They need the owner's approval.
+
+## Ports
+
+Postgres (5432), Redis (6379), the API (8000) and the frontend publish no host
+ports. The ingress publishes `8080/tcp` on `127.0.0.1:18446` only, and
+`tailscale serve` exposes it as `https://homelab.tail14603a.ts.net:8446`,
+tailnet only.
 
 ## Migrations
 
 - Migrations run as a separate one-shot job, never on API startup.
-- Check the state on staging: `alembic current`. Expect `0012 (head)`.
-- Upgrade: `alembic upgrade head` from `0002` applies `0003` to `0012`.
-- Downgrade is not part of the rollback. `0004` makes strategy versions
-  immutable and several migrations backfill data. Roll back by restoring the
-  dump taken before the upgrade.
+- The API does not report its migration head. Read it from the database:
+  `SELECT version_num FROM alembic_version` (read-only), or `alembic current`
+  in the migrate container. Expect `0012`.
+- Upgrade: `alembic upgrade head` applies `0003` to `0012` from `0002`.
+- Do not use `alembic downgrade` for rollback. `0004` makes strategy versions
+  immutable and several migrations backfill data. Restore the dump instead.
+
+**Revision id collision.** `~/tradeo-staging/repo-8c8e08a` contains a different
+migration that is also numbered `0012` (`0012_email_sign_in`). The live schema
+has the main version: the `recovery_codes` table exists, `users.email` does not,
+and `invites.phone_e164` is still present. If that older release directory is
+put back without restoring the database, Alembic sees `0012` as already applied
+and skips its migration, so code and schema would not match. Main has exactly
+one `0012` (`0012_recovery_codes`).
 
 ## Rollback
 
-1. Before the upgrade: `pg_dump` to a root-only file. Record its path and size.
-2. Record the current release (directory or image tag).
-3. To roll back: stop api and workers of the new release, restore the dump into
-   the database, redeploy the recorded release, run `./ops verify`.
-4. Confirm `alembic current` matches the restored release.
+1. Backup in `~/.local/state/tradeo-staging/backups` (mode 0600, each with a
+   `.sha256`). Latest: `tradeo-staging-20261125T143541Z-T6Cc26rN-v1.dump.gpg`,
+   69,586 bytes, 2026-11-25 14:35:41 UTC, taken just before the c700c7e release
+   directory (14:44). Older: `20261125T094543Z` (10,293 bytes),
+   `20261124T011242Z` (10,277 bytes).
+2. Take a fresh `pg_dump` before any new upgrade. The 14:35 dump predates any
+   data created since.
+3. To roll back: stop api and workers, restore the dump, redeploy the recorded
+   release directory, run the read-only `./ops` checks.
+4. The API image has no rollback tag. Before the next upgrade, tag the running
+   image (for example `tradeo-staging-api:rollback-c700c7e`) so a rollback has
+   something to point at.
+5. The staging README's rollback note still names `9e5cf9b` as the previous
+   release. That is out of date.
 
-Exact commands and the release path come from the staging tooling and must be
-copied from the server into TRAD-6, not guessed here.
+Exact `./ops` commands live on the server; copy them from there, do not guess.
 
 ## Verified authenticated responses
 
-Run `verify_staging.py` with a signed-in session cookie and attach its output.
+Run `verify_staging.py` with a signed-in session cookie, against a base URL
+that reaches the API, and attach its output.
 It checks market data, instruments, auth/me, brokers, strategies, paper
 trading, paper reports and alerts, and reports status codes and response shape
 only. A signed-in account that has not finished authenticator setup gets `403`
@@ -66,9 +121,11 @@ on the account routes; finish setup first.
 | Strategies | `GET /api/v1/strategies/preview` | session | `200`, `ready`, empty `strategies` list, `metrics: null` |
 | Paper reports | `GET /api/v1/reports/paper` | session | `200`, `status: empty` until a strategy is assigned, then `ready` |
 
-Evidence status at the time of writing: **not collected.** No staging access
-from the cloud, and the owner's own HTTPS check (reachable, zero published
-database ports) is a statement in chat, not an attached record.
+Evidence status: the signed-in checks have **not run**. They need the owner's
+own session cookie (export it as `STAGING_SESSION_COOKIE` in the owner's shell;
+never paste it into chat, Jira or Git), and the staging origin does not route
+most of these paths to the API (see Health checks). Port evidence is recorded
+above (no host ports for Postgres, Redis, API, frontend).
 
 ## Dashboard API note (T09, for Codex)
 

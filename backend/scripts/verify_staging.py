@@ -4,9 +4,12 @@ Standard library only. Makes GET requests only. Prints status codes and the
 shape of each response (top-level keys, counts, the `source` label), never
 response values such as balances, and never the session cookie.
 
-Usage (run from a machine that can reach staging):
+Usage. STAGING_BASE_URL must reach the API itself. On staging the public
+https origin serves only the frontend, which proxies just a few API paths, so
+run this on the staging host against the API container (http://127.0.0.1:<port>,
+loopback only), or against an origin that routes /api and /health to the API:
 
-    STAGING_BASE_URL=https://<private-host> \
+    STAGING_BASE_URL=https://<api-origin-or-http://127.0.0.1:<port>> \
     STAGING_SESSION_COOKIE=<value of __Host-tradeo_session> \
     python backend/scripts/verify_staging.py
 
@@ -79,8 +82,12 @@ CHECKS = [
 
 def main() -> int:
     base = os.environ.get("STAGING_BASE_URL", "").rstrip("/")
-    if not base.startswith("https://"):
-        print("Set STAGING_BASE_URL to the https:// origin of staging.", file=sys.stderr)
+    loopback = base.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]"))
+    if not (base.startswith("https://") or loopback):
+        print(
+            "Set STAGING_BASE_URL to an https:// origin or an http://127.0.0.1 address.",
+            file=sys.stderr,
+        )
         return 2
     cookie = os.environ.get("STAGING_SESSION_COOKIE") or None
     failed = 0

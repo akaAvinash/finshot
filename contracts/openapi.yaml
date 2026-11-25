@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.9.0
+  version: 0.10.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
@@ -282,6 +282,15 @@ tags:
       it changes anything. The window belongs to one session: signing out or
       revoking the session ends it. The first operation that requires step-up
       is `revokeSession`; more are named in the Settings tag as they land.
+
+      **Setup required.** A session whose account has no active
+      authenticator (`user.totpEnabled` is false) is limited to
+      `getCsrfToken`, `getCurrentUser`, `logout`, `logoutAll`, `enrollTotp`
+      and `confirmTotp`. Every other operation that needs a session returns
+      `403 TOTP_SETUP_REQUIRED` after the `401` check and before the CSRF
+      check, and changes nothing. Confirming the authenticator lifts the
+      limit on every session of the account at once. This applies to every
+      tag, not only Auth.
 
       **Rate limits.** Wrong codes count per user and per IP. Exceeding the
       limit returns `429 RATE_LIMITED`, as in the Auth tag.
@@ -2210,6 +2219,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - INVALID_OTP
             - INVALID_CREDENTIALS
             - CSRF_FAILED
@@ -2362,6 +2372,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - BROKER_ACTION_CONFLICT
             - BROKER_UNAVAILABLE
@@ -2567,6 +2578,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - STRATEGY_NOT_FOUND
             - STRATEGY_CONFLICT
@@ -2819,6 +2831,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - BACKTEST_NOT_FOUND
             - BACKTEST_CONFLICT
@@ -3255,6 +3268,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - PAPER_CONFLICT
             - PAPER_UNAVAILABLE
@@ -3658,6 +3672,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - AGENTS_UNAVAILABLE
         message:
           type: string
@@ -3853,6 +3868,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - ALERT_NOT_FOUND
             - ALERTS_UNAVAILABLE
@@ -3871,6 +3887,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - REPORTS_UNAVAILABLE
         message:
           type: string

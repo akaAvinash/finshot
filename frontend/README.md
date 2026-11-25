@@ -36,6 +36,8 @@ In **Agents**, inspect four simulated observers, their latest decisions, reason 
 
 In **Alerts**, filter the demo inbox by unread status, severity or source, acknowledge sample alerts, and review channel preferences. In **Settings**, edit the demo profile and timezone, change notification preferences, or inspect the sample phone, sessions, retention and risk limits. Sensitive demo actions prompt for the code shown in the dialog and appear in the settings audit trail. The workspace shares demo changes across both routes until reload. Theme remains a browser preference. No email or SMS is sent. The [proposed Alerts and Settings contract](../contracts/workspace-controls-preview.openapi.yaml) documents the typed demo adapter.
 
+In staging mode, **Alerts** reads the signed-in account inbox and unread counts from the backend. Its filters and pagination use the server cursor. Acknowledgement and optional warning and info preferences are saved for the account. Critical in-app alerts stay on. Email, SMS and push are shown as unavailable. The staging Settings notification card links to these account preferences.
+
 ## Verification
 
 ```sh

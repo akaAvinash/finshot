@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { Settings } from "@/components/settings/settings";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
-  await requirePreviewSession();
-  return <Settings />;
+  const { mode } = await requireWorkspaceSession();
+  return <Settings accountAlerts={mode === "staging"} />;
 }

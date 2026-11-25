@@ -106,6 +106,21 @@ tags:
       delivery are not implemented; `getAlertPreferences` reports them as
       unavailable. `critical` alerts are always listed and counted, whatever
       the preferences say.
+  - name: Settings
+    description: |
+      Persisted profile settings and ending other sessions. Everything here
+      needs a session; changes also need a `session` CSRF token (see the Auth
+      tag). Each change is recorded in the account's audit log without values
+      that identify a device or secret.
+
+      **Supported now.** Display name and timezone (`/api/v1/settings/profile`),
+      alert preferences (`/api/v1/alerts/preferences`), and ending another
+      session (`DELETE /api/v1/auth/sessions/{sessionId}`, which needs step-up).
+
+      **Still preview only.** Phone changes, data retention and risk limits are
+      not served by the API. The frontend preview's sample confirmation code is
+      never accepted by any endpoint; a sensitive change will use step-up (see
+      the Auth tag) when its own contract lands.
   - name: Auth
     description: |
       Phone OTP sign-in with server-side sessions.
@@ -241,8 +256,8 @@ tags:
       session's own expiry); `stepUpUntil` reports it. An operation that needs
       step-up returns `403 STEP_UP_REQUIRED` when the window is closed, before
       it changes anything. The window belongs to one session: signing out or
-      revoking the session ends it. No operation requires step-up yet; the
-      Settings contract names the first ones.
+      revoking the session ends it. The first operation that requires step-up
+      is `revokeSession`; more are named in the Settings tag as they land.
 
       **Rate limits.** Wrong codes count per user and per IP. Exceeding the
       limit returns `429 RATE_LIMITED`, as in the Auth tag.
@@ -658,6 +673,94 @@ paths:
                 $ref: '#/components/schemas/SessionList'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
+  /api/v1/auth/sessions/{sessionId}:
+    delete:
+      operationId: revokeSession
+      tags: [Settings]
+      summary: End one of the signed-in user's other sessions
+      description: >
+        Revokes the session `sessionId`, which must belong to the caller and
+        still be active. The caller's own session cannot be ended here; use
+        `logout`. Requires step-up: the caller's session must have an open
+        step-up window, otherwise `403 STEP_UP_REQUIRED` and nothing changes.
+        Repeating the request for a session that has ended returns `404`.
+        Recorded in the audit log as `session.revoked` with no device details.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The `id` from `listSessions`.
+      responses:
+        '204':
+          description: The session is revoked and can no longer authenticate.
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthStepUpOrCsrf'
+        '404':
+          $ref: '#/components/responses/AuthSessionNotFound'
+        '409':
+          $ref: '#/components/responses/AuthCurrentSession'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/settings/profile:
+    get:
+      operationId: getSettingsProfile
+      tags: [Settings]
+      summary: Read the caller's profile settings
+      description: >
+        A user who never saved a profile gets `displayName: null` and
+        `timezone: Asia/Kolkata`.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's profile settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsProfile'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+    put:
+      operationId: updateSettingsProfile
+      tags: [Settings]
+      summary: Replace the caller's profile settings
+      description: >
+        Replaces `displayName` and `timezone` and returns the result. The
+        display name is trimmed; it must then be 1 to 48 characters with no
+        control characters. Saving the same values again succeeds. The newest
+        save wins. `GET /api/v1/auth/me` reports the new display name from then
+        on. Recorded in the audit log as `settings.profile_updated`
+        without the values.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsProfileUpdate'
+      responses:
+        '200':
+          description: The saved profile settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsProfile'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
   /api/v1/brokers/preview:
     get:
       operationId: getBrokers
@@ -1827,6 +1930,34 @@ components:
           type: string
           format: date-time
           description: End of the step-up window on this session.
+    SettingsTimezone:
+      type: string
+      enum: [Asia/Kolkata, UTC]
+    SettingsProfile:
+      type: object
+      required: [displayName, timezone, phoneMasked]
+      additionalProperties: false
+      properties:
+        displayName:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 48
+        timezone:
+          $ref: '#/components/schemas/SettingsTimezone'
+        phoneMasked:
+          type: string
+          description: Read only. The full number is never returned and cannot be changed here.
+    SettingsProfileUpdate:
+      type: object
+      required: [displayName, timezone]
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 48
+        timezone:
+          $ref: '#/components/schemas/SettingsTimezone'
     SessionSummary:
       type: object
       required: [id, deviceLabel, createdAt, lastSeenAt, expiresAt, current]
@@ -1875,6 +2006,8 @@ components:
             - TOTP_NOT_ENROLLED
             - TOTP_ALREADY_ENROLLED
             - TOTP_NOT_PENDING
+            - SESSION_NOT_FOUND
+            - CURRENT_SESSION
             - INTERNAL_ERROR
         message:
           type: string
@@ -3931,6 +4064,24 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+    AuthSessionNotFound:
+      description: No active session with this id belongs to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: SESSION_NOT_FOUND
+            message: This session was not found.
+    AuthCurrentSession:
+      description: The caller's own session cannot be ended here. Use `logout`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: CURRENT_SESSION
+            message: Sign out to end this session.
     AuthTotpAlreadyEnrolled:
       description: An authenticator is already active. Remove it first.
       content:

@@ -207,6 +207,13 @@ and live trading.
 
 ## Known issues
 
+- A restricted Redis account (staging uses one) must allow both key prefixes
+  `tradeo:rl:*` (counters) and `tradeo:rv:*` (rate-limit reservations, #38),
+  and the commands the Lua scripts call: `EVAL`, `GET`, `SET`, `INCR`, `DECR`,
+  `PEXPIRE`, `PTTL`, `HGET`, `HSET`, `HINCRBY`, `TIME`. Missing either prefix
+  makes `POST /auth/login/totp` and `/auth/login/recovery` return 500 (found
+  on staging 2026-11-25; fixed there by widening the ACL). Add a staging
+  check that exercises a reservation before the next deploy.
 - On every write endpoint (auth, brokers, strategies, backtests, paper), a
   body that is not valid JSON returns `400 INVALID_REQUEST` before the
   session and CSRF checks run, because FastAPI decodes JSON first. Valid JSON

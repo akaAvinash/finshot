@@ -65,11 +65,12 @@ and live trading.
 3. Further Settings contracts (each its own PR, using step-up): phone change,
    data retention, risk limits. They stay preview-only in the frontend until
    then, and the demo confirmation code is never accepted by the API.
-4. Staging upgrade (owner approved 2026-11-25, runs through Remote Control over
-   Tailscale): pg_dump, deploy
-   main, migrate `0002` to head, real `PUBLIC_ORIGIN`,
-   `TRUSTED_PROXY_HOPS=1`, workers on. Rollback: restore the dump and redeploy
-   release `9e5cf9b`.
+4. Staging upgrade (owner approved 2026-11-25; the owner chose reviewed main,
+   not the device session's branch). Runs through Remote Control over
+   Tailscale: pg_dump, deploy main, migrate `0002` to head, real
+   `PUBLIC_ORIGIN`, `TRUSTED_PROXY_HOPS=1`, workers on, staging OTP files.
+   Rollback: restore the dump and redeploy release `9e5cf9b`. Waiting on the
+   real origin and the first invited email.
 5. Hardening (kit order).
 
 ## Staging (read-only check, 2026-11-25)

@@ -123,7 +123,20 @@ tags:
       the Auth tag) when its own contract lands.
   - name: Auth
     description: |
-      Phone OTP sign-in with server-side sessions.
+      Invite-only sign-in with server-side sessions. There are two ways in.
+
+      - **First sign-in (registration): one-time code.** An invited number asks
+        for a code by email (`channel: email`) and verifies it. The user then
+        enrols an authenticator app (see the Step-up tag).
+      - **Every later sign-in: authenticator code.** Once an authenticator is
+        active, the user signs in with the phone number and the current code
+        from the app (`POST /api/v1/auth/login/totp`). No code is sent. From
+        then on a one-time code can no longer start a session for that
+        account, so a mailbox or SIM takeover does not reach the account. If
+        the authenticator is lost, an operator removes it on the server and
+        the user registers again with an emailed code.
+
+      Every failure on these endpoints looks the same for every phone number.
 
       **Same-origin only.** The browser calls `/api/v1/*` on the web
       application's own origin; Next.js proxies these requests to the API. The
@@ -191,6 +204,10 @@ tags:
         replaces the CSRF cookie. The pre-login token and any earlier session
         identifier stop working. Clients must use the returned token for their
         next write.
+      - `login/totp` follows the same rule as `otp/verify`: it needs a
+        `pre_login` token, creates a new session and a new `session` token
+        bound to it, returns that token in the body and replaces the CSRF
+        cookie.
       - `logout` and `logout-all` revoke the session; the old `session` token
         is invalid from then on. Both cookies are cleared.
       - `logout` requires a `session` token when the request has a valid
@@ -389,7 +406,10 @@ paths:
         one after `resendAvailableAt` (60 seconds). If delivery is unavailable
         (no provider configured, or a daily delivery limit reached), every
         well-formed number gets the same `503`, decided before the invite is
-        looked at, so the failure cannot reveal who is invited.
+        looked at, so the failure cannot reveal who is invited. For an
+        account that already has an active authenticator, the response is the
+        same `202`, but nothing is sent and the challenge can never be
+        completed: sign in with `loginWithTotp` instead.
       security:
         - csrfHeader: []
       requestBody:
@@ -457,6 +477,59 @@ paths:
               example:
                 code: INVALID_OTP
                 message: The code is invalid or has expired.
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/login/totp:
+    post:
+      operationId: loginWithTotp
+      tags: [Auth]
+      summary: Sign in with an authenticator code
+      description: >
+        For an invited account with an active authenticator: the phone number
+        and the current six-digit code start a session, exactly like
+        `verifyOtp` (two separate `Set-Cookie` fields, session then CSRF, and
+        a new session-bound `csrfToken` in the body). The code is also proof
+        for step-up, so the new session's step-up window is open
+        (`session.stepUpUntil`). Each time step is accepted once, so a code
+        that was just used cannot be used again. A wrong or reused code, a
+        number that is not invited or has no account, and an account without
+        an active authenticator all return the same `401 INVALID_CREDENTIALS`
+        with no other difference in the response, so it reveals nothing about
+        who has an account. Failures are throttled per phone number and per
+        IP address (`429 RATE_LIMITED`), and the throttle applies to every
+        well-formed number equally. A request must arrive with a `pre_login`
+        CSRF token (see the Auth tag).
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpLogin'
+      responses:
+        '200':
+          description: Signed in. Two `Set-Cookie` fields are sent.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookieLogin'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpVerifyResponse'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          description: The phone number and code do not match an account that can sign in this way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+              example:
+                code: INVALID_CREDENTIALS
+                message: The phone number or code is not valid.
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
         '429':
@@ -1902,6 +1975,17 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: The current six-digit code from the authenticator app.
+    TotpLogin:
+      type: object
+      required: [phone, code]
+      additionalProperties: false
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: The current six-digit code from the authenticator app.
     TotpEnrollment:
       type: object
       required: [secret, otpauthUri, expiresAt]
@@ -2003,6 +2087,7 @@ components:
             - INVALID_REQUEST
             - UNAUTHENTICATED
             - INVALID_OTP
+            - INVALID_CREDENTIALS
             - CSRF_FAILED
             - RATE_LIMITED
             - OTP_DELIVERY_UNAVAILABLE

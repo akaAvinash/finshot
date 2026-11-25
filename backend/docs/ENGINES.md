@@ -1,7 +1,7 @@
 # Engine boundaries and event contracts
 
-Jira: TRAD-5 (E01). Version **0.1.0 (draft)**. It becomes **1.0.0 (frozen)** only after
-the architecture review recorded at the end of this file. Downstream engine tasks
+Jira: TRAD-5 (E01). Version **1.0.0 (frozen)** on 2026-11-25. It was draft 0.1.0 until the owner
+decisions recorded in section 5 and the review record at the end of this file. Downstream engine tasks
 (E02 to E19) must cite the version they build against.
 
 Basis: workbook "Engine register" (ten engines, leads, task links) and the code on
@@ -158,27 +158,34 @@ Out of scope for E01: payload schemas. Each owning task (E02 to E11) defines its
 payload when it implements the event, and lists it in `contracts/openapi.yaml`
 only if an API exposes it.
 
-## 5. Open questions for the review
+## 5. Questions for the review and decisions
 
-These need an owner decision before downstream implementation.
+The owner (Avinash) accepted the recommended option for each question on
+2026-11-25. Each decision is stated after its question. Question 6 is decided now
+but only takes effect when real broker data exists (gate G3).
 
 1. **Ledger ownership.** The workbook gives "virtual execution and ledger" to Paper
    Trading and "canonical ledger and analytics" (E10) to Portfolio. Today the
    ledger tables (`paper_trades`) live in `app/paper`. Proposal: Paper owns virtual
    account state and emits fills; Portfolio owns the canonical ledger built from
    those fills; move the tables when E10 lands.
+   **Decision: A.** As proposed.
 2. **Where Risk lives.** Proposal: extract a `risk` package at E08 and make Paper
    and Strategies call it. Until then the embedded checks stay and are the
    reference behavior for E08's tests.
+   **Decision: A.** As proposed.
 3. **Event transport.** Proposal: Postgres outbox plus the existing polling
    workers. The alternative is Redis streams. Redis is already deployed but is
    treated as a cache and rate-limit store today.
+   **Decision: Postgres outbox.** Redis streams are not used for engine events.
 4. **Agents.** The four advisory agents (`market-scanner`, `strategy-analyst`,
    `risk-explainer`, `execution-monitor`) are not in the engine register.
    Proposal: they are read-only observers of engine events, owned by
    Orchestration, and can never change an outcome.
+   **Decision: A.** As proposed.
 5. **Frontend consumers.** Codex owns the screens; each engine's API stays in
    `contracts/openapi.yaml`, changed only by a separate contract PR.
+   **Decision: confirmed** as written.
 6. **Exposure for gating.** Today only paper state exists, so Paper Trading can
    supply the exposure snapshot. With real broker data (gate G3 and later) the
    snapshot must include broker positions. Decide then between two options, both
@@ -189,12 +196,16 @@ These need an owner decision before downstream implementation.
    Execution reading Portfolio would create Execution to Portfolio to Execution
    (and to Paper and back). Making it work would mean Portfolio stops consuming
    those events, which removes its purpose.
+   **Decision: option (b).** A caller above Execution builds the snapshot. Takes
+   effect at gate G3; no code changes before then.
 
 ## 6. Review record
 
 | Item | Status |
 |---|---|
-| Boundary map and dependency map | Draft 0.1.0 |
-| Architecture review before implementation | **Pending**: CodeRabbit on the PR, then owner decision on section 5 |
-| Frozen as 1.0.0 | Not yet |
+| Boundary map and dependency map | **Frozen 1.0.0** (2026-11-25) |
+| Architecture review before implementation | Done: CodeRabbit review on PR #52, owner decisions on section 5 on 2026-11-25 |
+| Frozen as 1.0.0 | Yes. Changes after this need a new version and an owner decision. |
 | Tested revision | Docs only; read against main `e2c7b0e` |
+
+Downstream engine tasks (E02 to E19) cite version 1.0.0.

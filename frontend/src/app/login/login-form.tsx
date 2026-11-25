@@ -4,15 +4,12 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { stagingLogin, type LoginState } from "@/lib/auth/browser-client";
-import type { AuthMode } from "@/lib/auth/config";
-import { previewLogin } from "./actions";
+import { previewLogin, type LoginState } from "./actions";
 
 const initialState: LoginState = { step: "phone" };
 
-export function LoginForm({ mode }: { mode: AuthMode }) {
-  const preview = mode === "preview";
-  const [state, action, pending] = useActionState(preview ? previewLogin : stagingLogin, initialState);
+export function LoginForm() {
+  const [state, action, pending] = useActionState(previewLogin, initialState);
   const [phone, setPhone] = useState("");
   const codeField = useRef<HTMLInputElement>(null);
   const step = state.step;
@@ -49,34 +46,29 @@ export function LoginForm({ mode }: { mode: AuthMode }) {
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">{preview ? "Preview number ending in" : "Code requested for the number ending in"} {state.phone.slice(-4)}.</p>
+          <p className="text-sm text-muted-foreground">Preview number ending in {state.phone.slice(-4)}.</p>
           <Label htmlFor="code">One-time code</Label>
           <Input
             id="code"
             name="code"
             ref={codeField}
             inputMode="numeric"
-            autoComplete={preview ? "off" : "one-time-code"}
+            autoComplete="off"
             maxLength={6}
             placeholder="000000"
-            aria-describedby={[preview && "demo-code", state.error && "login-error"].filter(Boolean).join(" ") || undefined}
+            aria-describedby={state.error ? "demo-code login-error" : "demo-code"}
             aria-invalid={!!state.error}
             required
           />
-          {preview && <p id="demo-code" className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm">
+          <p id="demo-code" className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm">
             Use preview code <strong className="text-accent-foreground">123456</strong>.
-          </p>}
+          </p>
         </div>
       )}
       {state.error && <p id="login-error" role="alert" className="text-sm text-negative">{state.error}</p>}
       <Button type="submit" className="h-11 w-full font-semibold" disabled={pending}>
-        {pending ? "Please wait…" : state.step === "phone" ? (preview ? "Get preview code" : "Request code") : (preview ? "Open dashboard" : "Verify and sign in")}
+        {pending ? "Please wait…" : state.step === "phone" ? "Get preview code" : "Open dashboard"}
       </Button>
-      {!preview && state.step === "code" && (
-        <Button variant="outline" type="submit" name="intent" value="resend" formNoValidate disabled={pending} className="w-full">
-          Request a new code
-        </Button>
-      )}
       {state.step === "code" && (
         <Button variant="ghost" type="submit" name="intent" value="change-phone" formNoValidate disabled={pending} className="w-full">
           Change mobile number

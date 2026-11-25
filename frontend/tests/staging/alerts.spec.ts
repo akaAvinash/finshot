@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInStaging } from "./staging-helpers";
 
 const fixture = "http://127.0.0.1:3102/__fixture";
 const api = "/api/v1/alerts";
@@ -8,13 +9,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 async function openAccountAlerts(page: Page) {
-  await page.goto("/alerts");
-  await expect(page).toHaveURL(/\/login$/);
-  await page.getByLabel("Mobile number").fill("98765 43210");
-  await page.getByRole("button", { name: "Request code", exact: true }).click();
-  await page.getByLabel("One-time code").fill("842615");
-  await page.getByRole("button", { name: "Verify and sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await signInStaging(page, "/alerts");
   await page.goto("/alerts");
   await expect(page.getByText("Account inbox", { exact: true })).toBeVisible();
 }

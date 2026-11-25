@@ -2,9 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { readAuthConfig } from "@/lib/auth/config";
-import type { LoginState } from "@/lib/auth/browser-client";
 import { endPreviewSession, startPreviewSession } from "@/lib/auth/preview-session";
 import { normalizeIndianMobile } from "@/lib/preview-auth/validation";
+
+export type LoginState = { step: "phone"; error?: string } | { step: "code"; phone: string; error?: string };
 
 export async function previewLogin(state: LoginState, formData: FormData): Promise<LoginState> {
   if (readAuthConfig().mode !== "preview") return { step: "phone", error: "Preview sign-in is disabled." };

@@ -30,18 +30,20 @@ test("requires backend sign-in, preserves rotated cookies, and revokes the sessi
   await expect(page.getByRole("heading", { name: "Staging sign-in" })).toBeVisible();
   await expect(page.getByText("123456")).toHaveCount(0);
 
-  await page.getByLabel("Mobile number").fill("98765 43210");
-  await page.getByRole("button", { name: "Request code", exact: true }).click();
-  await expect(page.getByText("Code requested for the number ending in 3210.")).toBeVisible();
-  await page.getByLabel("One-time code").fill("123456");
-  await page.getByRole("button", { name: "Verify and sign in" }).click();
+  const phone = page.getByLabel("Mobile number");
+  const code = page.getByLabel("Authenticator code");
+  const signIn = page.getByRole("button", { name: "Sign in", exact: true });
   const loginError = page.getByRole("main").getByRole("alert");
-  await expect(loginError).toContainText("invalid, expired, or used");
-
-  await page.getByRole("button", { name: "Request a new code" }).click();
-  await expect(loginError).toHaveCount(0);
-  await page.getByLabel("One-time code").fill("842615");
-  await page.getByRole("button", { name: "Verify and sign in" }).click();
+  await phone.fill("98765 43217");
+  await code.fill("728391");
+  await signIn.click();
+  await expect(loginError).toHaveText("The phone number or code is not valid.");
+  await phone.fill("98765 43218");
+  await code.fill("000000");
+  await signIn.click();
+  await expect(loginError).toHaveText("The phone number or code is not valid.");
+  await code.fill("728391");
+  await signIn.click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByText("Staging session")).toBeVisible();
 
@@ -71,17 +73,95 @@ test("requires backend sign-in, preserves rotated cookies, and revokes the sessi
   await expect(page).toHaveURL(/\/login$/);
 });
 
+test("verifies first-time email, enrols with a local QR, then signs in using a fresh authenticator code", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/login");
+  await page.getByRole("button", { name: "First-time email" }).click();
+  await page.getByLabel("Mobile number").fill("98765 43219");
+  const emailRequest = page.waitForRequest((request) => request.url().endsWith(`${auth}/otp/request`));
+  await page.getByRole("button", { name: "Request code", exact: true }).click();
+  expect((await emailRequest).postDataJSON()).toEqual({ phone: "+919876543219", channel: "email" });
+  await expect(page.getByText("Code requested for the number ending in 3219.")).toBeVisible();
+
+  const emailCode = page.getByLabel("Email verification code");
+  const verify = page.getByRole("button", { name: "Verify email code" });
+  await emailCode.fill("000000");
+  await verify.click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("invalid, expired, or used");
+  await page.getByRole("button", { name: "Request a new code" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+  await emailCode.fill("842615");
+  await verify.click();
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  await expect(page.getByRole("heading", { name: "Set up your authenticator" })).toBeVisible();
+  expect(await page.evaluate(async () => new URL((await fetch("/dashboard")).url).pathname)).toBe("/login/authenticator");
+
+  const extraCsrfReads: string[] = [];
+  const trackCsrf = (request: import("@playwright/test").Request) => {
+    if (request.url().endsWith(`${auth}/csrf`)) extraCsrfReads.push(request.url());
+  };
+  page.on("request", trackCsrf);
+  await page.getByRole("button", { name: "Start authenticator setup" }).click();
+  const qr = page.getByRole("img", { name: "Tradeo authenticator setup QR code" });
+  await expect(qr).toBeVisible();
+  await expect.poll(() => qr.evaluate((node: HTMLCanvasElement) =>
+    node.getContext("2d")?.getImageData(0, 0, node.width, node.height).data.some((value, index) => index % 4 === 0 && value === 0),
+  )).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  const setupKey = page.locator("#manual-setup-key");
+  await expect(setupKey).toBeHidden();
+  await page.getByRole("button", { name: "Show setup key" }).click();
+  await expect(setupKey).toHaveText(/^[A-Z2-7]{32}$/);
+  await page.getByRole("button", { name: "Hide setup key" }).click();
+  await expect(setupKey).toBeHidden();
+
+  const setupCode = page.getByLabel("Authenticator code");
+  await setupCode.fill("000000");
+  await page.getByRole("button", { name: "Confirm authenticator" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("The code is invalid or expired");
+  await setupCode.fill("615408");
+  await page.getByRole("button", { name: "Confirm authenticator" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  page.off("request", trackCsrf);
+  expect(extraCsrfReads).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await page.getByLabel("Mobile number").fill("98765 43219");
+  await page.getByLabel("Authenticator code").fill("615408");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("The phone number or code is not valid.");
+  await page.getByLabel("Authenticator code").fill("615409");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+});
+
 test("surfaces throttling and unavailable delivery without signing in", async ({ page }) => {
   await page.goto("/login");
   const phone = page.getByLabel("Mobile number");
-  const requestCode = page.getByRole("button", { name: "Request code", exact: true });
   const loginError = page.getByRole("main").getByRole("alert");
+  const attempts: string[] = [];
+  page.on("request", (request) => { if (request.url().endsWith(`${auth}/login/totp`)) attempts.push(request.url()); });
   await phone.fill("98765 43211");
-  await requestCode.click();
+  await page.getByLabel("Authenticator code").fill("728391");
+  const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+  await signIn.click();
   await expect(loginError).toHaveText("Too many attempts. Try again in 30 seconds.");
+  await signIn.click();
+  await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
+  expect(attempts).toHaveLength(1);
+  await page.getByRole("button", { name: "First-time email" }).click();
   await phone.fill("98765 43212");
-  await requestCode.click();
-  await expect(loginError).toHaveText("Code delivery is unavailable. Try again later.");
+  await page.getByRole("button", { name: "Request code", exact: true }).click();
+  await expect(loginError).toHaveText("Email code delivery is unavailable. Try again later.");
+
+  await page.getByRole("button", { name: "Authenticator", exact: true }).click();
+  await phone.fill("98765 43211");
+  await page.getByLabel("Authenticator code").fill("728391");
+  await signIn.click();
+  await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
+  expect(attempts).toHaveLength(1);
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -108,13 +188,13 @@ test("limits the proxy to configured auth routes and fails closed on session val
   await context.addCookies([{ name: "__Host-tradeo_session", value: "not-a-session", url: secureCookieOrigin, httpOnly: true }]);
   await page.goto("/markets");
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("button", { name: "Request code" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 
   await context.addCookies([{ name: "__Host-tradeo_session", value: "upstream-offline", url: secureCookieOrigin, httpOnly: true }]);
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Sign-in is temporarily unavailable");
-  await expect(page.getByRole("button", { name: "Request code" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });
 
 test("throttles one ingress client without blocking another and ignores forged IP headers", async ({ page, browser }) => {

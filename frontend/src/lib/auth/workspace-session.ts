@@ -7,7 +7,13 @@ import { readAuthConfig } from "./config";
 import { hasPreviewSession } from "./preview-session";
 import { authCookieHeader, requestUpstreamAuth, sessionCookie } from "./upstream";
 
-export const getWorkspaceSession = cache(async () => {
+type WorkspaceSession =
+  | { mode: "preview"; signedIn: boolean }
+  | { mode: "unavailable"; signedIn: false }
+  | { mode: "staging"; signedIn: false }
+  | { mode: "staging"; signedIn: true; totpEnabled: boolean };
+
+export const getWorkspaceSession = cache(async (): Promise<WorkspaceSession> => {
   const cookieStore = await cookies();
   const config = readAuthConfig();
   if (config.mode === "preview") return { mode: config.mode, signedIn: await hasPreviewSession() };
@@ -21,8 +27,8 @@ export const getWorkspaceSession = cache(async () => {
     if (response.status === 401) return { mode: config.mode, signedIn: false };
     if (response.status === 200) {
       const payload = await response.json();
-      if (typeof payload?.user?.id === "string" && typeof payload?.session?.expiresAt === "string") {
-        return { mode: config.mode, signedIn: true };
+      if (typeof payload?.user?.id === "string" && typeof payload.user.totpEnabled === "boolean" && typeof payload?.session?.expiresAt === "string") {
+        return { mode: config.mode, signedIn: true, totpEnabled: payload.user.totpEnabled };
       }
     } else {
       await response.body?.cancel();
@@ -30,11 +36,12 @@ export const getWorkspaceSession = cache(async () => {
   } catch {
     // Deny workspace access while the auth service cannot validate the session.
   }
-  return { mode: "unavailable" as const, signedIn: false };
+  return { mode: "unavailable", signedIn: false };
 });
 
 export async function requireWorkspaceSession() {
   const session = await getWorkspaceSession();
-  if (!session.signedIn || session.mode === "unavailable") redirect("/login");
+  if (!session.signedIn) redirect("/login");
+  if (session.mode === "staging" && !session.totpEnabled) redirect("/login/authenticator");
   return session;
 }

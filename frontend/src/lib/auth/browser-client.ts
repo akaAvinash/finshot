@@ -1,15 +1,19 @@
-import { normalizeIndianMobile } from "@/lib/preview-auth/validation";
-
-type LoginState =
-  | { step: "phone"; error?: string }
-  | { step: "code"; phone: string; error?: string; challengeId?: string };
-
 const authRoot = "/api/v1/auth";
 
-class AuthError extends Error {
+export class AuthError extends Error {
   constructor(public readonly status: number, public readonly code?: string, public readonly retryAfter?: number) {
     super("Auth request failed");
   }
+}
+
+type CsrfContext = "pre_login" | "session";
+let sessionCsrfToken: string | undefined;
+
+export type EmailChallenge = { challengeId: string; expiresAt: string; resendAvailableAt: string };
+export type AuthenticatorEnrollment = { secret: string; otpauthUri: string; expiresAt: string };
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
 async function requestAuth(path: string, init?: RequestInit) {
@@ -22,60 +26,88 @@ async function requestAuth(path: string, init?: RequestInit) {
   return response;
 }
 
-async function postAuth(path: "otp/request" | "otp/verify" | "logout", body?: Record<string, string>) {
-  const csrf = await (await requestAuth("csrf")).json();
-  if (typeof csrf?.csrfToken !== "string" || !csrf.csrfToken) throw new AuthError(502);
-
-  const headers = new Headers({ "X-CSRF-Token": csrf.csrfToken });
-  if (body) headers.set("Content-Type", "application/json");
-  return requestAuth(path, { method: "POST", headers, body: body ? JSON.stringify(body) : undefined });
+async function readCsrf(context?: CsrfContext) {
+  const data = await (await requestAuth("csrf")).json();
+  if (typeof data?.csrfToken !== "string" || !data.csrfToken || !["pre_login", "session"].includes(data.context)) throw new AuthError(502);
+  if (context && context !== data.context) throw new AuthError(context === "session" ? 401 : 409, "AUTH_CONTEXT_CHANGED");
+  if (data.context === "session") sessionCsrfToken = data.csrfToken;
+  else sessionCsrfToken = undefined;
+  return data.csrfToken as string;
 }
 
-export async function stagingLogin(state: LoginState, formData: FormData): Promise<LoginState> {
-  if (formData.get("intent") === "change-phone") return { step: "phone" };
+type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "totp/enroll" | "totp/confirm" | "logout";
+
+async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, string>) {
+  function send(token: string) {
+    const headers = new Headers({ "X-CSRF-Token": token });
+    if (body) headers.set("Content-Type", "application/json");
+    return requestAuth(path, { method: "POST", headers, body: body ? JSON.stringify(body) : undefined });
+  }
+
+  const cached = context === "session" ? sessionCsrfToken : undefined;
+  if (!cached) return send(await readCsrf(context));
 
   try {
-    if (state.step === "phone" || formData.get("intent") === "resend") {
-      const phone = state.step === "code" ? state.phone : normalizeIndianMobile(String(formData.get("phone") ?? ""));
-      if (!phone) return { step: "phone", error: "Enter a valid 10-digit Indian mobile number." };
-      const challenge = await (await postAuth("otp/request", { phone: `+91${phone}` })).json();
-      if (typeof challenge?.challengeId !== "string" || !challenge.challengeId) throw new AuthError(502);
-      return { step: "code", phone, challengeId: challenge.challengeId };
-    }
-
-    const code = String(formData.get("code") ?? "").trim();
-    if (!/^\d{6}$/.test(code)) return { ...state, error: "Enter the six-digit code." };
-    if (!state.challengeId) return { step: "phone", error: "Request a new code to continue." };
-    await postAuth("otp/verify", { challengeId: state.challengeId, code });
-    window.location.replace("/dashboard");
-    return state;
+    return await send(cached);
   } catch (error) {
-    let message = "Sign-in is temporarily unavailable. Try again shortly.";
-    if (error instanceof AuthError) {
-      if (error.status === 429) {
-        const wait = error.retryAfter ? ` Try again in ${error.retryAfter} seconds.` : " Try again later.";
-        message = `Too many attempts.${wait}`;
-      } else if (error.code === "OTP_DELIVERY_UNAVAILABLE") {
-        message = "Code delivery is unavailable. Try again later.";
-      } else if (error.status === 403) {
-        message = "This request could not be verified. Reload the page and try again.";
-      } else if (error.code === "INVALID_OTP") {
-        message = "This code is invalid, expired, or used. Try again or request a new code.";
-      }
-    }
-    return { ...state, error: message };
+    if (!(error instanceof AuthError) || error.code !== "CSRF_FAILED") throw error;
+    return send(await readCsrf(context));
   }
+}
+
+export async function requestEmailCode(phone: string): Promise<EmailChallenge> {
+  const response = await postAuth("otp/request", "pre_login", { phone: `+91${phone}`, channel: "email" });
+  const data = await response.json();
+  if (response.status !== 202 || typeof data?.challengeId !== "string" || !data.challengeId || data.channel !== "email" ||
+      !isTimestamp(data.expiresAt) || !isTimestamp(data.resendAvailableAt)) throw new AuthError(502);
+  return { challengeId: data.challengeId, expiresAt: data.expiresAt, resendAvailableAt: data.resendAvailableAt };
+}
+
+async function readSignedIn(response: Response) {
+  const data = await response.json();
+  if (typeof data?.csrfToken !== "string" || !data.csrfToken || typeof data?.user?.totpEnabled !== "boolean") throw new AuthError(502);
+  sessionCsrfToken = data.csrfToken;
+  return data.user.totpEnabled as boolean;
+}
+
+export async function verifyEmailCode(challengeId: string, code: string) {
+  return readSignedIn(await postAuth("otp/verify", "pre_login", { challengeId, code }));
+}
+
+export async function signInWithAuthenticator(phone: string, code: string) {
+  return readSignedIn(await postAuth("login/totp", "pre_login", { phone: `+91${phone}`, code }));
+}
+
+export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
+  const data = await (await postAuth("totp/enroll", "session")).json();
+  if (typeof data?.secret !== "string" || !/^[A-Z2-7]{16,128}$/.test(data.secret) || typeof data.otpauthUri !== "string" ||
+      data.otpauthUri.length > 1024 || !isTimestamp(data.expiresAt)) throw new AuthError(502);
+  try {
+    const uri = new URL(data.otpauthUri);
+    if (uri.protocol !== "otpauth:" || uri.hostname !== "totp" || uri.searchParams.get("secret") !== data.secret) throw new AuthError(502);
+  } catch {
+    throw new AuthError(502);
+  }
+  return { secret: data.secret, otpauthUri: data.otpauthUri, expiresAt: data.expiresAt };
+}
+
+export async function confirmAuthenticator(code: string) {
+  const data = await (await postAuth("totp/confirm", "session", { code })).json();
+  if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil)) throw new AuthError(502);
+}
+
+export function authRetryMessage(error: AuthError) {
+  return error.retryAfter ? `Too many attempts. Try again in ${error.retryAfter} seconds.` : "Too many attempts. Try again later.";
 }
 
 export async function stagingSignOut() {
   try {
     const response = await postAuth("logout");
     if (response.status !== 204) throw new AuthError(502);
+    sessionCsrfToken = undefined;
     window.location.replace("/login");
     return null;
   } catch {
     return "We couldn’t confirm sign-out. Try again.";
   }
 }
-
-export type { LoginState };

@@ -46,10 +46,10 @@ async function writeWithCsrf(path: string, method: "POST" | "PUT" | "DELETE", co
   }
 
   const cached = context === "session" ? sessionCsrfToken : undefined;
-  if (!cached) return send(await readCsrf(context));
+  const token = cached ?? await readCsrf(context);
 
   try {
-    return await send(cached);
+    return await send(token);
   } catch (error) {
     if (!(error instanceof AuthError) || error.code !== "CSRF_FAILED") throw error;
     return send(await readCsrf(context));

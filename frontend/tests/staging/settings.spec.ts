@@ -79,18 +79,50 @@ test("ends another session after authenticator step-up and keeps the current ses
   await expect(page.getByText("Tablet browser")).toHaveCount(0);
 });
 
+test("refreshes CSRF once when the first profile write is rejected", async ({ page, request }) => {
+  await signInStaging(page);
+  await page.goto("/settings");
+  await page.getByLabel("Display name").fill("Sample Trader");
+  expect((await request.post(`${fixture}/reject-profile-csrf`)).status()).toBe(204);
+
+  const csrfReads: string[] = [];
+  const writes: number[] = [];
+  page.on("request", (candidate) => {
+    if (candidate.url().endsWith(`${auth}/csrf`)) csrfReads.push(candidate.url());
+  });
+  page.on("response", (response) => {
+    if (response.url().endsWith(profile) && response.request().method() === "PUT") writes.push(response.status());
+  });
+  await page.getByRole("button", { name: "Save profile" }).click();
+  await expect(page.getByText("Profile saved.")).toBeVisible();
+  expect(csrfReads).toHaveLength(2);
+  expect(writes).toEqual([403, 200]);
+  await page.reload();
+  await expect(page.getByLabel("Display name")).toHaveValue("Sample Trader");
+});
+
 test("rotates recovery codes after step-up and shows the new set once", async ({ page, request }) => {
   await signInStaging(page);
-  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
   await page.goto("/settings");
   const opener = page.getByRole("button", { name: "Generate recovery codes" });
-  await opener.click();
   const dialog = page.getByRole("dialog");
+  const requests: string[] = [];
+  page.on("request", (candidate) => {
+    if (candidate.method() === "POST" && candidate.url().endsWith(`${auth}/totp/recovery-codes`)) requests.push(candidate.url());
+  });
+  await opener.click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(requests).toHaveLength(0);
+
+  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
+  await opener.click();
   await expect(dialog.getByText("A new set replaces every previously issued recovery code.")).toBeVisible();
   await dialog.getByRole("button", { name: "Create new codes" }).click();
   await dialog.getByLabel("Authenticator code").fill("645721");
   await dialog.getByRole("button", { name: "Verify and continue" }).click();
   await expect(dialog.getByRole("list", { name: "Recovery codes" }).getByRole("listitem")).toHaveCount(10);
+  expect(requests).toHaveLength(2);
   await expect(dialog.getByRole("heading", { name: "Save your recovery codes" })).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Done" })).toBeDisabled();
   await dialog.getByLabel("I’ve saved my recovery codes.").check();

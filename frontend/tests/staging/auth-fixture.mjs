@@ -13,6 +13,7 @@ const challenges = new Map();
 const otpRequestsByIp = new Map();
 let failNextLogout = false;
 let failNextProfileRead = false;
+let rejectNextProfileCsrf = false;
 let reportMode = "ready";
 let alerts = createAlertsFixture();
 const returningNumber = "+919876543218";
@@ -103,6 +104,7 @@ createServer(async (request, response) => {
     resetAccounts();
     failNextLogout = false;
     failNextProfileRead = false;
+    rejectNextProfileCsrf = false;
     reportMode = "ready";
     alerts = createAlertsFixture();
     return response.writeHead(204).end();
@@ -119,6 +121,10 @@ createServer(async (request, response) => {
   }
   if (request.method === "POST" && request.url === "/__fixture/fail-profile-read") {
     failNextProfileRead = true;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/reject-profile-csrf") {
+    rejectNextProfileCsrf = true;
     return response.writeHead(204).end();
   }
   if (request.method === "POST" && request.url === "/__fixture/add-tablet-session") {
@@ -148,7 +154,8 @@ createServer(async (request, response) => {
     const allowedCookies = writing ? [sessionName, csrfName] : [sessionName];
     if (Object.keys(cookies).some((name) => !allowedCookies.includes(name))) return error(response, 400, "UNEXPECTED_HEADERS");
     if (writing) {
-      if (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
+      if (rejectNextProfileCsrf || request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
+        rejectNextProfileCsrf = false;
         return error(response, 403, "CSRF_FAILED");
       }
       const chunks = [];

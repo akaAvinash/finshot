@@ -1,0 +1,265 @@
+openapi: 3.1.0
+info:
+  title: Tradeo Alerts and Settings Preview API Proposal
+  version: 0.9.0
+  description: >
+    DTOs for the frontend-only Alerts and Settings preview. The current adapter
+    shares deterministic state in memory for a single workspace visit. It sends
+    no notifications and does not change a real session, retained data, or risk
+    policy.
+paths:
+  /api/v1/alerts/preview:
+    get:
+      operationId: getAlerts
+      summary: Read the demo alert inbox and delivery preferences
+      responses:
+        '200':
+          description: Ready, stale, or empty demo inbox.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertsResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/alerts/preview/{alertId}/ack:
+    post:
+      operationId: acknowledgeAlert
+      summary: Mark an alert as read in the demo inbox
+      description: Idempotent for previously acknowledged items. Acknowledgement leaves the underlying alert condition unchanged.
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Updated demo inbox.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertsSnapshot' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/settings/preview:
+    get:
+      operationId: getSettings
+      summary: Read demo account and workspace preferences
+      responses:
+        '200':
+          description: Ready, stale, or empty demo settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/v1/settings/preview/commands:
+    post:
+      operationId: updateSettings
+      summary: Update demo settings
+      description: >
+        Phone verification, session revocation, retention, and risk changes
+        require the sample confirmation step. Applied commands are recorded
+        without verification codes. Theme is a browser setting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsCommand' }
+      responses:
+        '200':
+          description: Updated demo settings and the action log.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsSnapshot' }
+        '400':
+          description: Invalid command or values.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  responses:
+    Forbidden:
+      description: Demo access or confirmation denied.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PreviewError' }
+    NotFound:
+      description: Item unavailable in the demo workspace.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PreviewError' }
+    Conflict:
+      description: Stale data or the requested transition cannot be applied.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PreviewError' }
+    Unavailable:
+      description: The demo workspace is temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PreviewError' }
+  schemas:
+    AlertsResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/AlertsSnapshot' }
+        - { $ref: '#/components/schemas/EmptyResult' }
+    SettingsResult:
+      oneOf:
+        - type: object
+          required: [status, data]
+          additionalProperties: false
+          properties:
+            status: { enum: [ready, stale] }
+            data: { $ref: '#/components/schemas/SettingsSnapshot' }
+        - { $ref: '#/components/schemas/EmptyResult' }
+    EmptyResult:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { const: empty }
+    AlertsSnapshot:
+      type: object
+      required: [source, environment, asOf, timezone, alerts, notifications]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        alerts:
+          type: array
+          description: Alerts ordered newest first.
+          items: { $ref: '#/components/schemas/WorkspaceAlert' }
+        notifications: { $ref: '#/components/schemas/NotificationPreferences' }
+    WorkspaceAlert:
+      type: object
+      required: [id, title, description, source, severity, createdAt, acknowledgedAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        title: { type: string, minLength: 1 }
+        description: { type: string, minLength: 1 }
+        source: { enum: [risk, brokers, markets, paper, security] }
+        severity: { enum: [critical, warning, info] }
+        createdAt: { type: string, format: date-time }
+        acknowledgedAt: { type: [string, 'null'], format: date-time }
+    Timezone:
+      enum: [Asia/Kolkata, UTC]
+    NotificationPreferences:
+      type: object
+      required: [inAppUpdates, emailDigest, criticalSms]
+      additionalProperties: false
+      properties:
+        inAppUpdates: { type: boolean }
+        emailDigest: { type: boolean }
+        criticalSms: { type: boolean }
+    SettingsSnapshot:
+      type: object
+      required: [source, environment, asOf, timezone, displayName, maskedPhone, phoneVerified, sessions, notifications, retentionDays, risk, audit]
+      additionalProperties: false
+      properties:
+        source: { const: demo }
+        environment: { const: DEMO }
+        asOf: { type: string, format: date-time }
+        timezone: { $ref: '#/components/schemas/Timezone' }
+        displayName: { type: string, minLength: 1, maxLength: 48 }
+        maskedPhone: { type: string, minLength: 1 }
+        phoneVerified: { type: boolean }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/DemoSession' }
+        notifications: { $ref: '#/components/schemas/NotificationPreferences' }
+        retentionDays: { $ref: '#/components/schemas/RetentionDays' }
+        risk: { $ref: '#/components/schemas/WorkspaceRisk' }
+        audit:
+          type: array
+          items: { $ref: '#/components/schemas/SettingsAudit' }
+    DemoSession:
+      type: object
+      required: [id, name, current, lastSeenAt, revokedAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+        current: { type: boolean }
+        lastSeenAt: { type: string, format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time }
+    RetentionDays:
+      type: integer
+      enum: [30, 90, 180]
+    WorkspaceRisk:
+      type: object
+      required: [dailyLossPaise, maxTrades]
+      additionalProperties: false
+      properties:
+        dailyLossPaise: { type: integer, minimum: 100, maximum: 10000000 }
+        maxTrades: { type: integer, minimum: 1, maximum: 100 }
+    SettingsAudit:
+      type: object
+      required: [id, action, at]
+      additionalProperties: false
+      properties:
+        id: { type: string, minLength: 1 }
+        action: { enum: [set-profile, set-notifications, verify-phone, revoke-session, set-retention, set-risk] }
+        at: { type: string, format: date-time }
+    ConfirmationCode:
+      type: string
+      pattern: '^[0-9]{6}$'
+    SettingsCommand:
+      oneOf:
+        - type: object
+          required: [kind, displayName, timezone]
+          additionalProperties: false
+          properties:
+            kind: { const: set-profile }
+            displayName: { type: string, minLength: 1, maxLength: 48 }
+            timezone: { $ref: '#/components/schemas/Timezone' }
+        - type: object
+          required: [kind, notifications]
+          additionalProperties: false
+          properties:
+            kind: { const: set-notifications }
+            notifications: { $ref: '#/components/schemas/NotificationPreferences' }
+        - type: object
+          required: [kind, confirmationCode]
+          additionalProperties: false
+          properties:
+            kind: { const: verify-phone }
+            confirmationCode: { $ref: '#/components/schemas/ConfirmationCode' }
+        - type: object
+          required: [kind, sessionId, confirmationCode]
+          additionalProperties: false
+          properties:
+            kind: { const: revoke-session }
+            sessionId: { type: string, minLength: 1 }
+            confirmationCode: { $ref: '#/components/schemas/ConfirmationCode' }
+        - type: object
+          required: [kind, days, confirmationCode]
+          additionalProperties: false
+          properties:
+            kind: { const: set-retention }
+            days: { $ref: '#/components/schemas/RetentionDays' }
+            confirmationCode: { $ref: '#/components/schemas/ConfirmationCode' }
+        - type: object
+          required: [kind, risk, confirmationCode]
+          additionalProperties: false
+          properties:
+            kind: { const: set-risk }
+            risk: { $ref: '#/components/schemas/WorkspaceRisk' }
+            confirmationCode: { $ref: '#/components/schemas/ConfirmationCode' }
+    PreviewError:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { enum: [INVALID_REQUEST, FORBIDDEN, NOT_FOUND, CONFLICT, UNAVAILABLE] }
+        message: { type: string }

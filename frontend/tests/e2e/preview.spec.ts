@@ -49,12 +49,11 @@ test("renders the chart and all placeholder routes, with persistent dark and lig
   await capture(page, "dashboard-desktop-light");
 
   const nav = page.getByRole("navigation", { name: "Workspace" });
-  for (const title of ["Reports", "Alerts", "Settings"]) {
-    await nav.getByRole("link", { name: title, exact: true }).click();
-    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
-    await expect(page.getByText("Placeholder", { exact: true })).toBeVisible();
-    await expect(nav.getByRole("link", { name: title, exact: true })).toHaveAttribute("aria-current", "page");
-  }
+  const reports = nav.getByRole("link", { name: "Reports", exact: true });
+  await reports.click();
+  await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
+  await expect(page.getByText("Placeholder", { exact: true })).toBeVisible();
+  await expect(reports).toHaveAttribute("aria-current", "page");
 
   await page.getByRole("link", { name: "Open alerts" }).click();
   await expect(page).toHaveURL(/\/alerts$/);

@@ -32,6 +32,8 @@ In **Backtesting**, select a fixture strategy revision, instrument, date range a
 
 In **Agents**, inspect four simulated observers, their latest decisions, reason codes, latency, and failures. Filter the timeline by observer, severity, or review status. Pause or resume an observer, or acknowledge or dismiss an advisory item. Demo actions reset on reload and never authorize orders or change risk rules. The [proposed Agents preview contract](../contracts/agents-preview.openapi.yaml) describes the fixture adapter. A backend advisory service and durable review records are separate work.
 
+In **Alerts**, filter the demo inbox by unread status, severity or source, acknowledge sample alerts, and review channel preferences. In **Settings**, edit the demo profile and timezone, change notification preferences, or inspect the sample phone, sessions, retention and risk limits. Sensitive demo actions prompt for the code shown in the dialog and appear in the settings audit trail. The workspace shares demo changes across both routes until reload. Theme remains a browser preference. No email or SMS is sent. The [proposed Alerts and Settings contract](../contracts/workspace-controls-preview.openapi.yaml) documents the typed demo adapter.
+
 ## Verification
 
 ```sh
@@ -43,7 +45,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies, Backtesting and Agents screenshots in the ignored `screenshots/` directory.
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save screenshots, including Alerts and Settings, in the ignored `screenshots/` directory.
 
 Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
 

@@ -67,14 +67,16 @@ and live trading.
 3. Further Settings contracts (each its own PR, using step-up): phone change,
    data retention, risk limits. They stay preview-only in the frontend until
    then, and the demo confirmation code is never accepted by the API.
-4. Staging upgrade (owner approved 2026-11-25, runs through Remote Control over
-   Tailscale): pg_dump, deploy
-   main, migrate `0002` to head, real `PUBLIC_ORIGIN`,
-   `TRUSTED_PROXY_HOPS=1`, workers on. Rollback: restore the dump and redeploy
-   release `9e5cf9b`.
+4. Staging upgrade: done 2026-11-25. Staging runs main `e2c7b0e`'s code at
+   migration `0012` (TRAD-6, `backend/docs/STAGING_HANDOFF.md`). Rollback:
+   restore the pre-upgrade dump, then redeploy the previous release directory
+   `~/tradeo-staging/repo-8c8e08a`. Never put `repo-8c8e08a` back without the
+   dump: its different `0012` migration would be skipped. The running API image
+   is also tagged `tradeo-staging-api:rollback-c700c7e`, so the next upgrade
+   can roll back to it.
 5. Hardening (kit order).
 
-## Staging (read-only check, 2026-11-25)
+## Staging (2026-11-25, after the TRAD-6 upgrade)
 
 Pinned-revision handoff, health checks, migrations, rollback and the Dashboard API note: `backend/docs/STAGING_HANDOFF.md` (TRAD-6).
 
@@ -84,10 +86,15 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
 - Reached only from the owner's machine (Tailscale); the cloud sessions have
   no route. The staging tooling (`~/tradeo-staging/repo/backend/staging/ops`)
   lives on the server, not in this repository.
-- Runs release `9e5cf9b` (#9 era) at migration `0002`: api, postgres and redis
-  only, `OTP_PROVIDER=disabled`, placeholder `PUBLIC_ORIGIN`
-  (`https://tradeo-staging.invalid`), `TRUSTED_PROXY_HOPS` unset (0).
-  `./ops verify` passes all four checks.
+- Runs main `e2c7b0e`'s code at migration `0012`: backend build `c700c7e`,
+  frontend build `de9612b`, Postgres, Redis and a Caddy ingress on
+  `https://homelab.tail14603a.ts.net:8446` (tailnet only). `./ops verify`
+  passes all five checks. The previous release is
+  `~/tradeo-staging/repo-8c8e08a`; `~/tradeo-staging/repo-9e5cf9b` (migration
+  `0002`) is the one before it. Details: `backend/docs/STAGING_HANDOFF.md`.
+- The server-side staging README (`~/tradeo-staging/repo/backend/staging/README.md`,
+  not in this repository) still names `9e5cf9b` as the previous release.
+  Correct it on the next staging release; it was left untouched in TRAD-6.
 
 ## Alerts (E2) notes
 

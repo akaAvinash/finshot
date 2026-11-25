@@ -12,6 +12,7 @@ const sessions = new Map();
 const challenges = new Map();
 const otpRequestsByIp = new Map();
 let failNextLogout = false;
+let failNextProfileRead = false;
 let reportMode = "ready";
 let alerts = createAlertsFixture();
 const returningNumber = "+919876543218";
@@ -33,7 +34,7 @@ function resetAccounts() {
   accountRows.clear();
   for (const number of [returningNumber, registrationNumber]) {
     accountRows.set(number, { id: randomUUID(), phoneMasked: `+91******${number.slice(-4)}`, displayName: null,
-      createdAt: after(0), totpEnabled: number === returningNumber, pending: false, lastCode: null,
+      createdAt: after(0), timezone: "Asia/Kolkata", totpEnabled: number === returningNumber, pending: false, lastCode: null,
       recoveryCodes: number === returningNumber ? ["ABCDE-FGHIJ", "KLMNO-PQRST"] : [] });
   }
 }
@@ -85,7 +86,7 @@ function sessionPayload(account, session) {
 function startSession(response, phone, previousId, steppedUp) {
   sessions.delete(previousId);
   const id = randomUUID();
-  const session = { phone, stepUpUntil: steppedUp ? after(10) : null };
+  const session = { phone, stepUpUntil: steppedUp ? after(10) : null, deviceLabel: "Current browser", createdAt: after(0) };
   sessions.set(id, session);
   const token = `ses.${id}`;
   return json(response, 200, { ...sessionPayload(accountRows.get(phone), session), csrfToken: token }, {
@@ -101,6 +102,7 @@ createServer(async (request, response) => {
     otpRequestsByIp.clear();
     resetAccounts();
     failNextLogout = false;
+    failNextProfileRead = false;
     reportMode = "ready";
     alerts = createAlertsFixture();
     return response.writeHead(204).end();
@@ -113,6 +115,14 @@ createServer(async (request, response) => {
     for (const session of sessions.values()) {
       if (session.stepUpUntil) session.stepUpUntil = after(-1);
     }
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/fail-profile-read") {
+    failNextProfileRead = true;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/add-tablet-session") {
+    sessions.set(randomUUID(), { phone: returningNumber, stepUpUntil: null, deviceLabel: "Tablet browser", createdAt: after(-1) });
     return response.writeHead(204).end();
   }
 
@@ -129,6 +139,35 @@ createServer(async (request, response) => {
   const signedIn = Boolean(session);
   const csrfToken = cookies[csrfName];
   const clientIp = request.headers["x-forwarded-for"];
+
+  if (url.pathname === "/api/v1/settings/profile") {
+    if (!session) return error(response, 401, "UNAUTHENTICATED");
+    const account = accountRows.get(session.phone);
+    if (!account.totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    const writing = request.method === "PUT";
+    const allowedCookies = writing ? [sessionName, csrfName] : [sessionName];
+    if (Object.keys(cookies).some((name) => !allowedCookies.includes(name))) return error(response, 400, "UNEXPECTED_HEADERS");
+    if (writing) {
+      if (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
+        return error(response, 403, "CSRF_FAILED");
+      }
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      let body;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString());
+      } catch {
+        return error(response, 400, "INVALID_REQUEST");
+      }
+      if (typeof body.displayName !== "string" || !["Asia/Kolkata", "UTC"].includes(body.timezone)) return error(response, 400, "INVALID_REQUEST");
+      account.displayName = body.displayName.trim();
+      account.timezone = body.timezone;
+    } else if (failNextProfileRead) {
+      failNextProfileRead = false;
+      return error(response, 503, "SETTINGS_UNAVAILABLE");
+    }
+    return json(response, 200, { displayName: account.displayName, timezone: account.timezone, phoneMasked: account.phoneMasked });
+  }
 
   if (isAlertsFixtureRequest(url.pathname)) {
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
@@ -196,7 +235,28 @@ createServer(async (request, response) => {
     return json(response, 200, { csrfToken: token, context, expiresAt: after(30) }, { "Set-Cookie": setCookies });
   }
 
-  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "login/recovery", "totp/enroll", "totp/confirm", "totp/recovery-codes", "logout"].includes(endpoint)) {
+  if (endpoint === "sessions" && request.method === "GET") {
+    if (!session) return error(response, 401, "UNAUTHENTICATED");
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (Object.keys(cookies).some((name) => name !== sessionName)) return error(response, 400, "UNEXPECTED_HEADERS");
+    return json(response, 200, { sessions: Array.from(sessions.entries()).filter(([, row]) => row.phone === session.phone)
+      .map(([id, row]) => ({ id, deviceLabel: row.deviceLabel, createdAt: row.createdAt, lastSeenAt: row.createdAt, expiresAt: after(180), current: id === sessionId })) });
+  }
+  if (endpoint?.startsWith("sessions/") && request.method === "DELETE") {
+    if (!session) return error(response, 401, "UNAUTHENTICATED");
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
+      return error(response, 403, "CSRF_FAILED");
+    }
+    if (!session.stepUpUntil || Date.parse(session.stepUpUntil) <= Date.now()) return error(response, 403, "STEP_UP_REQUIRED");
+    const id = endpoint.slice(9);
+    if (id === sessionId) return error(response, 409, "CURRENT_SESSION");
+    if (sessions.get(id)?.phone !== session.phone) return error(response, 404, "SESSION_NOT_FOUND");
+    sessions.delete(id);
+    return response.writeHead(204).end();
+  }
+
+  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "login/recovery", "totp/enroll", "totp/confirm", "totp/recovery-codes", "step-up", "logout"].includes(endpoint)) {
     return error(response, 404, "NOT_FOUND");
   }
   if (request.headers.origin !== publicOrigin || !csrfToken || request.headers["x-csrf-token"] !== csrfToken) {
@@ -213,7 +273,7 @@ createServer(async (request, response) => {
     return response.end();
   }
 
-  if (endpoint.startsWith("totp/")) {
+  if (endpoint.startsWith("totp/") || endpoint === "step-up") {
     if (!session) return error(response, 401, "UNAUTHENTICATED");
     if (csrfToken !== `ses.${sessionId}`) return error(response, 403, "CSRF_FAILED");
   }
@@ -242,6 +302,13 @@ createServer(async (request, response) => {
     body = JSON.parse(Buffer.concat(chunks).toString());
   } catch {
     return error(response, 422, "VALIDATION_ERROR");
+  }
+
+  if (endpoint === "step-up") {
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (body.code !== "645721") return error(response, 422, "INVALID_TOTP");
+    session.stepUpUntil = after(10);
+    return json(response, 200, { totpEnabled: true, stepUpUntil: session.stepUpUntil });
   }
 
   if (endpoint === "otp/request") {

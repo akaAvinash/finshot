@@ -313,7 +313,8 @@ test("limits the proxy to configured auth routes and fails closed on session val
   expect((await context.request.get(`${auth}/login/recovery`)).status()).toBe(405);
   const unexpectedBody = await context.request.post(`${auth}/totp/recovery-codes`, { headers, data: {} });
   expect(unexpectedBody.status()).toBe(400);
-  expect((await context.request.get(`${auth}/sessions`)).status()).toBe(404);
+  expect((await context.request.get(`${auth}/sessions`)).status()).toBe(401);
+  expect((await context.request.get(`${auth}/sessions/invalid`)).status()).toBe(404);
 
   await context.addCookies([{ name: "__Host-tradeo_session", value: "not-a-session", url: secureCookieOrigin, httpOnly: true }]);
   await page.goto("/markets");

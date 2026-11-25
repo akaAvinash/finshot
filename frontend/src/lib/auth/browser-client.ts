@@ -17,8 +17,8 @@ function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
-async function requestAuth(path: string, init?: RequestInit) {
-  const response = await fetch(`${authRoot}/${path}`, { ...init, cache: "no-store", mode: "same-origin", redirect: "error" });
+export async function requestAccount(path: string, init?: RequestInit) {
+  const response = await fetch(path, { ...init, cache: "no-store", mode: "same-origin", redirect: "error" });
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     const retryAfter = Number(response.headers.get("Retry-After"));
@@ -28,7 +28,7 @@ async function requestAuth(path: string, init?: RequestInit) {
 }
 
 async function readCsrf(context?: CsrfContext) {
-  const data = await (await requestAuth("csrf")).json();
+  const data = await (await requestAccount(`${authRoot}/csrf`)).json();
   if (typeof data?.csrfToken !== "string" || !data.csrfToken || !["pre_login", "session"].includes(data.context)) throw new AuthError(502);
   if (context && context !== data.context) throw new AuthError(context === "session" ? 401 : 409, "AUTH_CONTEXT_CHANGED");
   if (data.context === "session") sessionCsrfToken = data.csrfToken;
@@ -36,13 +36,13 @@ async function readCsrf(context?: CsrfContext) {
   return data.csrfToken as string;
 }
 
-type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "logout";
+type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "step-up" | "logout";
 
-async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, string>) {
+async function writeWithCsrf(path: string, method: "POST" | "PUT" | "DELETE", context?: CsrfContext, body?: Record<string, string>) {
   function send(token: string) {
     const headers = new Headers({ "X-CSRF-Token": token });
     if (body) headers.set("Content-Type", "application/json");
-    return requestAuth(path, { method: "POST", headers, body: body ? JSON.stringify(body) : undefined });
+    return requestAccount(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   }
 
   const cached = context === "session" ? sessionCsrfToken : undefined;
@@ -54,6 +54,14 @@ async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<st
     if (!(error instanceof AuthError) || error.code !== "CSRF_FAILED") throw error;
     return send(await readCsrf(context));
   }
+}
+
+function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, string>) {
+  return writeWithCsrf(`${authRoot}/${path}`, "POST", context, body);
+}
+
+export function writeAccount(path: string, method: "PUT" | "DELETE", body?: Record<string, string>) {
+  return writeWithCsrf(path, method, "session", body);
 }
 
 export async function requestEmailCode(phone: string): Promise<EmailChallenge> {
@@ -98,6 +106,11 @@ export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
 
 export async function confirmAuthenticator(code: string) {
   const data = await (await postAuth("totp/confirm", "session", { code })).json();
+  if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil)) throw new AuthError(502);
+}
+
+export async function verifyAccountStepUp(code: string) {
+  const data = await (await postAuth("step-up", "session", { code })).json();
   if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil)) throw new AuthError(502);
 }
 

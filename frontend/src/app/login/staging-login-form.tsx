@@ -10,6 +10,7 @@ import { normalizeIndianMobile } from "@/lib/preview-auth/validation";
 
 const methods = { authenticator: "Authenticator", email: "First-time email", recovery: "Recovery code" } as const;
 type Method = keyof typeof methods;
+type RetryGroup = "authenticator" | "email";
 type EmailVerification = EmailChallenge & { phone: string };
 
 function errorMessage(error: unknown) {
@@ -31,7 +32,7 @@ export function StagingLoginForm() {
   const [challenge, setChallenge] = useState<EmailVerification | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryAt, setRetryAt] = useState<Record<Method, number>>({ authenticator: 0, email: 0, recovery: 0 });
+  const [retryAt, setRetryAt] = useState<Record<RetryGroup, number>>({ authenticator: 0, email: 0 });
   const codeField = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -59,7 +60,8 @@ export function StagingLoginForm() {
       return;
     }
     const requesting = method === "email" && (!challenge || resend);
-    const delay = Math.ceil((retryAt[method] - Date.now()) / 1000);
+    const retryGroup = method === "email" ? "email" : "authenticator";
+    const delay = Math.ceil((retryAt[retryGroup] - Date.now()) / 1000);
     const resendDelay = resend && challenge ? Math.ceil((Date.parse(challenge.resendAvailableAt) - Date.now()) / 1000) : 0;
     if (delay > 0 || resendDelay > 0) {
       setError(`Try again in ${Math.max(delay, resendDelay)} seconds.`);
@@ -91,7 +93,7 @@ export function StagingLoginForm() {
     } catch (error) {
       if (error instanceof AuthError && error.status === 429 && error.retryAfter) {
         const deadline = Date.now() + error.retryAfter * 1000;
-        setRetryAt((previous) => ({ ...previous, [method]: deadline }));
+        setRetryAt((previous) => ({ ...previous, [retryGroup]: deadline }));
       }
       setError(errorMessage(error));
     } finally {

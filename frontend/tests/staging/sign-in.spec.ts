@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { signInStaging } from "./staging-helpers";
 
 const auth = "/api/v1/auth";
 const origin = "http://127.0.0.1:3101";
@@ -223,17 +224,57 @@ test("reports expired step-up without reopening authenticator setup", async ({ p
   await expect(page).toHaveURL(/\/dashboard$/);
 });
 
+test("rotates recovery codes in one session and accepts only one competing redemption", async ({ browser, page }) => {
+  await signInStaging(page);
+  const batches = await page.evaluate(async (path) => {
+    const { csrfToken } = await (await fetch(`${path}/csrf`)).json();
+    const headers = { "X-CSRF-Token": csrfToken };
+    const create = async (): Promise<string[]> => {
+      const response = await fetch(`${path}/totp/recovery-codes`, { method: "POST", headers });
+      if (!response.ok) throw new Error(`Recovery generation failed (${response.status})`);
+      return (await response.json()).codes;
+    };
+    return [await create(), await create()];
+  }, auth);
+  const [firstBatch, nextBatch] = batches;
+  expect(firstBatch).toHaveLength(10);
+  expect(nextBatch).toHaveLength(10);
+  const contexts = await Promise.all([browser.newContext({ baseURL: origin }), browser.newContext({ baseURL: origin })]);
+
+  try {
+    const clients = await Promise.all(contexts.map(async ({ request }) => {
+      const { csrfToken } = await (await request.get(`${auth}/csrf`)).json();
+      return (recoveryCode: string) => request.post(`${auth}/login/recovery`, {
+        headers: { Origin: origin, "X-CSRF-Token": csrfToken },
+        data: { phone: "+919876543218", recoveryCode },
+      });
+    }));
+    expect((await clients[0](firstBatch[0])).status()).toBe(401);
+    const competing = await Promise.all(clients.map((redeem) => redeem(nextBatch[0])));
+    expect(competing.map((response) => response.status()).sort()).toEqual([200, 401]);
+    const accepted = competing.find((response) => response.ok());
+    expect(await accepted?.json()).toMatchObject({ user: { totpEnabled: false } });
+  } finally {
+    await Promise.all(contexts.map((context) => context.close()));
+  }
+});
+
 test("surfaces throttling and unavailable delivery without signing in", async ({ page }) => {
   await page.goto("/login");
   const phone = page.getByLabel("Mobile number");
   const loginError = page.getByRole("main").getByRole("alert");
   const attempts: string[] = [];
-  page.on("request", (request) => { if (request.url().endsWith(`${auth}/login/totp`)) attempts.push(request.url()); });
+  page.on("request", (request) => { if (["totp", "recovery"].some((method) => request.url().endsWith(`${auth}/login/${method}`))) attempts.push(request.url()); });
   await phone.fill("98765 43211");
   await page.getByLabel("Authenticator code").fill("728391");
   const signIn = page.getByRole("button", { name: "Sign in", exact: true });
   await signIn.click();
   await expect(loginError).toHaveText("Too many attempts. Try again in 30 seconds.");
+  await signIn.click();
+  await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
+  expect(attempts).toHaveLength(1);
+  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
+  await page.getByLabel("Recovery code", { exact: true }).fill("ABCDE-FGHIJ");
   await signIn.click();
   await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
   expect(attempts).toHaveLength(1);

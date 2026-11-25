@@ -17,9 +17,21 @@ describe("paper report periods", () => {
   it("shares the inclusive period between preview metrics and CSV without re-deducting fees", () => {
     const period = { from: "2026-11-11", to: "2026-11-12" };
     const report = samplePaperReport(period);
-    expect(report).toMatchObject({ status: "ready", data: { summary: {
-      fills: 2, feesPaise: 1746, realisedPaise: -61746, unrealisedPaise: 24556, netPaise: -37190, closedTrades: 1,
-    }, journal: [{ date: "2026-11-12" }, { date: "2026-11-11" }] } });
+    expect(report).toMatchObject({
+      status: "ready",
+      data: {
+        summary: { fills: 2, feesPaise: 1746, realisedPaise: -61746, unrealisedPaise: 24556, netPaise: -37190, closedTrades: 1 },
+        daily: [
+          { date: "2026-11-11", fills: 1, feesPaise: 882, realisedPaise: 0 },
+          { date: "2026-11-12", fills: 1, feesPaise: 864, realisedPaise: -61746 },
+        ],
+        strategies: [{
+          strategy: { id: "demo-pullback", name: "Pullback replay", version: 1 },
+          fills: 2, feesPaise: 1746, realisedPaise: -61746, closedTrades: 1,
+        }],
+        journal: [{ date: "2026-11-12" }, { date: "2026-11-11" }],
+      },
+    });
     const csv = samplePaperCsv(period);
     const [, ...rows] = csv.trimEnd().split("\r\n");
     expect(rows.map((row) => row.split(",")[0])).toEqual(["2026-11-11", "2026-11-12"]);

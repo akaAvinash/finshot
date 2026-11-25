@@ -30,8 +30,6 @@ export function ProfilePreferences({ snapshot, disabled, displayNameRef, onSave 
   displayNameRef: Ref<HTMLInputElement>;
   onSave: (command: Extract<SettingsCommand, { kind: "set-profile" }>) => void;
 }) {
-  const { theme, setTheme } = useTheme();
-
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
@@ -53,15 +51,20 @@ export function ProfilePreferences({ snapshot, disabled, displayNameRef, onSave 
         <Button type="submit" variant="outline" className="h-11">Save profile</Button>
       </fieldset>
     </form>
-    <div className="mt-4 border-t border-border pt-4">
+    <AppearancePreferences />
+  </SettingsCard>;
+}
+
+export function AppearancePreferences() {
+  const { theme, setTheme } = useTheme();
+  return <div className="mt-4 border-t border-border pt-4">
       <p id="settings-theme-label" className="text-sm font-medium">Theme</p>
       <div role="group" aria-labelledby="settings-theme-label" className="mt-2 flex flex-wrap gap-2">
         {themes.map(({ value, label, icon: Icon }) => <Button key={value} variant={theme === value ? "default" : "outline"} className="h-11" aria-pressed={theme === value} onClick={() => setTheme(value)}>
           <Icon aria-hidden />{label}
         </Button>)}
       </div>
-    </div>
-  </SettingsCard>;
+  </div>;
 }
 
 const notificationOptions = [

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { readBoundedBody } from "@/lib/api/bounded-body";
 import { readAuthConfig } from "@/lib/auth/config";
 import { getTrustedClientIp } from "@/lib/auth/ingress";
-import { authCookieHeader, authEndpoints, authProxyResponse, getAuthEndpoint, requestUpstreamAuth } from "@/lib/auth/upstream";
+import { authCookieHeader, authEndpointMethod, authProxyResponse, getAuthEndpoint, requestUpstreamAuth, sessionCookie } from "@/lib/auth/upstream";
 
 const maxBodyBytes = 1024;
 
@@ -16,8 +16,9 @@ async function proxy(request: NextRequest, context: Context) {
   const config = readAuthConfig();
   const endpoint = getAuthEndpoint((await context.params).endpoint.join("/"));
   if (!endpoint || config.mode === "preview") return errorResponse(404, "NOT_FOUND", "Auth endpoint unavailable.");
-  if (request.method !== authEndpoints[endpoint]) {
-    return new Response(null, { status: 405, headers: { Allow: authEndpoints[endpoint], "Cache-Control": "no-store" } });
+  const method = authEndpointMethod(endpoint);
+  if (request.method !== method) {
+    return new Response(null, { status: 405, headers: { Allow: method, "Cache-Control": "no-store" } });
   }
   if (config.mode === "unavailable") return errorResponse(503, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");
 
@@ -25,14 +26,14 @@ async function proxy(request: NextRequest, context: Context) {
   if (!clientIp) return errorResponse(403, "UNTRUSTED_INGRESS", "Sign-in must go through the staging ingress.");
 
   const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp });
-  const cookie = authCookieHeader((name) => request.cookies.get(name)?.value);
+  const cookie = authCookieHeader((name) => endpoint !== "sessions" || name === sessionCookie ? request.cookies.get(name)?.value : undefined);
   if (cookie) headers.set("Cookie", cookie);
   const userAgent = request.headers.get("user-agent");
   if (userAgent) headers.set("User-Agent", userAgent);
 
   try {
     let body: string | undefined;
-    if (request.method === "POST") {
+    if (method !== "GET") {
       const origin = request.headers.get("origin");
       const csrfToken = request.headers.get("x-csrf-token");
       if (origin !== config.publicOrigin || !csrfToken) {
@@ -40,7 +41,7 @@ async function proxy(request: NextRequest, context: Context) {
       }
       headers.set("Origin", origin);
       headers.set("X-CSRF-Token", csrfToken);
-      const acceptsBody = endpoint !== "logout" && endpoint !== "totp/enroll" && endpoint !== "totp/recovery-codes";
+      const acceptsBody = method === "POST" && endpoint !== "logout" && endpoint !== "totp/enroll" && endpoint !== "totp/recovery-codes";
       if (acceptsBody && !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
         return errorResponse(415, "UNSUPPORTED_MEDIA_TYPE", "Send a JSON request.");
       }
@@ -62,4 +63,4 @@ async function proxy(request: NextRequest, context: Context) {
   }
 }
 
-export { proxy as GET, proxy as POST };
+export { proxy as GET, proxy as POST, proxy as DELETE };

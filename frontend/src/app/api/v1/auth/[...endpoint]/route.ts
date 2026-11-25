@@ -60,15 +60,16 @@ async function proxy(request: NextRequest, context: Context) {
       }
       headers.set("Origin", origin);
       headers.set("X-CSRF-Token", csrfToken);
-      if (endpoint !== "logout" && !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
+      const acceptsBody = endpoint !== "logout" && endpoint !== "totp/enroll";
+      if (acceptsBody && !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
         return errorResponse(415, "UNSUPPORTED_MEDIA_TYPE", "Send a JSON request.");
       }
       const payload = await readBody(request);
       if (payload === null) return errorResponse(413, "PAYLOAD_TOO_LARGE", "The request is too large.");
-      if (endpoint !== "logout") {
+      if (acceptsBody) {
         headers.set("Content-Type", "application/json");
         body = payload;
-      }
+      } else if (payload) return errorResponse(400, "INVALID_REQUEST", "This request does not accept a body.");
     }
 
     const upstream = await requestUpstreamAuth(config.upstream, endpoint, { headers, body });

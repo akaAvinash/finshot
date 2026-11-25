@@ -8,6 +8,9 @@ export const authEndpoints = {
   me: "GET",
   "otp/request": "POST",
   "otp/verify": "POST",
+  "login/totp": "POST",
+  "totp/enroll": "POST",
+  "totp/confirm": "POST",
   logout: "POST",
 } as const;
 

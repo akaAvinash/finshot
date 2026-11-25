@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { signInStaging } from "./staging-helpers";
 
 const fixture = "http://127.0.0.1:3102/__fixture";
 const csvPath = "/api/v1/reports/paper/trades.csv";
@@ -8,19 +9,9 @@ test.beforeEach(async ({ request }) => {
   expect((await request.post(`${fixture}/reset`)).status()).toBe(204);
 });
 
-async function signIn(page: Page) {
-  await page.goto("/reports");
-  await expect(page).toHaveURL(/\/login$/);
-  await page.getByLabel("Mobile number").fill("98765 43210");
-  await page.getByRole("button", { name: "Request code", exact: true }).click();
-  await page.getByLabel("One-time code").fill("842615");
-  await page.getByRole("button", { name: "Verify and sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
-}
-
 test("loads authenticated paper ledger totals and downloads server CSV for the same dates", async ({ page, context }) => {
   expect((await context.request.get(csvPath)).status()).toBe(401);
-  await signIn(page);
+  await signInStaging(page, "/reports");
   await page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Reports" }).click();
   await expect(page.getByText("Paper trading", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Paper report totals")).toContainText("+₹64.00");
@@ -51,7 +42,7 @@ test("loads authenticated paper ledger totals and downloads server CSV for the s
 });
 
 test("handles an empty ledger, reconciliation mismatch, and report or CSV outage", async ({ page, request }) => {
-  await signIn(page);
+  await signInStaging(page, "/reports");
   const mode = async (name: string) => expect((await request.post(`${fixture}/report/${name}`)).status()).toBe(204);
   await mode("empty");
   await page.goto("/reports");
@@ -81,7 +72,7 @@ test("handles an empty ledger, reconciliation mismatch, and report or CSV outage
 });
 
 test("downloads all 501 selected fills when the visible journal is capped", async ({ page, request }) => {
-  await signIn(page);
+  await signInStaging(page, "/reports");
   expect((await request.post(`${fixture}/report/large`)).status()).toBe(204);
   await page.goto("/reports?from=2024-01-01&to=2025-05-15");
   const journal = page.getByRole("region", { name: "Trade journal", exact: true });

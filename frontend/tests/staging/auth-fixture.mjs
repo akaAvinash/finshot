@@ -7,13 +7,24 @@ const publicOrigin = "http://127.0.0.1:3101";
 const sessionName = "__Host-tradeo_session";
 const csrfName = "__Host-tradeo_csrf";
 const cookieAttrs = "Secure; HttpOnly; SameSite=Lax; Path=/";
-const sessionIds = new Set();
+const sessions = new Map();
 const challenges = new Map();
 const otpRequestsByIp = new Map();
 let failNextLogout = false;
 let reportMode = "ready";
-const user = { id: randomUUID(), phoneMasked: "+91******3210", displayName: null, createdAt: "2026-11-25T00:00:00Z" };
-const sessionDates = { idleExpiresAt: "2026-11-25T01:00:00Z", expiresAt: "2026-11-25T12:00:00Z" };
+const returningNumber = "+919876543218";
+const registrationNumber = "+919876543219";
+const accountRows = new Map();
+const after = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
+
+function resetAccounts() {
+  accountRows.clear();
+  for (const number of [returningNumber, registrationNumber]) {
+    accountRows.set(number, { id: randomUUID(), phoneMasked: `+91******${number.slice(-4)}`, displayName: null,
+      createdAt: after(0), totpEnabled: number === returningNumber, pending: false, lastCode: null });
+  }
+}
+resetAccounts();
 const ingressToken = process.env.TRADEO_AUTH_INGRESS_TOKEN;
 if (!ingressToken) throw new Error("Missing test ingress token");
 
@@ -52,12 +63,30 @@ function cookie(name, value) {
   return `${name}=${value}; ${cookieAttrs}`;
 }
 
+function sessionPayload(account, session) {
+  const { id, phoneMasked, displayName, createdAt, totpEnabled } = account;
+  return { user: { id, phoneMasked, displayName, createdAt, totpEnabled },
+    session: { idleExpiresAt: after(30), expiresAt: after(180), stepUpUntil: session.stepUpUntil } };
+}
+
+function startSession(response, phone, previousId, steppedUp) {
+  sessions.delete(previousId);
+  const id = randomUUID();
+  const session = { phone, stepUpUntil: steppedUp ? after(10) : null };
+  sessions.set(id, session);
+  const token = `ses.${id}`;
+  return json(response, 200, { ...sessionPayload(accountRows.get(phone), session), csrfToken: token }, {
+    "Set-Cookie": [cookie(sessionName, id), cookie(csrfName, token)],
+  });
+}
+
 createServer(async (request, response) => {
   if (request.url === "/health") return json(response, 200, { ok: true });
   if (request.method === "POST" && request.url === "/__fixture/reset") {
-    sessionIds.clear();
+    sessions.clear();
     challenges.clear();
     otpRequestsByIp.clear();
+    resetAccounts();
     failNextLogout = false;
     reportMode = "ready";
     return response.writeHead(204).end();
@@ -76,7 +105,8 @@ createServer(async (request, response) => {
   const endpoint = request.url?.replace(/^\/api\/v1\/auth\//, "");
   const cookies = Object.fromEntries((request.headers.cookie ?? "").split("; ").filter(Boolean).map((item) => item.split("=", 2)));
   const sessionId = cookies[sessionName];
-  const signedIn = sessionIds.has(sessionId);
+  const session = sessions.get(sessionId);
+  const signedIn = Boolean(session);
   const csrfToken = cookies[csrfName];
   const clientIp = request.headers["x-forwarded-for"];
 
@@ -101,17 +131,17 @@ createServer(async (request, response) => {
   if (endpoint === "me" && request.method === "GET") {
     if (sessionId === "upstream-offline") return error(response, 503, "AUTH_UNAVAILABLE");
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
-    return json(response, 200, { user, session: sessionDates });
+    return json(response, 200, sessionPayload(accountRows.get(session.phone), session));
   }
   if (endpoint === "csrf" && request.method === "GET") {
     const context = signedIn ? "session" : "pre_login";
     const token = signedIn ? `ses.${sessionId}` : csrfToken?.startsWith("pre.") ? csrfToken : `pre.${randomUUID()}`;
     const setCookies = [cookie(csrfName, token), "fixture-unrelated=ignored; Path=/"];
     if (sessionId && !signedIn) setCookies.unshift(`${cookie(sessionName, "")}; Max-Age=0`);
-    return json(response, 200, { csrfToken: token, context, expiresAt: sessionDates.expiresAt }, { "Set-Cookie": setCookies });
+    return json(response, 200, { csrfToken: token, context, expiresAt: after(30) }, { "Set-Cookie": setCookies });
   }
 
-  if (request.method !== "POST" || !["otp/request", "otp/verify", "logout"].includes(endpoint)) {
+  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "totp/enroll", "totp/confirm", "logout"].includes(endpoint)) {
     return error(response, 404, "NOT_FOUND");
   }
   if (request.headers.origin !== publicOrigin || !csrfToken || request.headers["x-csrf-token"] !== csrfToken) {
@@ -123,9 +153,21 @@ createServer(async (request, response) => {
       failNextLogout = false;
       return error(response, 503, "AUTH_UNAVAILABLE");
     }
-    sessionIds.delete(sessionId);
+    sessions.delete(sessionId);
     response.writeHead(204, { "Set-Cookie": [sessionName, csrfName].map((name) => `${cookie(name, "")}; Max-Age=0`) });
     return response.end();
+  }
+
+  if (endpoint === "totp/enroll" || endpoint === "totp/confirm") {
+    if (!session) return error(response, 401, "UNAUTHENTICATED");
+    if (csrfToken !== `ses.${sessionId}`) return error(response, 403, "CSRF_FAILED");
+  }
+  if (endpoint === "totp/enroll") {
+    const account = accountRows.get(session.phone);
+    if (account.totpEnabled) return error(response, 409, "TOTP_ALREADY_ENROLLED");
+    account.pending = true;
+    const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    return json(response, 200, { secret, otpauthUri: `otpauth://totp/Tradeo:Fixture?secret=${secret}&issuer=Tradeo`, expiresAt: after(10) });
   }
 
   const chunks = [];
@@ -140,23 +182,40 @@ createServer(async (request, response) => {
   if (endpoint === "otp/request") {
     if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
     if (body.phone === "+919876543212") return error(response, 503, "OTP_DELIVERY_UNAVAILABLE");
-    if (!/^\+91987654321[0345]$/.test(body.phone)) return error(response, 422, "VALIDATION_ERROR");
+    if (!/^\+91987654321[034589]$/.test(body.phone)) return error(response, 422, "VALIDATION_ERROR");
+    const channel = body.channel ?? "sms";
+    if (body.phone === registrationNumber && channel !== "email") return error(response, 400, "INVALID_REQUEST");
     const requests = otpRequestsByIp.get(clientIp) ?? 0;
     if (requests >= 2) return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
     otpRequestsByIp.set(clientIp, requests + 1);
     const challengeId = randomUUID();
-    challenges.set(challengeId, csrfToken);
-    return json(response, 202, { challengeId, expiresAt: sessionDates.idleExpiresAt, resendAvailableAt: sessionDates.idleExpiresAt });
+    challenges.set(challengeId, { csrfToken, phone: body.phone });
+    return json(response, 202, { challengeId, channel, expiresAt: after(5), resendAvailableAt: after(0) });
   }
 
-  if (challenges.get(body.challengeId) !== csrfToken || body.code !== "842615") {
-    return error(response, 401, "INVALID_OTP");
+  if (endpoint === "otp/verify") {
+    const challenge = challenges.get(body.challengeId);
+    const account = challenge ? accountRows.get(challenge.phone) : undefined;
+    if (!account || account.totpEnabled || challenge.csrfToken !== csrfToken || body.code !== "842615") return error(response, 401, "INVALID_OTP");
+    challenges.delete(body.challengeId);
+    return startSession(response, challenge.phone, sessionId, false);
   }
-  challenges.delete(body.challengeId);
-  const newSessionId = randomUUID();
-  sessionIds.add(newSessionId);
-  const token = `ses.${newSessionId}`;
-  return json(response, 200, { user, session: sessionDates, csrfToken: token }, {
-    "Set-Cookie": [cookie(sessionName, newSessionId), cookie(csrfName, token)],
-  });
+  if (endpoint === "totp/confirm") {
+    const account = accountRows.get(session.phone);
+    if (!account.pending) return error(response, 409, "TOTP_NOT_PENDING");
+    if (body.code !== "615408") return error(response, 422, "INVALID_TOTP");
+    account.pending = false;
+    account.totpEnabled = true;
+    account.lastCode = body.code;
+    session.stepUpUntil = after(10);
+    return json(response, 200, { totpEnabled: true, stepUpUntil: session.stepUpUntil });
+  }
+  if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+  const account = accountRows.get(body.phone);
+  const valid = body.phone === returningNumber ? body.code === "728391" : ["615408", "615409"].includes(body.code);
+  if (!csrfToken.startsWith("pre.") || !account?.totpEnabled || !valid || body.code === account.lastCode) {
+    return error(response, 401, "INVALID_CREDENTIALS");
+  }
+  account.lastCode = body.code;
+  return startSession(response, body.phone, sessionId, true);
 }).listen(3102, "127.0.0.1");

@@ -13,6 +13,8 @@ from pathlib import Path
 
 @dataclass
 class TestResult:
+    __test__ = False  # not a pytest test class
+
     source: str  # which junit file / suite group
     nodeid: str
     outcome: str  # passed | failed | error | skipped | blocked

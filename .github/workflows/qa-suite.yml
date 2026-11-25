@@ -87,7 +87,7 @@ jobs:
           POSTGRES_PASSWORD: ci-only-not-secret
           POSTGRES_DB: tradeo_test
         ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U tradeo" --health-interval 5s --health-retries 20
+        options: --health-cmd "pg_isready -U tradeo -d tradeo_test" --health-interval 5s --health-retries 20
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]
@@ -141,7 +141,7 @@ jobs:
           POSTGRES_PASSWORD: ci-only-not-secret
           POSTGRES_DB: qa_tradeo
         ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U tradeo" --health-interval 5s --health-retries 20
+        options: --health-cmd "pg_isready -U tradeo -d qa_tradeo" --health-interval 5s --health-retries 20
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]

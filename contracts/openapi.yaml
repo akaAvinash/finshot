@@ -204,10 +204,10 @@ tags:
         replaces the CSRF cookie. The pre-login token and any earlier session
         identifier stop working. Clients must use the returned token for their
         next write.
-      - `login/totp` follows the same rule as `otp/verify`: it needs a
-        `pre_login` token, creates a new session and a new `session` token
-        bound to it, returns that token in the body and replaces the CSRF
-        cookie.
+      - `login/totp` and `login/recovery` follow the same rule as
+        `otp/verify`: they need a `pre_login` token, create a new session and
+        a new `session` token bound to it, return that token in the body and
+        replace the CSRF cookie.
       - `logout` and `logout-all` revoke the session; the old `session` token
         is invalid from then on. Both cookies are cleared.
       - `logout` requires a `session` token when the request has a valid
@@ -263,8 +263,10 @@ tags:
       6 digits, 30-second steps, one step of clock skew either way. A code is
       accepted once: replaying the same code (same time step) is rejected. The
       secret is shown once, at enrolment, and stored encrypted on the server.
-      There are no recovery codes: the owner resets a lost authenticator with
-      a server-side command.
+      Recovery codes (`regenerateRecoveryCodes`, `loginWithRecoveryCode`) let
+      a person who lost the authenticator sign in once and enrol a new one. If
+      they have none left, the owner resets the authenticator with a
+      server-side command.
 
       **Step-up.** A sensitive action (named in the operation that needs it)
       requires the caller to have proved a current TOTP code recently.
@@ -534,6 +536,62 @@ paths:
           $ref: '#/components/responses/AuthCsrfFailed'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/login/recovery:
+    post:
+      operationId: loginWithRecoveryCode
+      tags: [Auth]
+      summary: Sign in with a recovery code
+      description: >
+        For an invited account with an active authenticator whose owner lost
+        it: the phone number and one unused recovery code start a session,
+        exactly like `verifyOtp` (two separate `Set-Cookie` fields, session
+        then CSRF, and a new session-bound `csrfToken` in the body). The code
+        is spent, and the authenticator and every remaining recovery code of
+        the account are removed in the same step, so the account is back to
+        having no authenticator (`session.totpEnabled` is false and the step-up
+        window is closed). The new session is fresh enough to call
+        `enrollTotp` right away; the client then enrols a new authenticator and
+        creates a new set of recovery codes. The action is recorded in the
+        audit log without the code. A wrong, used or replaced code, a number
+        that is not invited or has no account, and an account without an
+        active authenticator all return the same `401 INVALID_CREDENTIALS`
+        with no other difference in the response. Failures are throttled per
+        phone number and per IP address (`429 RATE_LIMITED`), equally for
+        every well-formed number. A request must arrive with a `pre_login`
+        CSRF token (see the Auth tag).
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryLogin'
+      responses:
+        '200':
+          description: Signed in. Two `Set-Cookie` fields are sent.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookieLogin'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpVerifyResponse'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          description: The phone number and code do not match an account that can sign in this way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+              example:
+                code: INVALID_CREDENTIALS
+                message: The phone number or code is not valid.
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
   /api/v1/auth/totp/enroll:
     post:
       operationId: enrollTotp
@@ -639,6 +697,39 @@ paths:
           $ref: '#/components/responses/AuthTotpNotEnrolled'
         '422':
           $ref: '#/components/responses/AuthInvalidTotp'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/totp/recovery-codes:
+    post:
+      operationId: regenerateRecoveryCodes
+      tags: [Step-up]
+      summary: Create a new set of recovery codes
+      description: |
+        For an account with an active authenticator. Creates ten single-use
+        recovery codes, returns them once, and invalidates every earlier code
+        of the account, used or not. The server keeps only a keyed digest of
+        each code, so a lost list cannot be shown again; create a new set
+        instead. The request has no body.
+
+        The session must be stepped up (`session.stepUpUntil` in the future),
+        otherwise the call returns `403 STEP_UP_REQUIRED` and nothing changes.
+        The action is recorded in the audit log without the codes.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: The new codes. They are not shown again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodes'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthStepUpOrCsrf'
+        '409':
+          $ref: '#/components/responses/AuthTotpNotEnrolled'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
   /api/v1/auth/totp/disable:
@@ -1986,6 +2077,33 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: The current six-digit code from the authenticator app.
+    RecoveryLogin:
+      type: object
+      required: [phone, recoveryCode]
+      additionalProperties: false
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        recoveryCode:
+          type: string
+          pattern: '^[A-Z2-7]{5}-[A-Z2-7]{5}$'
+          description: One recovery code exactly as shown (upper case, one hyphen).
+    RecoveryCodes:
+      type: object
+      required: [codes, createdAt]
+      additionalProperties: false
+      properties:
+        codes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: '^[A-Z2-7]{5}-[A-Z2-7]{5}$'
+          description: Ten single-use codes (50 bits each). Shown once. Never logged.
+        createdAt:
+          type: string
+          format: date-time
     TotpEnrollment:
       type: object
       required: [secret, otpauthUri, expiresAt]

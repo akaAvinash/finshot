@@ -214,6 +214,41 @@ tags:
       header. The numeric limits are server configuration, not part of this
       contract. The contract does fix: an OTP lives at most 5 minutes, is
       single use, and allows at most 5 verification attempts per challenge.
+  - name: Step-up
+    description: |
+      Authenticator-app (TOTP) enrolment and step-up for sensitive actions.
+      Regular sign-in is unchanged: phone OTP, then a server-side session.
+
+      **Invite-only.** Only invited phone numbers can start a session. There is
+      no sign-up endpoint and no admin role: the owner invites a number with a
+      server-side command, outside this API. `requestOtp` answers every
+      well-formed number the same way (`202`), invited or not, and sends a code
+      only to an invited number, so it cannot be used to discover who is
+      invited or to spend SMS. An uninvited number can never complete
+      `verifyOtp` (`401 INVALID_OTP`). Existing accounts stay invited.
+
+      **TOTP.** [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238): HMAC-SHA-1,
+      6 digits, 30-second steps, one step of clock skew either way. A code is
+      accepted once: replaying the same code (same time step) is rejected. The
+      secret is shown once, at enrolment, and stored encrypted on the server.
+      There are no recovery codes: the owner resets a lost authenticator with
+      a server-side command.
+
+      **Step-up.** A sensitive action (named in the operation that needs it)
+      requires the caller to have proved a current TOTP code recently.
+      `POST /api/v1/auth/step-up` records that on the caller's session for a
+      short window (at most 15 minutes, server-configured, never past the
+      session's own expiry); `stepUpUntil` reports it. An operation that needs
+      step-up returns `403 STEP_UP_REQUIRED` when the window is closed, before
+      it changes anything. The window belongs to one session: signing out or
+      revoking the session ends it. No operation requires step-up yet; the
+      Settings contract names the first ones.
+
+      **Rate limits.** Wrong codes count per user and per IP. Exceeding the
+      limit returns `429 RATE_LIMITED`, as in the Auth tag.
+
+      **Passkeys.** A WebAuthn module is planned behind a server-side
+      interface. It adds no endpoint yet and nothing here depends on it.
 paths:
   /api/v1/market/instruments:
     get:
@@ -323,13 +358,23 @@ paths:
       tags: [Auth]
       summary: Send a one-time code to a phone number
       description: >
-        Creates a challenge and asks the SMS provider to deliver a random
-        six-digit code. The response is identical for every well-formed phone
-        number, whether or not an account exists, so it cannot be used to
-        discover accounts. Codes are never returned by this API and never
-        written to application or shared logs. In local development only, a
-        separately enabled console provider can display the code outside the
-        application logs.
+        Creates a challenge and asks the delivery provider to send a random
+        six-digit code by `channel` (SMS by default, or email to the address
+        on file). The response is identical for every well-formed phone
+        number, whether or not the number is invited or has an account, and
+        whether or not the account has an email on file, so it cannot be used
+        to discover accounts or invites. A code is sent only to an invited
+        number (see the Step-up tag); for any other number the challenge can
+        never be completed and nothing is sent or spent. Codes are never
+        returned by this API and never written to application or shared logs.
+        Outside production, a mock provider (development and automated tests)
+        or a staging provider (server-side file, read by the operator over
+        SSH) can stand in for real delivery; production never falls back to
+        either. A code lives at most 5 minutes, and a number can ask for a new
+        one after `resendAvailableAt` (60 seconds). If delivery is unavailable
+        (no provider configured, or a daily delivery limit reached), every
+        well-formed number gets the same `503`, decided before the invite is
+        looked at, so the failure cannot reveal who is invited.
       security:
         - csrfHeader: []
       requestBody:
@@ -399,6 +444,147 @@ paths:
                 message: The code is invalid or has expired.
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/totp/enroll:
+    post:
+      operationId: enrollTotp
+      tags: [Step-up]
+      summary: Start authenticator-app enrolment
+      description: |
+        Creates a pending TOTP secret for the caller and returns it once, as
+        text and as an `otpauth://` URI for a QR code. The secret is not active
+        until `confirmTotp` succeeds. Calling again while a secret is pending
+        replaces it. The request has no body.
+
+        The session must have signed in within the last 15 minutes (the
+        session's `createdAt`); otherwise the call returns `403
+        STEP_UP_REQUIRED` and the caller signs in again first. This stops a
+        stolen idle session from enrolling an attacker's authenticator.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: A pending secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrollment'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthStepUpOrCsrf'
+        '409':
+          $ref: '#/components/responses/AuthTotpAlreadyEnrolled'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/totp/confirm:
+    post:
+      operationId: confirmTotp
+      tags: [Step-up]
+      summary: Activate authenticator-app enrolment
+      description: |
+        Activates the pending secret when `code` is a valid current code from
+        the authenticator. On success the caller's session is also stepped up
+        (`stepUpUntil` is set), because the caller just proved the factor.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCode'
+      responses:
+        '200':
+          description: TOTP is active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepUpResult'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '409':
+          $ref: '#/components/responses/AuthTotpNotPending'
+        '422':
+          $ref: '#/components/responses/AuthInvalidTotp'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/step-up:
+    post:
+      operationId: stepUp
+      tags: [Step-up]
+      summary: Prove a current authenticator code on this session
+      description: |
+        Verifies `code` against the caller's active TOTP secret and opens the
+        step-up window on the caller's session. Only the calling session is
+        affected. Wrong codes do not open the window.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCode'
+      responses:
+        '200':
+          description: The step-up window is open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepUpResult'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '409':
+          $ref: '#/components/responses/AuthTotpNotEnrolled'
+        '422':
+          $ref: '#/components/responses/AuthInvalidTotp'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+  /api/v1/auth/totp/disable:
+    post:
+      operationId: disableTotp
+      tags: [Step-up]
+      summary: Remove the authenticator
+      description: |
+        Removes the caller's TOTP secret when `code` is a valid current code,
+        and closes the step-up window on every session of the caller. The
+        action is recorded in the audit log. After it, step-up is unavailable
+        until the caller enrols again.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCode'
+      responses:
+        '204':
+          description: TOTP was removed.
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '409':
+          $ref: '#/components/responses/AuthTotpNotEnrolled'
+        '422':
+          $ref: '#/components/responses/AuthInvalidTotp'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
   /api/v1/auth/me:
@@ -1509,13 +1695,23 @@ components:
       properties:
         phone:
           $ref: '#/components/schemas/Phone'
+        channel:
+          enum: [sms, email]
+          default: sms
+          description: >
+            Where to deliver the code. `email` goes to the address on file for
+            an invited account; if there is none, nothing is sent and the
+            response is the same.
     OtpChallenge:
       type: object
-      required: [challengeId, expiresAt, resendAvailableAt]
+      required: [challengeId, channel, expiresAt, resendAvailableAt]
       properties:
         challengeId:
           type: string
           format: uuid
+        channel:
+          enum: [sms, email]
+          description: The channel that was asked for, echoed back.
         expiresAt:
           type: string
           format: date-time
@@ -1537,7 +1733,7 @@ components:
           pattern: '^[0-9]{6}$'
     AuthUser:
       type: object
-      required: [id, phoneMasked, displayName, createdAt]
+      required: [id, phoneMasked, displayName, createdAt, totpEnabled]
       properties:
         id:
           type: string
@@ -1551,9 +1747,12 @@ components:
         createdAt:
           type: string
           format: date-time
+        totpEnabled:
+          type: boolean
+          description: Whether an authenticator app is active for this account.
     SessionExpiry:
       type: object
-      required: [idleExpiresAt, expiresAt]
+      required: [idleExpiresAt, expiresAt, stepUpUntil]
       properties:
         idleExpiresAt:
           type: string
@@ -1563,6 +1762,10 @@ components:
           type: string
           format: date-time
           description: Absolute end of the session.
+        stepUpUntil:
+          type: [string, 'null']
+          format: date-time
+          description: End of the step-up window on this session, or null when it is closed (see the Step-up tag).
     AuthSession:
       type: object
       required: [user, session]
@@ -1587,6 +1790,43 @@ components:
             New `session` CSRF token bound to the session just created. It
             replaces the pre-login token, which stops working. Required: the
             client must send this value as `X-CSRF-Token` on its next write.
+    TotpCode:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: The current six-digit code from the authenticator app.
+    TotpEnrollment:
+      type: object
+      required: [secret, otpauthUri, expiresAt]
+      additionalProperties: false
+      properties:
+        secret:
+          type: string
+          pattern: '^[A-Z2-7]{32}$'
+          description: Base32 secret (160 bits). Shown once. Never logged.
+        otpauthUri:
+          type: string
+          minLength: 1
+          description: '`otpauth://totp/...` URI carrying the same secret, for a QR code.'
+        expiresAt:
+          type: string
+          format: date-time
+          description: The pending secret stops being confirmable at this time (15 minutes after creation).
+    StepUpResult:
+      type: object
+      required: [totpEnabled, stepUpUntil]
+      additionalProperties: false
+      properties:
+        totpEnabled:
+          const: true
+        stepUpUntil:
+          type: string
+          format: date-time
+          description: End of the step-up window on this session.
     SessionSummary:
       type: object
       required: [id, deviceLabel, createdAt, lastSeenAt, expiresAt, current]
@@ -1630,6 +1870,11 @@ components:
             - CSRF_FAILED
             - RATE_LIMITED
             - OTP_DELIVERY_UNAVAILABLE
+            - STEP_UP_REQUIRED
+            - INVALID_TOTP
+            - TOTP_NOT_ENROLLED
+            - TOTP_ALREADY_ENROLLED
+            - TOTP_NOT_PENDING
             - INTERNAL_ERROR
         message:
           type: string
@@ -3331,7 +3576,12 @@ components:
             message: Too many attempts. Try again later.
             retryAfterSeconds: 60
     AuthOtpDeliveryUnavailable:
-      description: The SMS provider is unavailable. No code was sent and the client may retry.
+      description: >
+        Delivery is unavailable: the provider is down or misconfigured, or the
+        daily delivery limit is reached. No code was sent and the client may
+        retry. Availability is decided before invitation, so a missing
+        provider or a reached limit answers every well-formed number with
+        this same response; it never depends on whether the number is invited.
       content:
         application/json:
           schema:
@@ -3663,3 +3913,57 @@ components:
           example:
             code: ALERTS_UNAVAILABLE
             message: Alerts are temporarily unavailable. Try again shortly.
+    AuthStepUpOrCsrf:
+      description: >
+        `STEP_UP_REQUIRED`: the session did not sign in recently enough, or the
+        step-up window is closed. `CSRF_FAILED`: the CSRF token is missing or
+        wrong, or the Origin header does not match.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            stepUp:
+              value:
+                code: STEP_UP_REQUIRED
+                message: Confirm with your authenticator, or sign in again, to continue.
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    AuthTotpAlreadyEnrolled:
+      description: An authenticator is already active. Remove it first.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: TOTP_ALREADY_ENROLLED
+            message: An authenticator is already set up.
+    AuthTotpNotPending:
+      description: There is no pending enrolment, or it has expired. Start again.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: TOTP_NOT_PENDING
+            message: Start the authenticator setup again.
+    AuthTotpNotEnrolled:
+      description: No authenticator is active for this account.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: TOTP_NOT_ENROLLED
+            message: Set up an authenticator first.
+    AuthInvalidTotp:
+      description: The code is wrong, expired or already used.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: INVALID_TOTP
+            message: The code is invalid or has expired.

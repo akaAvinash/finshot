@@ -111,7 +111,9 @@ one `0012` (`0012_recovery_codes`).
    `20261124T011242Z` (10,277 bytes).
 2. Take a fresh `pg_dump` before any new upgrade. The 14:35 dump predates any
    data created since.
-3. To roll back: stop api and workers, restore the dump, redeploy the recorded
+3. To roll back: stop api and workers, take a fresh `pg_dump` of the current
+   database (restoring replaces it, so rows written since the 14:35 dump would
+   otherwise be lost), restore the pre-upgrade dump, redeploy the recorded
    release directory, run the read-only `./ops` checks.
 4. The running API image is tagged `tradeo-staging-api:rollback-c700c7e`
    (2026-11-25), so the next upgrade has an image to roll back to.

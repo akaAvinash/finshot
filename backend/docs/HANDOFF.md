@@ -69,6 +69,7 @@ and live trading.
    then, and the demo confirmation code is never accepted by the API.
 4. Staging upgrade: done 2026-11-25. Staging runs main `e2c7b0e`'s code at
    migration `0012` (TRAD-6, `backend/docs/STAGING_HANDOFF.md`). Rollback:
+   stop the API and workers, take a fresh `pg_dump` of the current database,
    restore the pre-upgrade dump, then redeploy the previous release directory
    `~/tradeo-staging/repo-8c8e08a`. Never put `repo-8c8e08a` back without the
    dump: its different `0012` migration would be skipped. The running API image

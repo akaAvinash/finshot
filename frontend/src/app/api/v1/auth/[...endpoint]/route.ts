@@ -40,7 +40,7 @@ async function proxy(request: NextRequest, context: Context) {
       }
       headers.set("Origin", origin);
       headers.set("X-CSRF-Token", csrfToken);
-      const acceptsBody = endpoint !== "logout" && endpoint !== "totp/enroll";
+      const acceptsBody = endpoint !== "logout" && endpoint !== "totp/enroll" && endpoint !== "totp/recovery-codes";
       if (acceptsBody && !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
         return errorResponse(415, "UNSUPPORTED_MEDIA_TYPE", "Send a JSON request.");
       }

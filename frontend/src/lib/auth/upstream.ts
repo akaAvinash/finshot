@@ -8,8 +8,11 @@ export const authEndpoints = {
   me: "GET",
   "otp/request": "POST",
   "otp/verify": "POST",
+  "login/totp": "POST",
+  "login/recovery": "POST",
   "totp/enroll": "POST",
   "totp/confirm": "POST",
+  "totp/recovery-codes": "POST",
   logout: "POST",
 } as const;
 

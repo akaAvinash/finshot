@@ -586,3 +586,57 @@ def test_recording_one_occurrence_twice_keeps_one_alert(client: TestClient) -> N
         _db(), "SELECT count(*) AS n FROM alerts WHERE dedupe_key = 'paper-halted:retry'"
     )
     assert rows == [{"n": 1}]
+
+
+def test_worker_records_a_batch_of_occurrences(client: TestClient, clock: FakeClock) -> None:
+    """Two expired connections and two mismatch events in one pass all persist;
+    a retry records nothing."""
+    browser = signed_in(client)
+    uid = user_id(browser)
+    for provider in ("zerodha", "fyers"):
+        response = browser.post(f"{BROKERS}/{provider}/actions", json={"action": "connect"})
+        assert response.status_code == 200, response.text
+    for key in ("m1", "m2"):
+        db_rows(
+            _db(),
+            "INSERT INTO agent_events (user_id, agent_id, dedupe_key, reason_code, severity,"
+            " message, data_as_of, created_at) VALUES (:u, 'execution-monitor', :k,"
+            " 'RECONCILIATION_MISMATCH', 'warning', 'The ledger does not match.', now(), now())",
+            u=uid,
+            k=key,
+        )
+    clock.advance(8 * 3600)
+    assert worker(client) == 4
+    assert worker(client) == 0
+    rows = db_rows(_db(), "SELECT count(DISTINCT id) AS n FROM alerts WHERE kind <> 'NEW_SIGN_IN'")
+    assert rows == [{"n": 4}]
+
+
+def test_an_alert_rolls_back_with_its_source_transaction(client: TestClient) -> None:
+    from app.alerts import producer
+
+    browser = signed_in(client)
+    uid = uuid.UUID(user_id(browser))
+    factory = client.app.state.session_factory  # type: ignore[attr-defined]
+    at = FakeClock()()
+
+    async def record(fail: bool) -> None:
+        async with factory() as db, db.begin():
+            await producer.record(
+                db,
+                user_id=uid,
+                kind="PAPER_ENGINE_HALTED",
+                dedupe_key="paper-halted:rollback",
+                message="Kill switch.",
+                at=at,
+            )
+            if fail:
+                raise RuntimeError("the source change failed")
+
+    count = "SELECT count(*) AS n FROM alerts WHERE dedupe_key = 'paper-halted:rollback'"
+    assert client.portal is not None
+    with pytest.raises(RuntimeError):
+        client.portal.call(record, True)
+    assert db_rows(_db(), count) == [{"n": 0}]
+    client.portal.call(record, False)
+    assert db_rows(_db(), count) == [{"n": 1}]

@@ -95,8 +95,11 @@ and live trading.
 - Preferences hide `warning`/`info` at read time (never `critical`); cursors
   embed a fingerprint of filters and preferences. Email, SMS and push are
   reported unavailable.
-- No backfill: activity before `0009` raises no alert, except broker
-  connections already expired (the worker's first pass). No stale-market
+- No backfill of producer activity: activity before `0009` raises no alert.
+  Exceptions, both on the worker's first pass: broker connections already
+  expired, and every existing execution-monitor `RECONCILIATION_MISMATCH`
+  event that has no alert yet (each alert's `occurredAt` is the event's
+  original time). No stale-market
   alert: there is no live feed.
 
 ## Advisory agents (E1) notes

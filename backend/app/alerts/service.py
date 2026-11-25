@@ -283,15 +283,19 @@ class AlertService:
             now = self._clock()
             expired = await db.execute(
                 insert(Alert)
+                # include_defaults=False: the id and seq come from the server
+                # defaults, once per row. The Python uuid default would be one
+                # value for the whole statement.
                 .from_select(
                     _COLUMNS,
                     _expired_connections(now),
+                    include_defaults=False,
                 )
                 .on_conflict_do_nothing(constraint="uq_alerts_dedupe")
             )
             mismatches = await db.execute(
                 insert(Alert)
-                .from_select(_COLUMNS, _reconciliation_mismatches(now))
+                .from_select(_COLUMNS, _reconciliation_mismatches(now), include_defaults=False)
                 .on_conflict_do_nothing(constraint="uq_alerts_dedupe")
             )
         return int(expired.rowcount or 0) + int(mismatches.rowcount or 0)  # type: ignore[attr-defined]

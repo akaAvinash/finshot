@@ -42,8 +42,18 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.12" }
+      - name: Bootstrap report tooling (only when the base branch has none yet)
+        if: github.event_name == 'pull_request'
+        env: { HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
+        run: |
+          # The PR that introduces qa/ has no trusted tooling on its base. Take only qa/ from the
+          # PR head in that one case (read-only token, no secrets) and say so in the summary.
+          if [ ! -f qa/ai_agent/supervisor.py ]; then
+            git fetch --no-tags origin "$HEAD_SHA"
+            git checkout "$HEAD_SHA" -- qa
+            echo "> Bootstrap: report tooling taken from the PR head because the base has no qa/ yet." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - run: python -m pip install -r qa/requirements-report.txt
-        # On the first PR that adds qa/ the base has no tooling; the gate then fails closed.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: junit-*
@@ -62,6 +72,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           shopt -s nullglob globstar
+          rc=0
           files=(results/**/*.xml)
           python -m qa.ai_agent.supervisor \
             --junit "${files[@]:-/dev/null}" \
@@ -73,10 +84,9 @@ jobs:
             $( [ -f changed.txt ] && echo --changed-files changed.txt ) \
             --environment "GitHub-hosted ubuntu-latest, Postgres 16 + Redis 7 service containers" \
             --run-url "$RUN_URL" --no-ai --fail-on-ineligible \
-            --title "Tradeo QA: ${PR:+PR #$PR}${PR:-main}"
-          rc=$?
-          cat report/qa-summary.md >> "$GITHUB_STEP_SUMMARY"
-          exit $rc
+            --title "Tradeo QA: ${PR:+PR #$PR}${PR:-main}" || rc=$?
+          if [ -f report/qa-summary.md ]; then cat report/qa-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit "$rc"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

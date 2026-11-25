@@ -50,6 +50,15 @@ through the tailnet origin at 2026-11-25 18:44 UTC, signed out:
 `reports/paper`, `alerts` all 401 (previously 404). `/health/*` stays
 unreachable from outside by design; probe it inside the host.
 
+Signed-in run through the tailnet origin, 2026-11-25 18:44 UTC, from the owner's
+PC (`STAGING_BASE_URL=https://homelab.tail14603a.ts.net:8446`): 8 PASS and 2
+FAIL. The 2 FAILs are `/health/live` and `/health/ready` (404 from outside, as
+expected). PASS: `market/overview` (`source=demo`, 12 quotes),
+`market/instruments` (12), `auth/me`, `brokers/preview` (`status=ready`,
+2 connections), `strategies/preview` (`status=ready`, 0 strategies),
+`auto-trading/paper` and `reports/paper` (both `status=empty`, no strategy
+assigned), `alerts` (3 items).
+
 The API publishes no host port, so run the smoke script inside the API
 container. Unauthenticated run, 2026-11-25 (script fed on stdin, GET only):
 

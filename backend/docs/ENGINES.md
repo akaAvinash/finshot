@@ -75,14 +75,20 @@ flowchart LR
   PT --> SR
   PT --> TE
   TE --> RM
+  PT -.->|Risk.Denied, Risk.LimitReached| RM
   PP -.->|Paper.FillRecorded| PT
+  PP -.->|Execution.OrderFilled| TE
   PP -.->|Broker.AccountSnapshot| UB
   OR --> MI
   OR --> SR
   OR --> PT
+  OR -.->|MarketData.Stale| MD
+  OR -.->|Portfolio.Mismatch| PP
 ```
 
-Dotted lines are event consumption, solid lines are interface calls. Both count as
+Dotted lines are event consumption, solid lines are interface calls. The diagram
+shows every consumer listed in the section 4 event table, except consumption by
+Alerts (a platform module, not an engine). Both kinds of line count as
 dependencies (rule 3). Nothing points back at an engine that reaches it, so the
 graph is acyclic. Two choices keep it that way:
 
@@ -93,7 +99,7 @@ graph is acyclic. Two choices keep it that way:
 - **Risk does not call Market Data or Portfolio.** Paper Trading builds the
   exposure snapshot from its own virtual account state and passes it, with a
   market snapshot, through Execution to Risk. Risk checks the `asOf` stamps (rule
-  4). Portfolio only reads fills and broker snapshots; nothing gates on it.
+  4). Portfolio only consumes fill, execution and broker events; nothing gates on it.
 
 Consequence to review (section 5, question 6): when real broker positions exist,
 the exposure snapshot used for gating must also include them, so the caller that
@@ -171,10 +177,14 @@ These need an owner decision before downstream implementation.
    `contracts/openapi.yaml`, changed only by a separate contract PR.
 6. **Exposure for gating.** Today only paper state exists, so Paper Trading can
    supply the exposure snapshot. With real broker data (gate G3 and later) the
-   snapshot must include broker positions. Decide then whether Execution reads
-   Universal Broker directly (adds an edge, still acyclic) or Portfolio supplies a
-   reconciled snapshot (adds Execution to Portfolio and needs Portfolio to stop
-   depending on Paper).
+   snapshot must include broker positions. Decide then between two options, both
+   acyclic: (a) Execution reads Universal Broker directly (adds Execution to
+   Universal Broker), or (b) Orchestration, or another caller above Execution,
+   builds the snapshot from Paper Trading and Universal Broker and passes it in.
+   Portfolio is **not** an option: it consumes Paper and Execution events, so
+   Execution reading Portfolio would create Execution to Portfolio to Execution
+   (and to Paper and back). Making it work would mean Portfolio stops consuming
+   those events, which removes its purpose.
 
 ## 6. Review record
 

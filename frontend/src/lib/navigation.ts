@@ -10,7 +10,6 @@ export const agentsRoute = { slug: "agents", title: "Agents", icon: Network };
 export const alertsRoute = { slug: "alerts", title: "Alerts", icon: Bell };
 export const settingsRoute = { slug: "settings", title: "Settings", icon: Settings };
 
-const reportsSection = { slug: "reports", title: "Reports", icon: ClipboardList, description: "Profit and loss, trade history and performance reports.", empty: "There are no reports to export in this preview." } as const;
+export const reportsRoute = { slug: "reports", title: "Reports", icon: ClipboardList };
 
-export const sections = [reportsSection];
-export const workspaceRoutes = [dashboardRoute, marketRoute, autoTradingRoute, brokersRoute, strategiesRoute, backtestingRoute, reportsSection, agentsRoute, alertsRoute, settingsRoute];
+export const workspaceRoutes = [dashboardRoute, marketRoute, autoTradingRoute, brokersRoute, strategiesRoute, backtestingRoute, reportsRoute, agentsRoute, alertsRoute, settingsRoute];

@@ -34,7 +34,7 @@ test("protects routes and supports demo OTP validation, change number, and sign-
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test("renders the chart and all placeholder routes, with persistent dark and light themes", async ({ page }) => {
+test("renders the chart and workspace routes with persistent dark and light themes", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await openDashboard(page);
@@ -52,7 +52,7 @@ test("renders the chart and all placeholder routes, with persistent dark and lig
   const reports = nav.getByRole("link", { name: "Reports", exact: true });
   await reports.click();
   await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
-  await expect(page.getByText("Placeholder", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Trade journal" })).toBeVisible();
   await expect(reports).toHaveAttribute("aria-current", "page");
 
   await page.getByRole("link", { name: "Open alerts" }).click();

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
+import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
 
 const publicOrigin = "http://127.0.0.1:3101";
 const sessionName = "__Host-tradeo_session";
@@ -10,6 +11,7 @@ const sessionIds = new Set();
 const challenges = new Map();
 const otpRequestsByIp = new Map();
 let failNextLogout = false;
+let reportMode = "ready";
 const user = { id: randomUUID(), phoneMasked: "+91******3210", displayName: null, createdAt: "2026-11-25T00:00:00Z" };
 const sessionDates = { idleExpiresAt: "2026-11-25T01:00:00Z", expiresAt: "2026-11-25T12:00:00Z" };
 const ingressToken = process.env.TRADEO_AUTH_INGRESS_TOKEN;
@@ -57,10 +59,17 @@ createServer(async (request, response) => {
     challenges.clear();
     otpRequestsByIp.clear();
     failNextLogout = false;
+    reportMode = "ready";
     return response.writeHead(204).end();
   }
   if (request.method === "POST" && request.url === "/__fixture/fail-next-logout") {
     failNextLogout = true;
+    return response.writeHead(204).end();
+  }
+
+  const url = new URL(request.url, publicOrigin);
+  if (request.method === "POST" && /^\/__fixture\/report\/(ready|empty|unavailable|mismatch|large)$/.test(url.pathname)) {
+    reportMode = url.pathname.split("/").at(-1);
     return response.writeHead(204).end();
   }
 
@@ -70,6 +79,18 @@ createServer(async (request, response) => {
   const signedIn = sessionIds.has(sessionId);
   const csrfToken = cookies[csrfName];
   const clientIp = request.headers["x-forwarded-for"];
+
+  if (request.method === "GET" && ["/api/v1/reports/paper", "/api/v1/reports/paper/trades.csv"].includes(url.pathname)) {
+    if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
+    if (reportMode === "unavailable") return error(response, 503, "REPORTS_UNAVAILABLE");
+    if (Object.keys(cookies).some((name) => name !== sessionName)) return error(response, 400, "UNEXPECTED_HEADERS");
+    const period = { from: url.searchParams.get("from"), to: url.searchParams.get("to") };
+    if (url.pathname.endsWith(".csv")) {
+      response.writeHead(200, { "Content-Type": "text/csv; charset=utf-8" });
+      return response.end(stagingReportCsv(period, reportMode));
+    }
+    return json(response, 200, reportMode === "empty" ? { status: "empty" } : stagingReport(period, reportMode));
+  }
 
   if (Object.keys(cookies).some((name) => name !== sessionName && name !== csrfName) ||
       request.headers["x-tradeo-client-ip"] || request.headers["x-tradeo-ingress-token"] ||

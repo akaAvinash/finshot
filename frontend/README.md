@@ -30,6 +30,20 @@ In **Strategies**, search by name or instrument, filter by status or risk, and s
 
 In **Backtesting**, select a fixture strategy revision, instrument, date range and out-of-sample period. Set starting capital, per-fill fees and slippage, then queue a demo replay. The shared three-session trend rule uses completed daily candles, the selected revision's position size, and subsequent session opens for fills. Review equity, drawdown, performance metrics and closed trades, or export the trades as CSV. Runs reset on reload and cannot approve strategy revisions. The [proposed backtesting preview contract](../contracts/backtesting.openapi.yaml) documents the demo workspace and run states. Production backtests require a separate engine, durable jobs, approved market history and a reviewed fill model.
 
+## Private staging sign-in
+
+The local default is `TRADEO_AUTH_MODE=preview`. To use the [backend auth contract](../contracts/openapi.yaml) from a private staging deployment, configure these variables in the Next.js server environment:
+
+```dotenv
+TRADEO_AUTH_MODE=staging
+TRADEO_API_ORIGIN=http://tradeo-api:8000
+TRADEO_PUBLIC_ORIGIN=https://tradeo-staging.example.internal
+```
+
+Replace the example origins with the private API origin reachable by Next.js and the HTTPS origin visitors use in staging. Configure the backend `PUBLIC_ORIGIN` to match `TRADEO_PUBLIC_ORIGIN` exactly and allow the API origin's host in the backend host allowlist. Keep the upstream on a private network and leave secrets in the backend environment. A loopback HTTP frontend origin is supported for local browser tests.
+
+In staging mode, preview sign-in is disabled. Next.js validates the backend session before serving workspace pages. The browser uses the same-origin auth routes for CSRF, OTP and sign-out. The proxy forwards the backend's Secure, HttpOnly cookies and sends no client-supplied forwarded IP headers, so the backend's per-IP limits treat those requests as coming from the proxy. Workspace data is still labeled as a preview. A backend-approved staging OTP delivery setup is required for successful sign-in.
+
 ## Verification
 
 ```sh
@@ -39,9 +53,10 @@ npm test
 npm run build
 npx playwright install chromium
 npm run test:e2e
+npm run test:e2e:staging
 ```
 
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies and Backtesting screenshots in the ignored `screenshots/` directory.
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. The staging sign-in suite runs that same build at `127.0.0.1:3101` with a local auth fixture at `127.0.0.1:3102`. It tests the actual Next.js proxy, browser cookies and workspace gate without contacting staging or sending SMS. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the preview Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies and Backtesting screenshots in the ignored `screenshots/` directory.
 
 Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
 
@@ -52,6 +67,6 @@ Vitest covers preview validation, API responses, search ranking, candle aggregat
 - `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
 - `public/brand/` contains the provided approved Tradeo raster logo. The UI presents the supplied image in a CSS viewport to trim surrounding padding.
 
-The preview contains only fixture records. Real authentication, broker connections, order execution, live market feeds and AI trading are outside the preview scope.
+The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
 
 The portfolio and Markets charts use [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the attribution.

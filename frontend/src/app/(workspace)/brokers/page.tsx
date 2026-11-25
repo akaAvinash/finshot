@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { Brokers } from "@/components/brokers/brokers";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 export const metadata: Metadata = { title: "Brokers" };
 
 export default async function BrokersPage() {
-  await requirePreviewSession();
+  await requireWorkspaceSession();
   return <Brokers />;
 }

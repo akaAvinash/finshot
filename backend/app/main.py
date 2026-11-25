@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.agents.service import AgentService
+from app.alerts.service import AlertService
 from app.api.router import api_router
 from app.api.routes import health
 from app.auth.crypto import Keys
@@ -117,6 +118,11 @@ def create_app(
             enabled=settings.agents_enabled,
             stale_after_seconds=settings.agent_stale_after_seconds,
         )
+        app.state.alerts = AlertService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.alerts_enabled,
+        )
         workers: list[asyncio.Task[None]] = []
         if settings.backtests_enabled and settings.backtest_worker_enabled:
             workers.append(
@@ -131,6 +137,10 @@ def create_app(
         if settings.agents_enabled and settings.agent_worker_enabled:
             workers.append(
                 asyncio.create_task(app.state.agents.run_worker(settings.agent_worker_poll_seconds))
+            )
+        if settings.alerts_enabled and settings.alert_worker_enabled:
+            workers.append(
+                asyncio.create_task(app.state.alerts.run_worker(settings.alert_worker_poll_seconds))
             )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:

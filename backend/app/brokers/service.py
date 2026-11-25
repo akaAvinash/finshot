@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.alerts import producer as alerts
 from app.auth.models import AuditEvent
 from app.brokers.adapter import PROVIDERS, BrokerAdapter, BrokerId, BrokerUnavailableError
 from app.brokers.models import BrokerConnection, BrokerEvent
@@ -121,7 +122,22 @@ class BrokerService:
                 except TimeoutError:
                     logger.warning("broker_timeout", provider=provider, action=action)
                     raise unavailable() from None
-                db.add(BrokerEvent(user_id=user_id, provider=provider, action=action, at=now))
+                event_id = uuid.uuid4()
+                db.add(
+                    BrokerEvent(
+                        id=event_id, user_id=user_id, provider=provider, action=action, at=now
+                    )
+                )
+                if action == "disconnect":
+                    await alerts.record(
+                        db,
+                        user_id=user_id,
+                        kind="BROKER_DISCONNECTED",
+                        dedupe_key=f"broker-disconnected:{event_id}",
+                        message=f"The demo {provider} connection was disconnected.",
+                        at=now,
+                        link=("broker", provider),
+                    )
                 db.add(
                     AuditEvent(
                         user_id=user_id,

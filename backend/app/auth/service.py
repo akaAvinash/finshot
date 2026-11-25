@@ -19,9 +19,9 @@ from app.alerts import producer as alerts
 from app.auth import csrf as csrf_tokens
 from app.auth.cookies import CSRF_COOKIE, SESSION_COOKIE
 from app.auth.crypto import Keys, constant_time_equal, hmac_hex
-from app.auth.models import AuditEvent, OtpChallenge, User
+from app.auth.models import AuditEvent, Invite, OtpChallenge, TotpCredential, User
 from app.auth.models import Session as SessionRow
-from app.auth.otp import OtpDeliveryError, OtpProvider
+from app.auth.otp import DisabledOtpProvider, OtpDeliveryError, OtpProvider, generate_code
 from app.auth.ratelimit import RateLimiter
 from app.core.config import Settings
 from app.core.errors import ApiError
@@ -48,6 +48,8 @@ class SessionInfo:
     last_seen_at: datetime
     expires_at: datetime
     device_label: str | None
+    totp_enabled: bool = False
+    step_up_until: datetime | None = None
 
 
 def _unauthenticated() -> ApiError:
@@ -60,6 +62,14 @@ def _invalid_otp() -> ApiError:
 
 def _csrf_failed() -> ApiError:
     return ApiError(403, "CSRF_FAILED", "The request could not be verified. Reload and try again.")
+
+
+def _delivery_unavailable() -> ApiError:
+    return ApiError(
+        503,
+        "OTP_DELIVERY_UNAVAILABLE",
+        "We could not send a code right now. Try again shortly.",
+    )
 
 
 def _rate_limited(retry_after: int) -> ApiError:
@@ -115,11 +125,13 @@ class AuthService:
         provider: OtpProvider,
         keys: Keys,
         clock: Clock = utc_now,
+        email_provider: OtpProvider | None = None,
     ) -> None:
         self.settings = settings
         self._factory = session_factory
         self._limiter = limiter
         self._provider = provider
+        self._email_provider = email_provider
         self.keys = keys
         self.clock = clock
 
@@ -249,8 +261,15 @@ class AuthService:
         async with self._factory() as db:
             row = (
                 await db.execute(
-                    select(SessionRow, User)
+                    select(SessionRow, User, TotpCredential.confirmed_at)
                     .join(User, User.id == SessionRow.user_id)
+                    .outerjoin(TotpCredential, TotpCredential.user_id == User.id)
+                    # Revoking an invite ends access at once, even for a session a
+                    # concurrent verification created just before the revocation.
+                    .join(
+                        Invite,
+                        (Invite.phone_e164 == User.phone_e164) & Invite.revoked_at.is_(None),
+                    )
                     .where(
                         SessionRow.session_digest == digest,
                         SessionRow.revoked_at.is_(None),
@@ -262,7 +281,7 @@ class AuthService:
             ).first()
             if row is None:
                 return None
-            sess, user = row
+            sess, user, totp_confirmed_at = row
             last_seen = sess.last_seen_at
             # Throttle writes, but never beyond a quarter of the idle TTL, so a
             # short idle TTL can still be renewed by regular activity.
@@ -288,6 +307,8 @@ class AuthService:
                 last_seen_at=last_seen,
                 expires_at=sess.expires_at,
                 device_label=sess.device_label,
+                totp_enabled=totp_confirmed_at is not None,
+                step_up_until=sess.step_up_until,
             )
 
     def idle_expires_at(self, info: SessionInfo) -> datetime:
@@ -302,6 +323,7 @@ class AuthService:
         request: Request,
         phone: str,
         context_id: str,
+        channel: str = "sms",
     ) -> tuple[uuid.UUID, datetime, datetime]:
         s = self.settings
         ip = self.client_ip(request)
@@ -331,7 +353,18 @@ class AuthService:
 
         now = self.clock()
         challenge_id = uuid.uuid4()
-        code = self._provider.new_code()
+        # Only an invited number gets a delivered code. For anyone else the
+        # challenge is created the same way, with a random code that is never
+        # sent, so the response and the timing do not reveal who is invited
+        # and nothing is spent.
+        # Availability is decided before the invite, so an outage, a missing
+        # provider or a reached cap answers every number the same way (503).
+        if isinstance(self._provider_for(channel), DisabledOtpProvider):
+            raise _delivery_unavailable()
+        destination, provider = await self._delivery_target(phone, channel)
+        deliver = destination is not None and provider is not None
+        await self._enforce_spend_limits(phone, now, count=deliver)
+        code = provider.new_code() if deliver and provider is not None else generate_code()
         expires_at = now + timedelta(seconds=s.otp_ttl_seconds)
         async with self._factory() as db, db.begin():
             # Purge this phone's long-expired challenges (digests must not linger).
@@ -358,21 +391,81 @@ class AuthService:
                 action="otp_requested",
                 user_id=None,
                 resource=f"otp_challenge:{challenge_id}",
-                metadata={"ip_hash": self._ip_hash(ip)},
+                metadata={
+                    "ip_hash": self._ip_hash(ip),
+                    "channel": channel,
+                    "delivery": "attempted" if deliver else "suppressed",
+                },
             )
-        try:
-            await self._provider.deliver(phone, code)
-        except OtpDeliveryError as exc:
-            logger.warning("otp_delivery_failed", reason=str(exc))
-            async with self._factory() as db, db.begin():
-                await db.execute(delete(OtpChallenge).where(OtpChallenge.id == challenge_id))
-            raise ApiError(
-                503,
-                "OTP_DELIVERY_UNAVAILABLE",
-                "We could not send a code right now. Try again shortly.",
-            ) from exc
+        if deliver and destination is not None and provider is not None:
+            try:
+                await provider.deliver(destination, code)
+            except OtpDeliveryError as exc:
+                logger.warning("otp_delivery_failed", reason=str(exc), channel=channel)
+                async with self._factory() as db, db.begin():
+                    await db.execute(delete(OtpChallenge).where(OtpChallenge.id == challenge_id))
+                raise _delivery_unavailable() from exc
         resend_at = now + timedelta(seconds=s.otp_resend_cooldown_seconds)
         return challenge_id, expires_at, resend_at
+
+    async def _delivery_target(
+        self, phone: str, channel: str
+    ) -> tuple[str | None, OtpProvider | None]:
+        """(destination, provider) for an invited number, else (None, None)."""
+        async with self._factory() as db:
+            invite = await db.scalar(
+                select(Invite).where(Invite.phone_e164 == phone, Invite.revoked_at.is_(None))
+            )
+        if invite is None:
+            return None, None
+        if channel == "email":
+            if not invite.email or self._email_provider is None:
+                return None, None
+            return invite.email, self._email_provider
+        return phone, self._provider
+
+    def _provider_for(self, channel: str) -> OtpProvider:
+        if channel == "email":
+            return self._email_provider or DisabledOtpProvider()
+        return self._provider
+
+    async def _enforce_spend_limits(self, phone: str, now: datetime, *, count: bool) -> None:
+        """Per-day delivery caps; a reached cap answers every request the same way.
+
+        The per-phone cap counts every request for that number, invited or not,
+        so an invited number cannot be told apart by when it hits the cap. (A
+        third party can already exhaust a number's request limit; this adds no
+        new lever.) The global cap counts each delivery attempt (including one that then
+        fails at the provider; it is not refunded) and is only checked, without
+        counting, for requests that make no attempt. A request rejected by either cap leaves
+        the global counter unchanged."""
+        s = self.settings
+        day = now.strftime("%Y%m%d")
+        phone_subject = f"{day}:{phone}"
+        if (
+            await self._limiter.exceeded("otp_spend_all", day, s.otp_daily_delivery_limit)
+            is not None
+            or await self._limiter.exceeded(
+                "otp_spend_phone", phone_subject, s.otp_daily_delivery_limit_per_phone
+            )
+            is not None
+        ):
+            logger.warning("otp_spend_limit_reached")
+            raise _delivery_unavailable()
+        if (
+            await self._limiter.hit(
+                "otp_spend_phone", phone_subject, s.otp_daily_delivery_limit_per_phone, 86_400
+            )
+            is not None
+        ):
+            logger.warning("otp_spend_limit_reached", kind="otp_spend_phone")
+            raise _delivery_unavailable()
+        if count and (
+            await self._limiter.hit("otp_spend_all", day, s.otp_daily_delivery_limit, 86_400)
+            is not None
+        ):
+            logger.warning("otp_spend_limit_reached", kind="otp_spend_all")
+            raise _delivery_unavailable()
 
     async def verify_otp(
         self,
@@ -444,6 +537,15 @@ class AuthService:
         expires_at = now + timedelta(seconds=s.session_absolute_ttl_seconds)
         label = device_label_from_user_agent(request.headers.get("user-agent"))
         async with self._factory() as db, db.begin():
+            # Access is the invite list: a revoked or missing invite cannot sign in,
+            # even with a valid code.
+            invited = await db.scalar(
+                select(Invite.phone_e164).where(
+                    Invite.phone_e164 == phone, Invite.revoked_at.is_(None)
+                )
+            )
+            if invited is None:
+                raise _invalid_otp()
             # Single use: whoever flips consumed_at wins; a concurrent verify loses.
             consumed = await db.scalar(
                 update(OtpChallenge)
@@ -478,6 +580,12 @@ class AuthService:
             ).one()
             if user_row.status != "active":
                 raise _invalid_otp()
+            # Read inside the login transaction: if it fails, the code stays unused.
+            totp_enabled = (
+                await db.scalar(
+                    select(TotpCredential.confirmed_at).where(TotpCredential.user_id == user_row.id)
+                )
+            ) is not None
 
             # Rotation: a session that was valid before login does not survive it.
             if current_session is not None:
@@ -527,6 +635,7 @@ class AuthService:
             last_seen_at=now,
             expires_at=expires_at,
             device_label=label,
+            totp_enabled=totp_enabled,
         )
         csrf = self.issue_token("session", str(session_id), expires_at)
         return info, token, csrf

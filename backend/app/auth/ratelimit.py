@@ -40,6 +40,15 @@ class RateLimiter:
         count, ttl_ms = int(raw[0]), int(raw[1])
         return _ceil_seconds(ttl_ms) if count > limit else None
 
+    async def exceeded(self, kind: str, subject: str, limit: int) -> int | None:
+        """Without counting: seconds to wait if `limit` is already reached, else None."""
+        key = self._key(kind, subject)
+        raw = await self._redis.get(key)
+        if raw is None or int(raw) < limit:
+            return None
+        ttl_ms = int(await self._redis.pttl(key))
+        return _ceil_seconds(ttl_ms) if ttl_ms > 0 else 1
+
     async def cooldown(self, kind: str, subject: str, seconds: int) -> int | None:
         """Allow one event per `seconds`. Returns seconds to wait if too soon."""
         if seconds <= 0:

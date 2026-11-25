@@ -53,9 +53,12 @@ and live trading.
 
 ## Next backend task
 
-1. Staging-only OTP provider (owner decision 2026-11-25): codes for
-   allowlisted synthetic numbers written to a server-only file and read with
-   SSH (`./ops otp`); only when `APP_ENV=staging`; never SMS or logs.
+1. Auth/OTP PR (this phase, see `docs/AUTH.md`): invite-only access, SMTP
+   and staging-file providers, spend caps, TOTP step-up, operator CLI
+   (`python -m app.auth.admin`). Blocked on MSG91: official API pages, DLT
+   sender and template, account, and approval to spend. Not built until then.
+   Migration `0010` (invites backfilled from users, `totp_credentials`,
+   `sessions.step_up_until`); downgrade drops all three.
 2. Settings contract PR (profile, timezone; notification preferences are
    already `/api/v1/alerts/preferences`).
 3. Staging upgrade, waiting on owner approval and Codex #29: pg_dump, deploy
@@ -66,6 +69,9 @@ and live trading.
 
 ## Staging (read-only check, 2026-11-25)
 
+- Staging OTP: after the upgrade, set `OTP_PROVIDER=staging`,
+  `OTP_STAGING_FILE`, `OTP_STAGING_ALLOWLIST` (synthetic numbers), then
+  `invite add` each number and read codes with `staging-otp` over SSH.
 - Reached only from the owner's machine (Tailscale); the cloud sessions have
   no route. The staging tooling (`~/tradeo-staging/repo/backend/staging/ops`)
   lives on the server, not in this repository.

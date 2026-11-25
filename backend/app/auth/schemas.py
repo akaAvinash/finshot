@@ -23,10 +23,12 @@ class _Strict(_Wire):
 
 class OtpRequest(_Strict):
     phone: str = Field(pattern=PHONE_PATTERN)
+    channel: Literal["sms", "email"] = "sms"
 
 
 class OtpChallengeOut(_Wire):
     challenge_id: uuid.UUID
+    channel: Literal["sms", "email"]
     expires_at: datetime
     resend_available_at: datetime
 
@@ -47,11 +49,13 @@ class AuthUserOut(_Wire):
     phone_masked: str
     display_name: str | None
     created_at: datetime
+    totp_enabled: bool
 
 
 class SessionExpiryOut(_Wire):
     idle_expires_at: datetime
     expires_at: datetime
+    step_up_until: datetime | None
 
 
 class AuthSessionOut(_Wire):
@@ -74,3 +78,18 @@ class SessionSummaryOut(_Wire):
 
 class SessionListOut(_Wire):
     sessions: list[SessionSummaryOut]
+
+
+class TotpCodeIn(_Strict):
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class TotpEnrollmentOut(_Wire):
+    secret: str
+    otpauth_uri: str
+    expires_at: datetime
+
+
+class StepUpResultOut(_Wire):
+    totp_enabled: Literal[True] = True
+    step_up_until: datetime

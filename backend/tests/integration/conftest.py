@@ -40,7 +40,7 @@ def clean_state(_require_services: None) -> None:
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.attributes["database_url"] = DB_URL
     command.upgrade(cfg, "head")
-    db_rows(DB_URL or "", "TRUNCATE audit_events, sessions, otp_challenges, users CASCADE")
+    db_rows(DB_URL or "", "TRUNCATE audit_events, sessions, otp_challenges, users, invites CASCADE")
     redis_sync.Redis.from_url(REDIS_URL or "").flushdb()
 
 

@@ -61,7 +61,7 @@ export function AccountAlerts() {
     setActionError(null);
     try {
       await acknowledgeInboxAlert(id);
-      setRequest((current) => ({ ...current, focusId: id }));
+      setRequest((current) => ({ ...current, focusId: current === request ? id : undefined }));
       notify("Alert acknowledged");
     } catch (error) {
       setActionError(error instanceof AlertRequestError ? error.status : 503);

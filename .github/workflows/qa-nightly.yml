@@ -73,7 +73,8 @@ jobs:
               m = [{"label": "sha-" + t[:12], "checkout_sha": t, "merge_sha": "", "pr": 0}]
           else:
               pr = next((p for p in data["prs"] if p["pr"] == int(t)), None)
-              if not pr or not pr.get("base_sha") or not pr["status"] == "test":
+              # Merge-testability only; the nightly PR limit does not apply to an explicit request.
+              if not pr or not pr.get("base_sha") or not pr.get("testable"):
                   raise SystemExit(f"PR {t} is not testable: {pr['status'] if pr else 'not open'}")
               m = [{"label": f"pr-{t}", "checkout_sha": pr["base_sha"], "merge_sha": pr["head_sha"], "pr": int(t)}]
           print("matrix=" + json.dumps({"include": m}))

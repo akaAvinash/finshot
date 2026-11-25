@@ -49,7 +49,14 @@ class TcpProxy:
             except OSError:
                 client.close()
                 continue
+            # The 5 s limit is for connecting only; an idle healthy link must stay open.
+            upstream.settimeout(None)
             with self._lock:
+                # cut()/stop() may have run while we were connecting: never register then.
+                if not self._up or self._stop:
+                    client.close()
+                    upstream.close()
+                    continue
                 self._conns += [client, upstream]
             pair = {"open": 2, "lock": threading.Lock(), "socks": (client, upstream)}
             for a, b in ((client, upstream), (upstream, client)):
@@ -86,8 +93,8 @@ class TcpProxy:
                         s.close()
 
     def cut(self) -> None:
-        self._up = False
         with self._lock:
+            self._up = False
             for s in list(self._conns):
                 try:
                     s.shutdown(socket.SHUT_RDWR)  # wakes the pipe threads; they close

@@ -214,7 +214,9 @@ def merge_eligibility(
     warnings: list[str] = []
     if not results:
         reasons.append("no test results were produced")
-    if expected_sha and tested_sha and expected_sha != tested_sha:
+    if expected_sha and not tested_sha:
+        reasons.append(f"results do not say which commit was tested (expected {expected_sha[:12]})")
+    elif expected_sha and tested_sha and expected_sha != tested_sha:
         reasons.append(f"results are for {tested_sha[:12]}, latest commit is {expected_sha[:12]} (stale)")
     present = {r.source for r in results}
     for src in required_sources:

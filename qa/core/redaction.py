@@ -13,7 +13,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(x-csrf-token[\"']?\s*[:=]\s*[\"']?)[^\"'\s,}]+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(\"(?:csrfToken|secret|code|recoveryCode|password|token)\"\s*:\s*\")[^\"]*"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(secret=)[A-Z2-7]+"), r"\1[REDACTED]"),
-    (re.compile(r"(?i)\b(authorization\s*[:=]\s*)(bearer\s+)?\S+"), r"\1[REDACTED]"),
+    # Whole credential for any scheme (Basic, Bearer, ...), quoted JSON or header form.
+    (re.compile(r"(?i)([\"']?\bauthorization[\"']?\s*[:=]\s*[\"']?)[^\"'\r\n,}]+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)\b(sk-(?:ant-)?[A-Za-z0-9_\-]{10,})"), "[REDACTED_API_KEY]"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), "[REDACTED_GH_TOKEN]"),
     (re.compile(r"(postgres(?:ql)?(?:\+\w+)?://[^:/\s]+:)[^@\s]+@"), r"\1[REDACTED]@"),

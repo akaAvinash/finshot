@@ -134,6 +134,7 @@ QA-FW-001,qa_framework,QA,TOTP oracle matches RFC 4226/6238 vectors,RFC 6238,P0,
 QA-FW-002,qa_framework,QA,Contract validator detects violations,QA,P0,automated
 QA-FW-003,qa_framework,QA,Redaction hides secrets in evidence,QA,P0,automated
 QA-FW-004,qa_framework,QA,Set-Cookie parsing,QA,P1,automated
+QA-FW-005,qa_framework,QA,Fault proxy keeps idle links open and never forwards after cut,review PR #48,P1,automated
 QA-POL-001,qa_framework,QA,QA code never imports product code,brief s10,P0,automated
 QA-POL-002,qa_framework,QA,No real endpoints or credentials in QA code,brief s15,P0,automated
 QA-POL-003,qa_framework,QA,Synthetic contact data only,brief s8,P0,automated

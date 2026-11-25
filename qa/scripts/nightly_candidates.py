@@ -52,16 +52,65 @@ def base_tip(ref: str) -> str | None:
     return git("rev-parse", "FETCH_HEAD").stdout.strip()
 
 
-def merges_cleanly(base: str, heads: list[str]) -> tuple[bool, str]:
+_IDENT = {
+    "GIT_AUTHOR_NAME": "qa-bot",
+    "GIT_AUTHOR_EMAIL": "qa-bot@qa.tradeo.invalid",
+    "GIT_COMMITTER_NAME": "qa-bot",
+    "GIT_COMMITTER_EMAIL": "qa-bot@qa.tradeo.invalid",
+}
+
+
+def merges_cleanly(base: str, heads: list[str], *, fetch: bool = True) -> tuple[bool, str]:
+    """Merge heads onto base in order without touching the work tree.
+
+    `merge-tree --write-tree` returns a tree; each step wraps it in a throwaway
+    commit (parents: previous result and the head) so the next step merges
+    commits, not trees.
+    """
     current = base
     for h in heads:
-        if git("fetch", "--no-tags", "origin", h, check=False).returncode != 0:
+        if fetch and git("fetch", "--no-tags", "origin", h, check=False).returncode != 0:
             return False, f"cannot fetch {h[:12]}"
         r = git("merge-tree", "--write-tree", current, h, check=False)
         if r.returncode != 0:
             return False, f"conflict merging {h[:12]} onto {current[:12]}"
-        current = r.stdout.split()[0]
+        tree = r.stdout.split()[0]
+        c = subprocess.run(
+            ["git", "commit-tree", tree, "-p", current, "-p", h, "-m", "qa: candidate merge"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, **_IDENT},
+            check=False,
+        )
+        if c.returncode != 0:
+            return False, f"cannot record merge of {h[:12]}"
+        current = c.stdout.strip()
     return True, ""
+
+
+def open_prs(repo: str, token: str) -> list[dict]:
+    """All open PRs, most recently updated first (follows pagination)."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        batch = gh(f"/repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc&page={page}", token)
+        out.extend(batch)
+        if len(batch) < 100:
+            return out
+        page += 1
+
+
+def apply_nightly_limit(report: list[dict], limit: int) -> list[dict]:
+    """Pick at most `limit` testable PRs for the scheduled run.
+
+    A PR left out only because of the limit keeps `testable: True`, so an explicit
+    manual request for it can still run.
+    """
+    testable = [e for e in report if e.get("testable")]
+    chosen = testable[:limit]
+    for e in testable[limit:]:
+        e["status"] = f"not scheduled: over the nightly limit of {limit}"
+    return chosen
 
 
 def main() -> int:
@@ -77,7 +126,7 @@ def main() -> int:
     main_sha = base_tip(args.default_branch)
     if not main_sha:
         raise SystemExit(f"cannot resolve {args.default_branch}")
-    prs = gh(f"/repos/{args.repo}/pulls?state=open&per_page=50&sort=updated&direction=desc", token)
+    prs = open_prs(args.repo, token)
     open_branches = {p["head"]["ref"]: p["number"] for p in prs}
 
     report: list[dict] = []
@@ -106,13 +155,10 @@ def main() -> int:
             else:
                 ok, why = merges_cleanly(tip, [p["head"]["sha"]])
                 entry["status"] = "test" if ok else f"not tested: {why}"
+                entry["testable"] = ok
         report.append(entry)
 
-    to_test = [e for e in report if e["status"] == "test"][: args.max]
-    for e in report:
-        if e["status"] == "test" and e not in to_test:
-            e["status"] = f"not tested: over the nightly limit of {args.max}"
-    for e in to_test:
+    for e in apply_nightly_limit(report, args.max):
         matrix.append(
             {"label": f"pr-{e['pr']}", "checkout_sha": e["base_sha"], "merge_sha": e["head_sha"], "pr": e["pr"]}
         )

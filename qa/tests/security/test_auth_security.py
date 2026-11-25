@@ -40,7 +40,8 @@ def test_no_codes_secrets_or_pii_in_server_logs(backend_factory, sink):
         ("email", [p.email]),
         ("totp secret", [secret]),
         ("recovery code", codes),
-        ("emailed OTP", emailed),
+        # Emailed OTPs are six digits and would match unrelated numbers as substrings;
+        # they are checked below as standalone tokens only.
         ("csrf token", csrf_tokens),
         ("session cookie", [s for s in session_ids if s]),
         ("smtp password", [sink.password]),
@@ -83,14 +84,21 @@ def test_api_responses_never_echo_codes(people, sink):
 
 @pytest.mark.severity("high")
 @pytest.mark.req("AUTH-RATE-001")
-def test_otp_requests_throttled_per_phone(people, anon):
-    """Default: 5 OTP requests per phone per hour."""
-    p = people()
+def test_otp_requests_throttled_per_phone(backend_factory, sink):
+    """Default: 5 OTP requests per phone per hour. The per-context and per-IP limits are
+    raised on this private backend so the 429 can only come from the per-phone limit."""
+    b = backend_factory(
+        "otp-phone-limit",
+        OTP_RESEND_COOLDOWN_SECONDS="0",
+        RATE_LIMIT_OTP_REQUEST_PER_CONTEXT="50",
+        RATE_LIMIT_OTP_REQUEST_PER_IP="50",
+    )
+    p = Person(b, sink)
     p.invite()
-    anon.fetch_csrf()
-    statuses = [anon.post("/auth/otp/request", {"phone": p.phone, "channel": "email"}).status_code for _ in range(7)]
-    assert 429 in statuses, f"no throttle after 7 requests: {statuses}"
-    assert statuses.index(429) <= 5
+    c = p.new_client()
+    c.fetch_csrf()
+    statuses = [c.post("/auth/otp/request", {"phone": p.phone, "channel": "email"}).status_code for _ in range(6)]
+    assert statuses == [202] * 5 + [429], statuses
 
 
 @pytest.mark.severity("high")

@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, localcontext
 from enum import StrEnum
+from fractions import Fraction
 
 PAISE = Decimal("0.01")
 
@@ -49,28 +50,37 @@ def apply_fills(fills: Iterable[Fill]) -> PositionState:
     Reversal through zero closes the old side at its average and opens the
     remainder at the fill price.
     """
+    # Exact rational arithmetic inside the oracle: no rounding of the cost basis
+    # before realised P&L is computed. Converted to Decimal only on output.
     qty = 0
-    avg = Decimal(0)
-    realized = Decimal(0)
+    avg = Fraction(0)
+    realized = Fraction(0)
     for f in fills:
         if f.quantity <= 0:
             raise ValueError("fill quantity must be positive")
         signed = f.quantity if f.side is Side.BUY else -f.quantity
         if qty == 0 or (qty > 0) == (signed > 0):
             new_qty = qty + signed
-            avg = (avg * abs(qty) + f.price * abs(signed)) / abs(new_qty)
+            avg = (avg * abs(qty) + Fraction(f.price) * abs(signed)) / abs(new_qty)
             qty = new_qty
             continue
         closing = min(abs(qty), abs(signed))
         direction = 1 if qty > 0 else -1
-        realized += (f.price - avg) * closing * direction
+        realized += (Fraction(f.price) - avg) * closing * direction
         remainder = abs(signed) - closing
         qty += signed
         if qty == 0:
-            avg = Decimal(0)
+            avg = Fraction(0)
         elif remainder > 0:
-            avg = f.price
-    return PositionState(qty, avg, realized)
+            avg = Fraction(f.price)
+    return PositionState(qty, _dec(avg), _dec(realized))
+
+
+def _dec(x: Fraction) -> Decimal:
+    """Fraction to Decimal at 34 significant digits (far below one paise of error)."""
+    with localcontext() as ctx:
+        ctx.prec = 34
+        return Decimal(x.numerator) / Decimal(x.denominator)
 
 
 def unrealized_pnl(state: PositionState, mark: Decimal) -> Decimal:
@@ -149,8 +159,12 @@ def max_drawdown(equity: Sequence[Decimal]) -> tuple[Decimal, Decimal]:
 
 def profit_factor(trade_pnls: Iterable[Decimal]) -> Decimal | None:
     """Gross profit / gross loss. None when there are no losing trades (undefined, not infinite)."""
-    gains = sum((p for p in trade_pnls if p > 0), Decimal(0))
-    losses = -sum((p for p in trade_pnls if p < 0), Decimal(0))
+    gains = losses = Decimal(0)
+    for p in trade_pnls:  # one pass: works for one-shot iterators too
+        if p > 0:
+            gains += p
+        elif p < 0:
+            losses -= p
     return None if losses == 0 else gains / losses
 
 

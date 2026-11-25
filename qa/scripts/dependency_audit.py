@@ -25,18 +25,36 @@ def main() -> int:
         capture_output=True,
         text=True,
     )
+    cases, failures = audit_cases(proc.returncode, proc.stdout, proc.stderr)
+    Path(args.junit).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.junit).write_text(
+        f'<?xml version="1.0"?><testsuites><testsuite name="dependency-audit" tests="{len(cases)}" '
+        f'failures="{failures}">{"".join(cases)}</testsuite></testsuites>'
+    )
+    print(f"{failures} vulnerable dependency finding(s)")
+    return 1 if failures else 0
+
+
+def audit_cases(returncode: int, stdout: str, stderr: str) -> tuple[list[str], int]:
+    """JUnit test cases from one pip-audit run, and how many of them fail."""
     cases: list[str] = []
     failures = 0
     try:
-        data = json.loads(proc.stdout or "{}")
-        deps = data.get("dependencies", data if isinstance(data, list) else [])
+        data = json.loads(stdout)
+        deps = data.get("dependencies") if isinstance(data, dict) else data
+        if not isinstance(deps, list):
+            deps = None
     except ValueError:
+        deps = None
+    # pip-audit exits 1 when it finds vulnerabilities (valid JSON). A non-zero exit without
+    # any reported vulnerability means the audit itself failed: never report that as clean.
+    if deps is not None and returncode != 0 and not any(d.get("vulns") for d in deps):
         deps = None
     if deps is None:
         failures = 1
         cases.append(
             '<testcase classname="dependency_audit" name="pip-audit-ran"><error message="pip-audit output unreadable">'
-            f"{escape(proc.stderr[-2000:])}</error></testcase>"
+            f"{escape(stderr[-2000:])}</error></testcase>"
         )
     else:
         seen: set[tuple[str, str]] = set()
@@ -63,13 +81,7 @@ def main() -> int:
                 '<testcase classname="dependency_audit" name="no-known-vulnerabilities">'
                 '<properties><property name="requirement" value="SEC-DEP-001"/></properties></testcase>'
             )
-    Path(args.junit).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.junit).write_text(
-        f'<?xml version="1.0"?><testsuites><testsuite name="dependency-audit" tests="{len(cases)}" '
-        f'failures="{failures}">{"".join(cases)}</testsuite></testsuites>'
-    )
-    print(f"{failures} vulnerable dependency finding(s)")
-    return 1 if failures else 0
+    return cases, failures
 
 
 if __name__ == "__main__":

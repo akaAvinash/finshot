@@ -104,15 +104,15 @@ def _schema_key(schema: dict[str, Any]) -> str:
     return yaml.safe_dump(schema, sort_keys=True)
 
 
-_VALIDATORS: dict[str, Draft202012Validator] = {}
-
-
 def _validator(contract: Contract, key: str) -> Draft202012Validator:
-    if key not in _VALIDATORS:
+    # Cached per Contract: the same $ref can mean different schemas in different documents.
+    cache: dict[str, Draft202012Validator] = contract.__dict__.setdefault("_validators", {})
+    if key not in cache:
         schema = yaml.safe_load(key)
-        rewritten = _rewrite_refs(schema)
-        _VALIDATORS[key] = Draft202012Validator(rewritten, registry=contract._registry, format_checker=FormatChecker())
-    return _VALIDATORS[key]
+        cache[key] = Draft202012Validator(
+            _rewrite_refs(schema), registry=contract._registry, format_checker=FormatChecker()
+        )
+    return cache[key]
 
 
 def _rewrite_refs(node: Any) -> Any:

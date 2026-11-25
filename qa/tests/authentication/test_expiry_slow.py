@@ -62,3 +62,10 @@ def test_step_up_window_closes(backend_factory, sink):
     target = next(s for s in c.get("/auth/sessions").json()["sessions"] if not s["current"])
     r = c.delete(f"/auth/sessions/{target['id']}")
     assert r.status_code == 403 and r.json()["code"] == "STEP_UP_REQUIRED"
+    # A wrong code on a closed window must not open it.
+    good, _ = p.device.fresh_code()
+    wrong = f"{(int(good) + 1) % 1_000_000:06d}"
+    r = c.post("/auth/step-up", {"code": wrong})
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_TOTP"
+    r = c.delete(f"/auth/sessions/{target['id']}")
+    assert r.status_code == 403 and r.json()["code"] == "STEP_UP_REQUIRED", "wrong code opened the window"

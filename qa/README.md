@@ -9,8 +9,12 @@ response against `contracts/openapi.yaml`.
 
 Requirements: Python 3.12, PostgreSQL 16, Redis 7, `psql` on PATH. The
 database and Redis **must be disposable**: the harness drops the database
-schema and flushes the Redis DB. A database whose name does not start with
-`qa_` is refused.
+schema and flushes the Redis DB. A database URL whose query overrides the
+target (`dbname=`, `host=`, ...) is always refused. Unless
+`QA_ALLOW_DESTRUCTIVE=1` is set, a database whose name does not start with
+`qa_`, or a non-local database or Redis host, is refused too. `QA_ALLOW_DESTRUCTIVE=1` bypasses the name and host checks, so schema
+drops and Redis flushes then hit whatever the URLs point at: use it only for
+services that are disposable.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate

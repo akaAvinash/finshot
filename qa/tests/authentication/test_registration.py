@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import UTC, datetime
 
@@ -105,6 +106,36 @@ def test_code_cannot_be_replayed(people, sink):
     other.fetch_csrf()
     r = other.post("/auth/otp/verify", {"challengeId": ch["challengeId"], "code": code})
     assert r.status_code == 401 and r.json()["code"] == "INVALID_OTP"
+
+
+@pytest.mark.critical_gate
+@pytest.mark.severity("critical")
+@pytest.mark.req("AUTH-OTP-004")
+def test_concurrent_redemption_of_one_code_succeeds_once(people, sink):
+    """Two clients race to redeem the same emailed code: exactly one may get a session."""
+    p = people()
+    p.invite()
+    c = p.new_client("a")
+    before = len(sink.messages_to(p.email))
+    ch = p.request_email_code(c)
+    code = sink.wait_for_code(p.email, after=before)
+    # Same pre-login context (cookies + CSRF) on both clients, as a copied browser profile would have.
+    twin = p.new_client("b")
+    twin.cookies.update(c.cookies)
+    twin.csrf_token = c.csrf_token
+    gate = threading.Barrier(2)
+    results: dict[str, int] = {}
+
+    def redeem(name: str, client) -> None:
+        gate.wait(timeout=10)
+        results[name] = client.post("/auth/otp/verify", {"challengeId": ch["challengeId"], "code": code}).status_code
+
+    threads = [threading.Thread(target=redeem, args=(n, cl)) for n, cl in (("a", c), ("b", twin))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert sorted(results.values()) == [200, 401], f"one code redeemed by both racers: {results}"
 
 
 @pytest.mark.severity("high")

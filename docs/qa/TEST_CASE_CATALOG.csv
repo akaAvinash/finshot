@@ -26,6 +26,7 @@ qa/tests/authentication/test_registration.py::test_uninvited_number_gets_identic
 qa/tests/authentication/test_registration.py::test_uninvited_challenge_cannot_be_completed_with_any_guess,authentication,AUTH-REG-002,high,no,yes,pr+nightly,uninvited challenge cannot be completed with any guess
 qa/tests/authentication/test_registration.py::test_wrong_code_is_rejected_and_right_code_still_works,authentication,AUTH-OTP-003,critical,yes,yes,pr+nightly,wrong code is rejected and right code still works
 qa/tests/authentication/test_registration.py::test_code_cannot_be_replayed,authentication,AUTH-OTP-004,critical,yes,yes,pr+nightly,code cannot be replayed
+qa/tests/authentication/test_registration.py::test_concurrent_redemption_of_one_code_succeeds_once,authentication,AUTH-OTP-004,critical,yes,yes,pr+nightly,Two clients race to redeem the same emailed code: exactly one may get a session.
 qa/tests/authentication/test_registration.py::test_challenge_dies_after_five_failed_attempts,authentication,AUTH-OTP-005,high,no,yes,pr+nightly,challenge dies after five failed attempts
 qa/tests/authentication/test_registration.py::test_resend_issues_new_code_and_old_challenge_handling,authentication,AUTH-OTP-006,high,no,yes,pr+nightly,Second request yields a second email; the newest code signs in.
 qa/tests/authentication/test_registration.py::test_code_bound_to_pre_login_context,authentication,AUTH-OTP-007,high,no,yes,pr+nightly,A challenge requested in one browser cannot be completed from another (contract: different pre-login context -> 401).
@@ -83,6 +84,23 @@ qa/tests/framework/test_framework_selfcheck.py::test_contract_validator_accepts_
 qa/tests/framework/test_framework_selfcheck.py::test_contract_validator_flags_undocumented_status_and_path,framework,QA-FW-002,high,no,no,pr+nightly,contract validator flags undocumented status and path
 qa/tests/framework/test_framework_selfcheck.py::test_redaction_hides_secrets,framework,QA-FW-003,high,no,no,pr+nightly,redaction hides secrets
 qa/tests/framework/test_framework_selfcheck.py::test_set_cookie_parser_reads_attributes,framework,QA-FW-004,high,no,no,pr+nightly,set cookie parser reads attributes
+qa/tests/framework/test_harness_regressions.py::test_gate_requires_tested_sha_when_expected_sha_is_given,framework,QA-GATE-001,high,no,no,pr+nightly,gate requires tested sha when expected sha is given
+qa/tests/framework/test_harness_regressions.py::test_corrupt_cache_entry_is_a_miss,framework,QA-AI-005,high,no,no,pr+nightly,corrupt cache entry is a miss
+qa/tests/framework/test_harness_regressions.py::test_limits_are_checked_before_every_retry,framework,QA-AI-006,high,no,no,pr+nightly,limits are checked before every retry
+qa/tests/framework/test_harness_regressions.py::test_database_url_query_cannot_redirect_the_target,framework,QA-POL-002,high,no,no,pr+nightly,database url query cannot redirect the target
+qa/tests/framework/test_harness_regressions.py::test_plain_disposable_url_is_accepted,framework,QA-POL-002,high,no,no,pr+nightly,plain disposable url is accepted
+qa/tests/framework/test_harness_regressions.py::test_validators_are_scoped_to_their_contract,framework,QA-FW-002,high,no,no,pr+nightly,validators are scoped to their contract
+qa/tests/framework/test_harness_regressions.py::test_proxy_keeps_idle_connections_open,framework,QA-FW-005,high,no,no,nightly,proxy keeps idle connections open
+qa/tests/framework/test_harness_regressions.py::test_cut_during_connect_never_registers_the_link,framework,QA-FW-005,high,no,no,pr+nightly,cut during connect never registers the link
+qa/tests/framework/test_harness_regressions.py::test_authorization_credentials_are_fully_redacted,framework,QA-FW-003,high,no,no,pr+nightly,authorization credentials are fully redacted
+qa/tests/framework/test_harness_regressions.py::test_nested_suites_count_each_case_once,framework,QA-AI-001,high,no,no,pr+nightly,nested suites count each case once
+qa/tests/framework/test_harness_regressions.py::test_failed_audit_is_never_reported_clean,framework,SEC-DEP-001,high,no,no,pr+nightly,failed audit is never reported clean
+qa/tests/framework/test_harness_regressions.py::test_integration_merge_chains_two_conflict_free_heads,framework,QA-GATE-004,high,no,no,pr+nightly,integration merge chains two conflict free heads
+qa/tests/framework/test_harness_regressions.py::test_nightly_limit_does_not_make_a_pr_untestable,framework,QA-GATE-004,high,no,no,pr+nightly,nightly limit does not make a pr untestable
+qa/tests/framework/test_harness_regressions.py::test_open_pr_discovery_follows_pagination,framework,QA-GATE-004,high,no,no,pr+nightly,open pr discovery follows pagination
+qa/tests/framework/test_harness_regressions.py::test_cost_basis_is_not_rounded_before_realised_pnl,framework,FIN-PNL-001,high,no,no,pr+nightly,cost basis is not rounded before realised pnl
+qa/tests/framework/test_harness_regressions.py::test_profit_factor_accepts_one_shot_iterators,framework,FIN-PF-001,high,no,no,pr+nightly,profit factor accepts one shot iterators
+qa/tests/framework/test_harness_regressions.py::test_money_half_paise_ties_round_away_from_zero,framework,FIN-CHG-002,high,no,no,pr+nightly,money half paise ties round away from zero
 qa/tests/policy/test_independence.py::test_qa_code_never_imports_product_code,policy,QA-POL-001,high,no,no,pr+nightly,Expected values must not come from the implementation under test.
 qa/tests/policy/test_independence.py::test_no_real_endpoints_or_credentials_in_qa_code,policy,QA-POL-002,high,no,no,pr+nightly,no real endpoints or credentials in qa code
 qa/tests/policy/test_independence.py::test_synthetic_contact_data_only,policy,QA-POL-003,high,no,no,pr+nightly,Emails in the framework use the reserved .invalid TLD.
@@ -95,7 +113,7 @@ qa/tests/reliability/test_dependency_outages.py::test_500_responses_keep_request
 qa/tests/security/test_auth_security.py::test_no_codes_secrets_or_pii_in_server_logs,security,SEC-LEAK-001 SEC-LEAK-002,critical,yes,yes,pr+nightly,"Drive a full account lifecycle on a private backend, then scan its entire log output."
 qa/tests/security/test_auth_security.py::test_security_headers_on_auth_responses,security,SEC-HDR-002,high,no,yes,pr+nightly,security headers on auth responses
 qa/tests/security/test_auth_security.py::test_api_responses_never_echo_codes,security,SEC-LEAK-003,high,no,yes,pr+nightly,api responses never echo codes
-qa/tests/security/test_auth_security.py::test_otp_requests_throttled_per_phone,security,AUTH-RATE-001,high,no,yes,pr+nightly,Default: 5 OTP requests per phone per hour.
+qa/tests/security/test_auth_security.py::test_otp_requests_throttled_per_phone,security,AUTH-RATE-001,high,no,yes,pr+nightly,Default: 5 OTP requests per phone per hour. The per-context and per-IP limits are
 qa/tests/security/test_auth_security.py::test_throttle_is_identical_for_invited_and_uninvited,security,AUTH-ENUM-003,high,no,yes,pr+nightly,throttle is identical for invited and uninvited
 qa/tests/security/test_auth_security.py::test_resend_cooldown_enforced,security,AUTH-OTP-006 AUTH-RATE-003,high,no,yes,pr+nightly,resend cooldown enforced
 qa/tests/security/test_auth_security.py::test_daily_delivery_cap_fails_uniformly,security,AUTH-CAP-001 AUTH-ENUM-004,high,no,yes,pr+nightly,daily delivery cap fails uniformly

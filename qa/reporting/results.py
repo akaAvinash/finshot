@@ -39,7 +39,7 @@ def parse_junit(path: Path, source: str | None = None) -> list[TestResult]:
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     out: list[TestResult] = []
     for suite in suites:
-        for case in suite.iter("testcase"):
+        for case in suite.findall("testcase"):  # direct children: nested suites are visited on their own
             cls = case.get("classname", "")
             name = case.get("name", "")
             nodeid = f"{cls}::{name}" if cls else name

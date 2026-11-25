@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import UTC, datetime
+from urllib.parse import unquote
 
 import pytest
 
@@ -30,7 +31,8 @@ def test_enrolment_returns_valid_secret_and_qr_uri(people):
     uri = parse_otpauth(e["otpauthUri"])
     assert uri.secret == e["secret"], "QR URI must carry the same secret as the manual-entry text"
     assert (uri.algorithm, uri.digits, uri.period) == ("SHA1", 6, 30)
-    assert p.phone not in e["otpauthUri"], "QR label must not expose the full phone number"
+    for where, text in (("URI", e["otpauthUri"]), ("decoded URI", unquote(e["otpauthUri"])), ("label", uri.label)):
+        assert p.phone not in text and p.phone.lstrip("+") not in text, f"QR {where} exposes the full phone number"
     # Manual setup: a device built from the text secret alone can confirm.
     dev = TotpDevice(e["secret"])
     code, _ = dev.fresh_code()
@@ -144,13 +146,24 @@ def test_totp_login_failures_are_uniform(people):
 @pytest.mark.req("AUTH-TOTP-009")
 def test_email_code_cannot_start_session_once_authenticator_active(people, sink):
     p = people()
-    p.register_ready()
+    registered = p.register()
+    # A real, unused emailed code issued before the authenticator is activated...
+    pending = p.new_client("pending")
+    before = len(sink.messages_to(p.email))
+    early = p.request_email_code(pending)
+    early_code = sink.wait_for_code(p.email, after=before)
+    p.enroll(registered)
+    # ...must not start a session once the authenticator is active.
+    r = pending.post("/auth/otp/verify", {"challengeId": early["challengeId"], "code": early_code})
+    assert r.status_code == 401, f"pre-activation email code still signs in: {r.status_code}"
+    assert pending.get("/auth/me").status_code == 401
+    # And no new email code is sent after activation.
     c = p.new_client()
     before = len(sink.messages_to(p.email))
     ch = p.request_email_code(c)
     time.sleep(0.5)
     assert len(sink.messages_to(p.email)) == before, "nothing is sent once an authenticator is active"
-    r = c.post("/auth/otp/verify", {"challengeId": ch["challengeId"], "code": "123456"})
+    r = c.post("/auth/otp/verify", {"challengeId": ch["challengeId"], "code": early_code})
     assert r.status_code == 401
 
 
@@ -179,8 +192,11 @@ def test_step_up_wrong_code_does_not_open_window(people):
     # A fresh registration session; close the window by signing in fresh is not possible,
     # so use a login session and check step-up rejection semantics on the wrong code.
     code, _ = p.device.fresh_code()
+    before = c.get("/auth/me").json()["session"]["stepUpUntil"]
     r = c.post("/auth/step-up", {"code": _wrong(code)})
     assert r.status_code == 422 and r.json()["code"] == "INVALID_TOTP"
+    assert c.get("/auth/me").json()["session"]["stepUpUntil"] == before, "a wrong code must not move the window"
+    # The closed-window case needs a 60 s wait: see test_expiry_slow::test_step_up_window_closes.
 
 
 @pytest.mark.severity("high")

@@ -76,7 +76,7 @@ def test_revoke_other_session_with_step_up(people):
     assert r.status_code == 204
     # Which one did we end? Exactly one of the remaining clients stays signed in.
     remaining = [c.get("/auth/me").status_code for c in (main, other)]
-    assert remaining[0] == 200
+    assert remaining == [200, 401], f"revoking the other session must end it and keep this one: {remaining}"
     assert main.delete(f"/auth/sessions/{target['id']}").status_code == 404, "repeat answers 404"
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = REPO_ROOT / "backend"
@@ -19,6 +19,9 @@ CONTRACT_PATH = REPO_ROOT / "contracts" / "openapi.yaml"
 
 class UnsafeTargetError(RuntimeError):
     """Raised when a configured target does not look disposable."""
+
+
+_TARGET_PARAMS = {"dbname", "host", "hostaddr", "service", "port", "database"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,10 @@ class QaSettings:
             raise UnsafeTargetError("QA_DATABASE_URL and QA_REDIS_URL must both be set")
         db = urlparse(self.database_url or "")
         db_name = db.path.lstrip("/")
+        overrides = {k.lower() for k in parse_qs(db.query, keep_blank_values=True)} & _TARGET_PARAMS
+        if overrides:
+            # libpq lets these query parameters replace the host or database in the URL path.
+            raise UnsafeTargetError(f"QA_DATABASE_URL must not override the target via {sorted(overrides)}")
         if not db_name.startswith("qa_") and not self.allow_destructive:
             raise UnsafeTargetError(f"database name {db_name!r} must start with 'qa_' (or set QA_ALLOW_DESTRUCTIVE=1)")
         if db.hostname not in ("localhost", "127.0.0.1", "postgres", "::1") and not self.allow_destructive:

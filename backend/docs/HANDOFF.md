@@ -26,7 +26,8 @@ the development kit is the roadmap.
 | E2: alerts | #30 contract, #31 (migration `0009`) |
 | Auth: invite-only sign-in, OTP providers, spend caps, TOTP step-up | #33 contract, #34 (migration `0010`) |
 | Settings: profile (display name, timezone) and ending another session | #35 contract, #36 (migration `0011`) |
-| Registration by emailed code, then authenticator sign-in | #37 contract, this PR (no migration) |
+| Registration by emailed code, then authenticator sign-in | #37 contract, #38 (no migration) |
+| Recovery codes for a lost authenticator | #40 contract, this PR (migration `0012`) |
 
 ## Open
 
@@ -60,8 +61,8 @@ and live trading.
    DLT-registered sender ID and template, an MSG91 account, and approval to
    spend. Not built until then (see `docs/AUTH.md`). SMTP credentials are
    also needed before email delivery can be used outside tests.
-2. Recovery codes for a lost authenticator (own contract; today an operator
-   resets it with `totp-reset`).
+2. Frontend screens for recovery codes (Codex): create after setup, sign in
+   with a code.
 3. Further Settings contracts (each its own PR, using step-up): phone change,
    data retention, risk limits. They stay preview-only in the frontend until
    then, and the demo confirmation code is never accepted by the API.

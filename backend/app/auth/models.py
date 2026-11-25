@@ -149,3 +149,19 @@ class TotpCredential(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pending_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_step: Mapped[int] = mapped_column(BigInteger, server_default="0")
+
+
+class RecoveryCode(Base):
+    """One unused recovery code, kept as a keyed digest (never the code). Rows
+    exist only while the authenticator they were issued for is active: removing
+    the authenticator deletes them all, and spending one deletes the row."""
+
+    __tablename__ = "recovery_codes"
+    __table_args__ = (Index("ix_recovery_codes_user_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4, server_default=_UUID_DEFAULT
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    digest: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -1,0 +1,152 @@
+req_id,area,engine,requirement,source,priority,status
+AUTH-REG-001,authentication,Auth,Invited number registers with an emailed six-digit code and gets a session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-REG-002,authentication,Auth,"Uninvited number: same 202, nothing sent, challenge can never complete",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-REG-003,authentication,Auth,"Invited number without email on file: same 202, nothing sent",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated
+AUTH-REG-004,authentication,Auth,Revoking an invite blocks codes already issued,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-REG-005,authentication,Auth,Interrupted registration can restart in a new browser context,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-001,authentication,Auth,Code lifetime at most 5 minutes; contract fields present,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-002,authentication,Auth,Expired code is rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-OTP-003,authentication,Auth,Wrong code rejected with uniform INVALID_OTP,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-OTP-004,authentication,Auth,A code works once (replay rejected),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-OTP-005,authentication,Auth,Challenge dies after 5 failed attempts,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-006,authentication,Auth,Resend issues a new code; 60 s resend cooldown,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-007,authentication,Auth,Challenge bound to the pre-login context that requested it,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-008,authentication,Auth,Email delivery failure returns 503 without provider details,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-OTP-009,authentication,Auth,"Real SMTP delivery to an owned mailbox (authorised, rate-limited)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,specified
+AUTH-OTP-010,authentication,Auth,SMS (MSG91) delivery,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,not_implemented
+AUTH-VAL-001,authentication,Auth,"Phone and code formats validated (boundaries, classes)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated
+AUTH-VAL-002,authentication,Auth,Unknown request fields rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated
+AUTH-TOTP-001,authentication,Auth,Authenticator enrolment returns a 160-bit secret and matching otpauth URI,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-TOTP-002,authentication,Auth,Manual setup from the text secret works; QR label hides phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-TOTP-003,authentication,Auth,Wrong confirm code does not activate,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-TOTP-004,authentication,Auth,Second enrolment refused while active,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-TOTP-005,authentication,Auth,Phone + TOTP sign-in opens a step-up window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-TOTP-006,authentication,Auth,TOTP code replay rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-TOTP-007,authentication,Auth,"Clock drift: +/-1 step accepted, +/-2 rejected",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-TOTP-008,authentication,Auth,"TOTP sign-in failures uniform across wrong code, unknown, uninvited, no authenticator",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-TOTP-009,authentication,Auth,Emailed code cannot start a session once an authenticator is active,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-TOTP-010,authentication,Auth,TOTP sign-in throttled per phone with Retry-After,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-STEP-001,authentication,Auth,Wrong step-up code does not open the window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-STEP-002,authentication,Auth,Disable needs a valid code and closes every window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-STEP-003,authentication,Auth,"Step-up window bounded (10 min, never past session expiry)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated
+AUTH-STEP-004,authentication,Auth,Step-up window closes; gated action then needs step-up,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-REC-001,authentication,Auth,Ten unique single-use recovery codes in the documented format,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-REC-002,authentication,Auth,Recovery code works once,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-REC-003,authentication,Auth,Recovery sign-in removes authenticator and all other codes; re-enrol possible,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-REC-004,authentication,Auth,Regenerating codes invalidates the old set,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-REC-005,authentication,Auth,Recovery code of one account does not work for another,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-REC-006,authentication,Auth,Operator totp-reset then re-registration by email,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-001,authentication,Auth,Unauthenticated requests rejected (401),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-SESS-002,authentication,Auth,Logout ends the session server-side; idempotent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-SESS-003,authentication,Auth,Logout from all devices,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-SESS-004,authentication,Auth,Revoke another session with step-up; repeat answers 404,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-SESS-005,authentication,Auth,Own session cannot be revoked here; foreign ids look absent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-006,authentication,Auth,Concurrent sessions independent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-007,authentication,Auth,CSRF refresh after revocation returns pre_login and clears cookie,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-008,authentication,Auth,Browser refresh keeps the session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated
+AUTH-SESS-009,authentication,Auth,Parallel logins with one code produce one session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-010,authentication,Auth,Idle session expires,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-SESS-011,authentication,Auth,Activity extends idle expiry,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-SESS-012,authentication,Auth,Absolute session expiry (12 h default),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,specified
+AUTH-SETUP-001,authentication,Auth,Session without authenticator limited to setup operations,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-CSRF-001,authentication,Auth,Session writes need the session CSRF token,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-CSRF-002,authentication,Auth,Pre-login writes need a CSRF token,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-CSRF-003,authentication,Auth,CSRF header must match the caller's cookie,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-COOKIE-001,authentication,Auth,"Login cookies: __Host-, Secure, HttpOnly, SameSite, Path=/, no Domain, order",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-COOKIE-002,authentication,Auth,Session id rotates on login (no fixation),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-ISO-001,authentication,Auth,Session list shows only own sessions,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-ISO-002,authentication,Auth,Profile settings isolated between accounts,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-ENUM-001,authentication,Auth,OTP request does not reveal invite status,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-ENUM-002,authentication,Auth,TOTP sign-in does not reveal account existence,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated
+AUTH-ENUM-003,authentication,Auth,Throttle identical for invited and uninvited numbers,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-ENUM-004,authentication,Auth,Daily delivery cap fails identically for every number,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-ENUM-005,authentication,Auth,Response timing does not reveal accounts (statistical),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,specified
+AUTH-RATE-001,authentication,Auth,OTP requests throttled per phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-RATE-002,authentication,Auth,Per-IP throttles on OTP request and verify,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,specified
+AUTH-RATE-003,authentication,Auth,Resend cooldown enforced with Retry-After,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-CAP-001,authentication,Auth,Global daily OTP delivery cap,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated
+AUTH-UI-001,ui,Auth,"Browser sign-in journey (frontend + backend integration, Playwright)",frontend/src; contract,P0,specified
+AUTH-PASSKEY-001,authentication,Auth,Passkeys,backend/docs/AUTH.md,P3,not_implemented
+REL-AUTH-001,reliability,Auth,Redis outage: auth fails closed (5xx) and recovers,AUTH.md spend limits,P0,automated
+REL-AUTH-002,reliability,Auth,"Database outage: auth fails closed, readiness 503, recovers",health contract,P0,automated
+REL-AUTH-003,reliability,Auth,"SMTP outage: 503 OTP_DELIVERY_UNAVAILABLE, recovers",AUTH.md,P1,automated
+REL-HTTP-001,reliability,Platform,"500 answers keep X-Request-ID, security headers and the keep-alive connection",contract AuthError.requestId,P3,automated
+SEC-HDR-001,security,Platform,Security headers on every response incl. errors,backend middleware,P2,automated
+SEC-HDR-002,security,Platform,Security headers on auth responses,backend middleware,P1,automated
+SEC-HOST-001,security,Platform,Unknown Host header rejected,ALLOWED_HOSTS,P2,automated
+SEC-INPUT-001,security,Platform,Hostile input rejected cleanly (no internals),contract,P2,automated
+SEC-LEAK-001,security,Platform,"No codes, secrets, tokens or PII in server logs",AUTH.md Audit,P0,automated
+SEC-LEAK-002,security,Platform,SMTP password never logged,AUTH.md SMTP,P0,automated
+SEC-LEAK-003,security,Platform,API never echoes codes,contract,P1,automated
+SEC-LEAK-004,security,Platform,Operator invite list masks numbers and emails,AUTH.md,P2,automated
+SEC-SECRET-001,security,Platform,No credentials committed to the repository,brief s15,P0,automated-ci
+SEC-DEP-001,security,Platform,"No known-vulnerable dependencies (pip-audit, npm audit)",brief s14,P1,automated-ci
+SEC-ZAP-001,security,Platform,OWASP ZAP baseline scan of the running stack,brief s5,P2,specified
+SEC-AUTHZ-001,authorization,Platform,Every non-auth route enforces session + setup + CSRF (route inventory from contract),contract,P0,specified
+FIN-PNL-001,financial,Portfolio,Weighted-average long P&L (manual example),QA oracle,P0,automated
+FIN-PNL-002,financial,Portfolio,Short and reversal P&L (manual example),QA oracle,P0,automated
+FIN-PNL-003,financial,Portfolio,P&L conservation property for any fill sequence,QA oracle,P0,automated
+FIN-CHG-001,financial,Portfolio,"Charges from an explicit schedule, paise rounding",QA oracle,P1,automated
+FIN-CHG-002,financial,Portfolio,Money rounding half-up to paise,QA oracle,P2,automated
+FIN-SIZE-001,financial,Risk,"Position sizing examples (risk budget, lots, bps)",QA oracle,P0,automated
+FIN-SIZE-002,financial,Risk,Position size never exceeds risk budget (property),QA oracle,P0,automated
+FIN-DD-001,financial,Portfolio,Max drawdown example,QA oracle,P1,automated
+FIN-DD-002,financial,Portfolio,Drawdown bounds (property),QA oracle,P1,automated
+FIN-PF-001,financial,Portfolio,Profit factor incl. undefined case,QA oracle,P2,automated
+FIN-RET-001,financial,Portfolio,Simple return,QA oracle,P2,automated
+FIN-RISK-001,financial,Risk,"Daily loss limit boundary (Rs 25,000)",contract 0.7.0,P0,automated
+FIN-X-PAPER-001,financial,Paper Trading,Paper ledger P&L equals oracle for replayed fills,contract auto-trading,P0,specified
+FIN-X-REPORT-001,financial,Portfolio,Paper report totals reconcile with trades.csv export,contract reports,P0,specified
+FIN-X-BT-001,financial,Backtesting,"Backtest metrics (net P&L, drawdown, fees, slippage) equal oracle",contract backtests,P0,specified
+FIN-X-RISK-001,financial,Risk,"Risk tiers (size/stop bps) enforced at order time, fail closed",contract 0.7.0,P0,specified
+MD-001,market_data,Market Data,"Normalisation, timestamps (IST), instrument mapping",contract market,P1,specified
+MD-002,market_data,Market Data,Missing/duplicate/out-of-order/stale data handling,brief s9,P1,specified
+MD-003,market_data,Market Data,NSE holidays and session boundaries,brief s9,P1,specified
+MD-004,market_data,Market Data,Provider outage and WebSocket reconnect,brief s9,P1,not_implemented
+MD-005,market_data,Market Data,Data source attribution and licence restrictions,brief s9,P2,specified
+BRK-001,broker,Universal Broker,Adapter conformance suite run against every adapter (demo today),contract brokers,P0,specified
+BRK-002,broker,Universal Broker,"Multiple brokers and accounts, account isolation",brief s9,P0,specified
+BRK-003,broker,Universal Broker,"Token expiry, funds/margins, holdings/positions normalisation",brief s9,P1,not_implemented
+BRK-004,broker,Universal Broker,Unsupported capability returns a typed error,brief s9,P1,specified
+BRK-005,broker,Universal Broker,Rate limits and connection recovery,brief s9,P1,not_implemented
+MCP-001,mcp,MCP Gateway,"Tool discovery, schema validation, permission enforcement",brief s9,P1,not_implemented
+MCP-002,mcp,MCP Gateway,Prompt injection / malicious tool descriptions / untrusted responses,brief s9,P0,not_implemented
+MCP-003,mcp,MCP Gateway,"SSRF, DNS rebinding, credential leakage, unauthorised order tools",brief s9,P0,not_implemented
+MI-001,intelligence,Market Intelligence,"Breadth, A/D, opening range, VWAP, relative volume",brief s9,P1,not_implemented
+MI-002,intelligence,Market Intelligence,Look-ahead bias and leakage checks via historical replay,brief s9,P0,not_implemented
+MI-003,intelligence,Market Intelligence,Directional score never presented as calibrated probability,brief s9,P0,not_implemented
+STR-001,strategies,Strategy Research,Parameter validation and immutable versions,contract strategies,P1,specified
+STR-002,strategies,Strategy Research,Approval lifecycle; invalid strategy rejected,contract strategies,P1,specified
+BT-001,backtesting,Backtesting,"Entry/exit, costs, slippage, lot sizes reproduce oracle",contract backtests,P0,specified
+BT-002,backtesting,Backtesting,"Reproducibility: same inputs, same results",brief s9,P1,specified
+BT-003,backtesting,Backtesting,Walk-forward and look-ahead/survivorship bias checks,brief s9,P1,not_implemented
+PT-001,paper_trading,Paper Trading,"Simulated orders, partial fills, rejections, position lifecycle",contract auto-trading,P0,specified
+PT-002,paper_trading,Paper Trading,"Concurrent orders, duplicate prevention, worker restart recovery",brief s9,P0,specified
+RISK-001,risk,Risk Management,"Daily loss, drawdown, exposure limits and kill switch fail closed",contract 0.7.0,P0,specified
+RISK-002,risk,Risk Management,Concurrent risk checks and bypass attempts,brief s9,P0,specified
+EXE-001,execution,Trade Execution,"Order lifecycle, idempotency, ambiguous outcomes (mock broker only)",brief s9,P0,not_implemented
+PF-001,portfolio,Portfolio,"Valuation, returns, attribution, journal, CSV export",contract reports,P1,specified
+ORC-001,orchestration,Orchestration,"Scheduling, ordering, duplicate events, crash recovery, shutdown",brief s9,P1,not_implemented
+AGT-001,agents,AI agents,Advisory agents are read-only and deterministic,contract agents,P1,specified
+ALR-001,alerts,Alerts,Alert dedupe per source occurrence; critical always on,contract alerts,P1,specified
+PERF-001,performance,Platform,Auth and read endpoints latency under load (Locust),PERFORMANCE_TEST_PLAN,P2,specified
+QA-FW-001,qa_framework,QA,TOTP oracle matches RFC 4226/6238 vectors,RFC 6238,P0,automated
+QA-FW-002,qa_framework,QA,Contract validator detects violations,QA,P0,automated
+QA-FW-003,qa_framework,QA,Redaction hides secrets in evidence,QA,P0,automated
+QA-FW-004,qa_framework,QA,Set-Cookie parsing,QA,P1,automated
+QA-POL-001,qa_framework,QA,QA code never imports product code,brief s10,P0,automated
+QA-POL-002,qa_framework,QA,No real endpoints or credentials in QA code,brief s15,P0,automated
+QA-POL-003,qa_framework,QA,Synthetic contact data only,brief s8,P0,automated
+QA-POL-004,qa_framework,QA,AI agent has no merge/write capability,brief s13,P0,automated
+QA-AI-001,qa_framework,QA,JUnit ingestion incl. properties and blocked,brief s11,P1,automated
+QA-AI-002,qa_framework,QA,Failure grouping,brief s11,P1,automated
+QA-AI-003,qa_framework,QA,Suite selection from changed files,brief s11,P2,automated
+QA-AI-004,qa_framework,QA,LLM input redacted and delimited as untrusted,brief s13,P0,automated
+QA-AI-005,qa_framework,QA,LLM replies schema-validated; circuit breaker,brief s12,P0,automated
+QA-AI-006,qa_framework,QA,Daily AI spending cap enforced before calling,brief s12,P0,automated
+QA-AI-007,qa_framework,QA,No provider = deterministic mode,brief s12,P0,automated
+QA-AI-008,qa_framework,QA,Supervisor report end to end,brief s17,P1,automated
+QA-GATE-001,qa_framework,QA,Gate: failed/missing/stale/unrun mandatory results never count as pass,brief s16,P0,automated
+QA-GATE-002,qa_framework,QA,"Gate: low/medium failures warn, do not block",RELEASE_GATES,P1,automated
+QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated
+QA-POL-005,qa_framework,QA,Traceability matrix and test catalog match the test markers,brief s7,P1,automated

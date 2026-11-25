@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, ReactNode, Ref } from "react";
 import { Bell, Moon, Monitor, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -24,9 +24,10 @@ export function SettingsCard({ id, title, description, icon: Icon, children }: {
 const selectClass = "h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 text-base sm:text-sm";
 const themes = [{ value: "light", label: "Light", icon: Sun }, { value: "dark", label: "Dark", icon: Moon }, { value: "system", label: "System", icon: Monitor }] as const;
 
-export function ProfilePreferences({ snapshot, disabled, onSave }: {
+export function ProfilePreferences({ snapshot, disabled, displayNameRef, onSave }: {
   snapshot: SettingsSnapshot;
   disabled: boolean;
+  displayNameRef: Ref<HTMLInputElement>;
   onSave: (command: Extract<SettingsCommand, { kind: "set-profile" }>) => void;
 }) {
   const { theme, setTheme } = useTheme();
@@ -42,7 +43,7 @@ export function ProfilePreferences({ snapshot, disabled, onSave }: {
     <form onSubmit={save}>
       <fieldset disabled={disabled} className="space-y-3">
         <div className="space-y-1.5"><Label htmlFor="settings-display-name">Demo display name</Label>
-          <Input id="settings-display-name" name="displayName" defaultValue={snapshot.displayName} maxLength={maxDisplayName} required />
+          <Input ref={displayNameRef} id="settings-display-name" name="displayName" defaultValue={snapshot.displayName} maxLength={maxDisplayName} required />
         </div>
         <div className="space-y-1.5"><Label htmlFor="settings-timezone">Timezone</Label>
           <select id="settings-timezone" name="timezone" defaultValue={snapshot.timezone} className={selectClass}>

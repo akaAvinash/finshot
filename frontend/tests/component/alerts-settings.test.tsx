@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { Alerts } from "@/components/alerts/alerts";
@@ -29,6 +29,35 @@ describe("Alerts and Settings", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Alerts could not load");
     await user.click(screen.getByRole("button", { name: "Retry alerts" }));
     expect(await screen.findByRole("region", { name: "Alert inbox" })).toBeInTheDocument();
+  });
+
+  it("focuses the inbox when a pending acknowledgement becomes hidden by the unread filter", async () => {
+    render(<WorkspaceControlsProvider><Alerts /></WorkspaceControlsProvider>);
+    const acknowledge = await screen.findByRole("button", { name: "Acknowledge Paper risk limit reached" });
+    fireEvent.click(acknowledge);
+    expect(acknowledge).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Unread" }));
+    expect(screen.getByRole("heading", { name: "Paper risk limit reached" })).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Paper risk limit reached" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Alert inbox" })).toHaveFocus();
+  });
+
+  it("restores keyboard focus when a profile save succeeds or fails", async () => {
+    const user = userEvent.setup();
+    render(<WorkspaceControlsProvider><Settings /></WorkspaceControlsProvider>);
+    const originalName = await screen.findByRole("textbox", { name: "Demo display name" });
+    await user.clear(originalName);
+    await user.type(originalName, " Paper Trader {Enter}");
+    await waitFor(() => expect(screen.getByRole("list", { name: "Demo settings audit trail" })).toHaveTextContent("Profile preferences updated"));
+
+    const savedName = screen.getByRole("textbox", { name: "Demo display name" });
+    expect(savedName).toHaveValue("Paper Trader");
+    expect(savedName).toHaveFocus();
+    await user.clear(savedName);
+    await user.type(savedName, " {Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a display name");
+    expect(savedName).toHaveFocus();
   });
 
   it("confirms a sample phone change and makes stale settings read-only", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bell, Check, CircleAlert, Clock3, LockKeyhole, Settings2 } from "lucide-react";
 import { DashboardSkeleton, DataState } from "@/components/data-state";
 import { PageHeading } from "@/components/page-heading";
@@ -44,6 +44,7 @@ export function Alerts() {
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [severity, setSeverity] = useState("all");
   const [source, setSource] = useState("all");
+  const [acknowledgedId, setAcknowledgedId] = useState<string | null>(null);
   const notify = useNotification();
   const { result } = preview;
   const data = result?.status === "ready" || result?.status === "stale" ? result.data : undefined;
@@ -52,10 +53,16 @@ export function Alerts() {
   const visible = data?.alerts.filter((alert) => (filter === "all" || alert.acknowledgedAt === null) &&
     (severity === "all" || alert.severity === severity) && (source === "all" || alert.source === source)) ?? [];
 
+  useEffect(() => {
+    if (!acknowledgedId) return;
+    const target = document.getElementById(`alert-${acknowledgedId}`) ?? document.getElementById("alert-inbox");
+    target?.focus();
+  }, [acknowledgedId]);
+
   async function acknowledge(id: string) {
     if (await preview.run(id)) {
+      setAcknowledgedId(id);
       notify("Demo alert acknowledged");
-      document.getElementById(filter === "unread" ? "alert-inbox" : `alert-${id}`)?.focus();
     }
   }
 

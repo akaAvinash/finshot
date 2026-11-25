@@ -28,6 +28,8 @@ export function Settings() {
   const client = useWorkspaceControls();
   const preview = useWorkspacePreview(client.getSettings, client.updateSettings);
   const [confirmation, setConfirmation] = useState<SensitiveSettingsChange | null>(null);
+  const [profileSaveCompletions, setProfileSaveCompletions] = useState(0);
+  const displayNameInput = useRef<HTMLInputElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const fallback = useRef<string | null>(null);
   const notify = useNotification();
@@ -42,6 +44,10 @@ export function Settings() {
     }
   }, [hasSnapshot]);
 
+  useEffect(() => {
+    if (profileSaveCompletions > 0) displayNameInput.current?.focus();
+  }, [profileSaveCompletions]);
+
   function open(change: SensitiveSettingsChange, opener: HTMLElement) {
     returnFocus.current = opener;
     fallback.current = confirmCopy[change.kind].anchor;
@@ -50,7 +56,9 @@ export function Settings() {
   }
 
   async function save(command: SettingsCommand) {
-    if (await preview.run(command)) {
+    const saved = await preview.run(command);
+    if (command.kind === "set-profile") setProfileSaveCompletions((count) => count + 1);
+    if (saved) {
       setConfirmation(null);
       notify(settingsActions[command.kind]);
     }
@@ -88,7 +96,7 @@ export function Settings() {
       {preview.actionError && !confirmation && <p role="alert" className="text-sm text-negative">{preview.actionError}</p>}
       <div className="grid items-start gap-4 min-[760px]:grid-cols-2">
         <div className="min-w-0 space-y-4">
-          <ProfilePreferences key={`${snapshot.displayName}:${snapshot.timezone}`} snapshot={snapshot} disabled={disabled} onSave={(command) => void save(command)} />
+          <ProfilePreferences key={`${snapshot.displayName}:${snapshot.timezone}`} snapshot={snapshot} disabled={disabled} displayNameRef={displayNameInput} onSave={(command) => void save(command)} />
           <NotificationSettings values={snapshot.notifications} disabled={disabled} onSave={(command) => void save(command)} />
           <BrokerSettingsLink />
         </div>

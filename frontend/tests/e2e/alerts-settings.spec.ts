@@ -35,8 +35,10 @@ test("protects both routes and shares demo preferences and acknowledgements acro
   await page.getByRole("button", { name: "Save notifications" }).click();
   await expect(page.getByRole("list", { name: "Demo settings audit trail" })).toContainText("Notification preferences updated");
   await page.getByRole("combobox", { name: "Timezone" }).selectOption("UTC");
-  await page.getByRole("button", { name: "Save profile" }).click();
+  const displayName = page.getByRole("textbox", { name: "Demo display name" });
+  await displayName.press("Enter");
   await expect(page.getByRole("list", { name: "Demo settings audit trail" })).toContainText("Profile preferences updated");
+  await expect(displayName).toBeFocused();
 
   await page.getByRole("spinbutton", { name: "Daily loss limit (INR)" }).fill("2250.25");
   await page.getByRole("button", { name: "Review risk changes" }).click();

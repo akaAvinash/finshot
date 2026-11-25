@@ -48,8 +48,10 @@ accounts keep working.
 
 Failure handling: every failure is `401 INVALID_CREDENTIALS` (wrong or reused
 code, uninvited number, unknown number, no authenticator, revoked invite). The
-IP is throttled on every attempt, the phone on failures only (default 5 per 15
-minutes, the same for every well-formed number, 429 `RATE_LIMITED`). Trade-off:
+IP is throttled on every attempt. The phone allowance (default 5 per 15
+minutes) is reserved before the code is checked, so concurrent requests cannot
+exceed it, and given back after a successful login. It is the same for every
+well-formed number (429 `RATE_LIMITED`). Trade-off:
 anyone who knows a number can lock that number out for the window by failing
 five times; throttling the phone is what bounds guessing a six-digit code.
 Failed attempts are audited as `login_failed` with an IP hash and no code. An

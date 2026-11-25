@@ -685,10 +685,13 @@ class AuthService:
         ip_key = hmac_hex(self.keys.identifier, "ip", ip)[:32]
         phone_key = hmac_hex(self.keys.identifier, "phone", phone)[:32]
         window = s.rate_limit_totp_window_seconds
+        # The IP is counted first so a throttled caller cannot use up a phone's
+        # allowance. The phone allowance is reserved before the code is looked
+        # at (so concurrent requests cannot exceed it) and given back on success.
         retry = await self._limiter.hit("totp_login_ip", ip_key, s.rate_limit_totp_per_ip, window)
         if retry is None:
-            retry = await self._limiter.exceeded(
-                "totp_login_phone", phone_key, s.rate_limit_totp_per_user
+            retry = await self._limiter.hit(
+                "totp_login_phone", phone_key, s.rate_limit_totp_per_user, window
             )
         if retry is not None:
             raise _rate_limited(retry)
@@ -748,10 +751,9 @@ class AuthService:
                     totp_enabled=True,
                     step_up_until=step_up_until,
                 )
-        if info is None:
-            await self._limiter.hit(
-                "totp_login_phone", phone_key, s.rate_limit_totp_per_user, window
-            )
+        if info is not None:
+            await self._limiter.release("totp_login_phone", phone_key)
+        else:
             async with self._factory() as db, db.begin():
                 await self._audit(
                     db,

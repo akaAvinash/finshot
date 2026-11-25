@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -144,19 +146,49 @@ def test_a_successful_login_does_not_use_up_the_phone_allowance(
 
 
 def test_a_one_time_code_cannot_start_a_session_once_an_authenticator_exists(
-    client: TestClient, clock: FakeClock, provider: FixedOtpProvider
+    client: TestClient, clock: FakeClock, provider: FixedOtpProvider, db_url: str
 ) -> None:
+    # A code requested (and delivered) before the authenticator exists...
+    early = Browser(client)
+    early.get_csrf()
+    challenge = early.request_otp(PHONE).json()["challengeId"]
+    assert len(provider.deliveries) == 1
     registered(client, clock)
+    # ...no longer starts a session, and stays unused.
+    refused = early.verify(challenge, provider.code)
+    assert refused.status_code == 401
+    assert refused.json()["code"] == "INVALID_OTP"
+    rows = db_rows(db_url, "SELECT consumed_at FROM otp_challenges WHERE id = :i", i=challenge)
+    assert rows[0]["consumed_at"] is None
+    # A new request answers the same 202 but sends nothing.
     before = len(provider.deliveries)
-    browser = Browser(client)
-    browser.get_csrf()
-    challenge = browser.request_otp(PHONE)
-    assert challenge.status_code == 202  # same response as always
-    assert len(provider.deliveries) == before  # nothing sent
-    response = browser.verify(challenge.json()["challengeId"], provider.code)
-    assert response.status_code == 401
-    assert response.json()["code"] == "INVALID_OTP"
-    # A code requested before the authenticator existed is refused too.
+    late = Browser(client)
+    late.get_csrf()
+    assert late.request_otp(PHONE).status_code == 202
+    assert len(provider.deliveries) == before
+
+
+def test_concurrent_failures_never_exceed_the_phone_allowance(
+    make_app: MakeApp, clock: FakeClock
+) -> None:
+    first = make_app()
+    secret = registered(first, clock)
+    good = code_for(secret, clock)
+    wrong = "000000" if good != "000000" else "111111"
+    browsers = [Browser(make_app()) for _ in range(10)]
+    for b in browsers:
+        b.get_csrf()
+    barrier = threading.Barrier(len(browsers))
+
+    def fire(b: Browser) -> int:
+        barrier.wait()
+        status: int = b.post(LOGIN, json={"phone": PHONE, "code": wrong}).status_code
+        return status
+
+    with ThreadPoolExecutor(len(browsers)) as pool:
+        statuses = list(pool.map(fire, browsers))
+    assert statuses.count(401) == 5, statuses  # the default allowance, never more
+    assert statuses.count(429) == 5, statuses
 
 
 def test_operator_reset_returns_the_account_to_registration(

@@ -20,6 +20,14 @@ return {c, ttl}
 """
 
 
+# Give one event back (never below zero), for an attempt that turned out fine.
+_RELEASE_SCRIPT = """
+local c = tonumber(redis.call('GET', KEYS[1]) or '0')
+if c > 0 then return redis.call('DECR', KEYS[1]) end
+return 0
+"""
+
+
 def _ceil_seconds(ms: int) -> int:
     return max(1, -(-ms // 1000))
 
@@ -39,6 +47,10 @@ class RateLimiter:
         )
         count, ttl_ms = int(raw[0]), int(raw[1])
         return _ceil_seconds(ttl_ms) if count > limit else None
+
+    async def release(self, kind: str, subject: str) -> None:
+        """Undo one earlier `hit` (for example after a successful login)."""
+        await self._redis.eval(_RELEASE_SCRIPT, 1, self._key(kind, subject))
 
     async def exceeded(self, kind: str, subject: str, limit: int) -> int | None:
         """Without counting: seconds to wait if `limit` is already reached, else None."""

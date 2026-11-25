@@ -44,7 +44,8 @@ def test_full_login_session_logout_flow(browser: Browser) -> None:
     assert body["user"]["phoneMasked"] == "+91******3210"
     assert body["user"]["displayName"] is None
     assert body["csrfToken"]
-    assert set(body["session"]) == {"idleExpiresAt", "expiresAt"}
+    assert set(body["session"]) == {"idleExpiresAt", "expiresAt", "stepUpUntil"}
+    assert body["session"]["stepUpUntil"] is None
     assert PHONE not in login.text  # the full number is never returned
 
     me = browser.get("/api/v1/auth/me")
@@ -421,7 +422,12 @@ def test_otp_request_response_does_not_reveal_whether_an_account_exists(client: 
         browser.get_csrf()
         response = browser.request_otp(phone)
         assert response.status_code == 202
-        assert set(response.json()) == {"challengeId", "expiresAt", "resendAvailableAt"}
+        assert set(response.json()) == {
+            "challengeId",
+            "expiresAt",
+            "resendAvailableAt",
+            "channel",
+        }
         issued.append(response.json()["challengeId"])
     known_challenge, fresh_challenge = issued
     # Wrong codes against real challenges look identical for known and unknown phones.

@@ -191,6 +191,48 @@ def test_concurrent_failures_never_exceed_the_phone_allowance(
     assert statuses.count(429) == 5, statuses
 
 
+def test_one_valid_code_redeemed_concurrently_starts_one_session(
+    make_app: MakeApp, clock: FakeClock, db_url: str
+) -> None:
+    first = make_app()
+    secret = registered(first, clock)
+    code = code_for(secret, clock)
+    # Four requests: within the phone allowance (5), so the losers fail on the code.
+    browsers = [Browser(make_app()) for _ in range(4)]
+    for b in browsers:
+        b.get_csrf()
+    barrier = threading.Barrier(len(browsers))
+
+    def fire(b: Browser) -> tuple[int, str | None]:
+        barrier.wait()
+        response = b.post(LOGIN, json={"phone": PHONE, "code": code})
+        return response.status_code, response.json().get("code")
+
+    with ThreadPoolExecutor(len(browsers)) as pool:
+        results = list(pool.map(fire, browsers))
+    assert [r[0] for r in results].count(200) == 1, results
+    assert [r for r in results if r[0] != 200] == [(401, "INVALID_CREDENTIALS")] * 3
+    live = db_rows(db_url, "SELECT count(*) AS n FROM sessions WHERE revoked_at IS NULL")
+    assert live[0]["n"] == 1
+
+
+def test_a_failed_allowance_refund_does_not_fail_a_committed_login(
+    client: TestClient, clock: FakeClock, monkeypatch: Any
+) -> None:
+    secret = registered(client, clock)
+
+    async def broken(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("redis went away")
+
+    monkeypatch.setattr(client.app.state.auth._limiter, "release", broken)
+    browser = Browser(client)
+    response = attempt(browser, PHONE, code_for(secret, clock))
+    assert response.status_code == 200, response.text
+    assert browser.cookie("__Host-tradeo_session")
+    assert browser.cookie("__Host-tradeo_csrf")
+    assert browser.get("/api/v1/auth/me").status_code == 200
+
+
 def test_operator_reset_returns_the_account_to_registration(
     client: TestClient, clock: FakeClock, db_url: str, provider: FixedOtpProvider
 ) -> None:

@@ -752,7 +752,12 @@ class AuthService:
                     step_up_until=step_up_until,
                 )
         if info is not None:
-            await self._limiter.release("totp_login_phone", phone_key)
+            # Best effort: the login has committed, so a failed refund must not
+            # turn it into an error (the code is spent and the old session is gone).
+            try:
+                await self._limiter.release("totp_login_phone", phone_key)
+            except Exception:
+                logger.warning("totp_login_phone_refund_failed")
         else:
             async with self._factory() as db, db.begin():
                 await self._audit(

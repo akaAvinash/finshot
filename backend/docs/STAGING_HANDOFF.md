@@ -65,12 +65,18 @@ Every signed-in route exists on the live API: without a cookie, `auth/me`,
 `brokers/preview`, `strategies/preview`, `auto-trading/paper`, `reports/paper`
 and `alerts` each return `401 UNAUTHENTICATED` (not 404).
 
-Not run: the full `./ops verify`. Its first step inserts synthetic rows and
-runs `UPDATE users SET updated_at = now()`, so it writes to the staging
-database. The read-only steps passed: Alembic 0012, SCRAM verifiers, HBA,
-backup access, test DB separation, frontend and ingress. The app-role write and
-DDL-denial probe, the Redis ACL probe and the credential-denial probe have not
-run. They need the owner's approval.
+Full `./ops verify`, run by the owner on 2026-11-25 (it inserts synthetic
+rows and updates `users.updated_at`, so it writes to the staging database):
+
+```
+API readiness and CSRF endpoint passed
+PostgreSQL app reads/writes, DDL denial and credential denial passed
+Redis app commands, restricted ACL and credential denial passed
+Alembic 0012, SCRAM verifiers, HBA, backup access and test DB separation passed
+Frontend and ingress passed
+```
+
+`SELECT version_num FROM alembic_version` afterwards: `0012`.
 
 ## Ports
 

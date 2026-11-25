@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.alerts import producer as alerts
 from app.auth import csrf as csrf_tokens
 from app.auth.cookies import CSRF_COOKIE, SESSION_COOKIE
 from app.auth.crypto import Keys, constant_time_equal, hmac_hex
@@ -503,6 +504,19 @@ class AuthService:
                 resource=f"session:{session_id}",
                 metadata={"ip_hash": self._ip_hash(ip)},
             )
+            await alerts.record(
+                db,
+                user_id=user_row.id,
+                kind="NEW_SIGN_IN",
+                dedupe_key=f"sign-in:{session_id}",
+                message=(
+                    f"A new session started on {label}."
+                    if label
+                    else "A new session started on an unrecognised device."
+                ),
+                at=now,
+                link=("session", str(session_id)),
+            )
         info = SessionInfo(
             session_id=session_id,
             user_id=user_row.id,
@@ -547,6 +561,14 @@ class AuthService:
                 .returning(SessionRow.id)
             )
             count = len(result.all())
+            await alerts.record(
+                db,
+                user_id=info.user_id,
+                kind="SIGNED_OUT_EVERYWHERE",
+                dedupe_key=f"signed-out-everywhere:{uuid.uuid4()}",
+                message=f"Every session of this account was signed out ({count} revoked).",
+                at=self.clock(),
+            )
             await self._audit(
                 db,
                 action="logout_all",

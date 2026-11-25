@@ -1,6 +1,6 @@
 # Backend handoff
 
-Updated 2026-11-24 (UTC), with phase E1 (advisory agents). The repository on `main` is the source of truth;
+Updated 2026-11-25 (UTC), with phase E2 (alerts). The repository on `main` is the source of truth;
 the development kit is the roadmap.
 
 ## Ownership
@@ -23,10 +23,11 @@ the development kit is the roadmap.
 | C3: paper trading and automatic checks | #20 contract, #21 |
 | D: paper reports and reconciliation | #22 contract, #24 |
 | E1: advisory agents | #25 contract, #27 |
+| E2: alerts | #30 contract, this PR (migration `0009`) |
 
 ## Open
 
-None. (#27 is listed as done because it merges with this file.)
+None. (E2 is listed as done because it merges with this file.)
 
 ## Review notes
 
@@ -52,9 +53,51 @@ and live trading.
 
 ## Next backend task
 
-Alerts (kit order: agents, alerts, hardening). Needs its own contract PR
-first, opened against main; open the implementation PR against main only
-after the contract merges (CodeRabbit skips PRs based on other branches).
+1. Staging-only OTP provider (owner decision 2026-11-25): codes for
+   allowlisted synthetic numbers written to a server-only file and read with
+   SSH (`./ops otp`); only when `APP_ENV=staging`; never SMS or logs.
+2. Settings contract PR (profile, timezone; notification preferences are
+   already `/api/v1/alerts/preferences`).
+3. Staging upgrade, waiting on owner approval and Codex #29: pg_dump, deploy
+   main, migrate `0002` to head, real `PUBLIC_ORIGIN`,
+   `TRUSTED_PROXY_HOPS=1`, workers on. Rollback: restore the dump and redeploy
+   release `9e5cf9b`.
+4. Hardening (kit order).
+
+## Staging (read-only check, 2026-11-25)
+
+- Reached only from the owner's machine (Tailscale); the cloud sessions have
+  no route. The staging tooling (`~/tradeo-staging/repo/backend/staging/ops`)
+  lives on the server, not in this repository.
+- Runs release `9e5cf9b` (#9 era) at migration `0002`: api, postgres and redis
+  only, `OTP_PROVIDER=disabled`, placeholder `PUBLIC_ORIGIN`
+  (`https://tradeo-staging.invalid`), `TRUSTED_PROXY_HOPS` unset (0).
+  `./ops verify` passes all four checks.
+
+## Alerts (E2) notes
+
+- `alerts` (migration `0009`): one row per alert, unique
+  (user, dedupe key). Rows change only by a first acknowledgement (trigger
+  `alerts_acknowledge_only()`); DELETE stays for user cascades.
+  `alert_preferences`: one row per user who saved; no row means defaults.
+- Producers in the source transaction (`app/alerts/producer.py`, ON CONFLICT
+  DO NOTHING): paper halt, risk-limit block (once per replayed session,
+  `StepResult.risk_blocked`), cash-cancelled queued buy, stop-loss fill,
+  strategy-inactive pause, replay finished; broker disconnect; sign-in;
+  logout-all.
+- The worker (`ALERT_WORKER_ENABLED`, `ALERT_WORKER_POLL_SECONDS`) is
+  stateless: one INSERT ... SELECT per kind for expired broker connections
+  (dedupe on connection id and expiry, so a reconnect can alert again) and
+  execution-monitor `RECONCILIATION_MISMATCH` agent events. Safe to run in
+  several processes.
+- `ALERTS_ENABLED=false` returns 503 on every alert endpoint and stops the
+  worker; producers keep recording.
+- Preferences hide `warning`/`info` at read time (never `critical`); cursors
+  embed a fingerprint of filters and preferences. Email, SMS and push are
+  reported unavailable.
+- No backfill: activity before `0009` raises no alert, except broker
+  connections already expired (the worker's first pass). No stale-market
+  alert: there is no live feed.
 
 ## Advisory agents (E1) notes
 

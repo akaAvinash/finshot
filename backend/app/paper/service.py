@@ -19,6 +19,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.alerts import producer as alerts
 from app.auth.models import AuditEvent
 from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
@@ -397,7 +398,16 @@ class PaperService:
             raise conflict("The paper engine is already halted.")
         cancelled = await _cancel_queued(db, account, now)
         account.engine = "halted"
-        return [f"Kill switch: engine halted and {cancelled} queued order(s) cancelled."]
+        message = f"Kill switch: engine halted and {cancelled} queued order(s) cancelled."
+        await alerts.record(
+            db,
+            user_id=account.user_id,
+            kind="PAPER_ENGINE_HALTED",
+            dedupe_key=f"paper-halted:{uuid.uuid4()}",
+            message=message,
+            at=now,
+        )
+        return [message]
 
     # ---------------------------------------------------------------- worker
 
@@ -429,12 +439,15 @@ class PaperService:
             )
             if status != "active":
                 account.engine = "idle"
-                db.add(
-                    PaperEvent(
-                        user_id=account.user_id,
-                        message="The assigned strategy is no longer active. Engine paused.",
-                        created_at=now,
-                    )
+                message = "The assigned strategy is no longer active. Engine paused."
+                db.add(PaperEvent(user_id=account.user_id, message=message, created_at=now))
+                await alerts.record(
+                    db,
+                    user_id=account.user_id,
+                    kind="PAPER_STRATEGY_INACTIVE",
+                    dedupe_key=f"paper-strategy-inactive:{account.replay}:{now.isoformat()}",
+                    message=message,
+                    at=now,
                 )
                 return True
             await self._replay_session(db, account, symbols, now)
@@ -486,14 +499,55 @@ class PaperService:
             stop_loss_bps=params.stop_loss_bps,
             symbol=params.instrument,
         )
+        session_index = account.sessions_done
         if queued_row is not None and out.queued_outcome is not None:
             queued_row.status = out.queued_outcome
             if out.queued_outcome == "filled":
                 queued_row.quantity = out.filled_quantity
             queued_row.updated_at = now
+            if out.queued_outcome == "cancelled":
+                await alerts.record(
+                    db,
+                    user_id=account.user_id,
+                    kind="PAPER_ORDER_CANCELLED",
+                    dedupe_key=f"paper-order-cancelled:{queued_row.id}",
+                    message=(
+                        f"{queued_row.side} order for {queued_row.quantity} "
+                        f"{queued_row.instrument} cancelled: cash does not cover the open price."
+                    ),
+                    at=now,
+                    link=("paper-order", str(queued_row.id)),
+                )
+        if out.risk_blocked:
+            await alerts.record(
+                db,
+                user_id=account.user_id,
+                kind="PAPER_RISK_LIMIT_REACHED",
+                dedupe_key=f"paper-risk-limit:{account.replay}:{session_index}",
+                message=(
+                    f"A buy signal for {params.instrument} was blocked: the session loss or"
+                    " trade limit was reached."
+                ),
+                at=now,
+            )
         for fill in out.fills:
+            trade_id = uuid.uuid4()
+            if fill.reason == "stop-loss":
+                await alerts.record(
+                    db,
+                    user_id=account.user_id,
+                    kind="PAPER_STOP_LOSS_EXIT",
+                    dedupe_key=f"paper-stop-loss:{trade_id}",
+                    message=(
+                        f"Sold {fill.quantity} {params.instrument} at the stop-loss,"
+                        f" {rules.rupees(fill.fill_paise)}."
+                    ),
+                    at=now,
+                    link=("paper-trade", str(trade_id)),
+                )
             db.add(
                 PaperTrade(
+                    id=trade_id,
                     user_id=account.user_id,
                     replay=account.replay,
                     instrument=params.instrument,
@@ -598,6 +652,15 @@ async def _record_finish(db: AsyncSession, account: PaperAccount, now: datetime)
         .on_conflict_do_nothing(
             index_elements=[PaperReplayFinish.user_id, PaperReplayFinish.replay]
         )
+    )
+    await alerts.record(
+        db,
+        user_id=account.user_id,
+        kind="PAPER_REPLAY_FINISHED",
+        dedupe_key=f"paper-replay-finished:{account.replay}",
+        message=f"Paper replay {account.replay} replayed its last session. The engine is idle.",
+        at=now,
+        link=("paper-replay", str(account.replay)),
     )
 
 

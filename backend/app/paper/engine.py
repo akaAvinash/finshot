@@ -83,6 +83,8 @@ class StepResult:
     fills: list[Fill] = field(default_factory=list)
     new_order: NewOrder | None = None
     finished: bool = False
+    # A buy signal was blocked by the session risk limits.
+    risk_blocked: bool = False
     events: list[str] = field(default_factory=list)
 
 
@@ -213,6 +215,7 @@ def step(
         long_signal = bar.close > sum(s.close for s in window) / LOOKBACK
         if long_signal and state.position_quantity == 0:
             if risk_blocked(state):
+                out.risk_blocked = True
                 out.events.append("Buy signal blocked by the session risk limits.")
             else:
                 quantity = buy_quantity(state.cash_paise, close_paise, size_bps, stop_loss_bps)

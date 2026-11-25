@@ -161,6 +161,15 @@ class Settings(BaseSettings):
     # ago than this.
     agent_stale_after_seconds: int = Field(default=30, ge=5, le=3600)
 
+    # --- Alerts (Phase E2, in-app only) ---------------------------------------
+    # false: every alert endpoint returns 503 ALERTS_UNAVAILABLE and the worker
+    # does not start. Producers keep recording alerts, so none are lost.
+    alerts_enabled: bool = True
+    # The in-process worker that records broker-expiry and reconciliation
+    # alerts. Turn it off to run the API without it (tests drive it directly).
+    alert_worker_enabled: bool = True
+    alert_worker_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+
     @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
     @classmethod
     def _parse_csv(cls, value: object) -> object:

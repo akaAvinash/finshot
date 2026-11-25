@@ -36,10 +36,15 @@ Platform modules that are **not** engines and keep their owners: `auth`, `alerts
    engines import only that module, never models, tables or private helpers.
 2. An engine writes only its own tables. Cross-engine data moves by interface call
    (read) or by event (change).
-3. Dependencies form a directed acyclic graph (section 3). A cycle is a design
-   defect and needs a review, not a workaround.
+3. Dependencies form a directed acyclic graph (section 3). An edge points from the
+   consumer to the producer and counts both interface calls and event consumption.
+   A cycle is a design defect and needs a review, not a workaround.
 4. Risk Management is independent: it decides, others cannot override it. It
    answers `deny` when input is stale, missing or malformed (deny by default).
+   Risk has no outgoing edges. It is a pure decision function: the caller passes
+   the order intent, an exposure snapshot and a market snapshot, each stamped
+   `asOf`. Risk denies when a snapshot is absent or older than its configured
+   maximum age, so freshness stays enforced by Risk, not by the caller.
 5. Trade Execution acts only on an approved Risk decision and only against a
    simulator sink. Adding a live write path needs gate G9 and a separate approval.
 6. Every record that crosses an engine carries `userId`, `accountId` and an
@@ -65,25 +70,34 @@ flowchart LR
 
   MI --> MD
   BT --> MD
-  BT -->|reads versions| SR
-  SR -.->|BacktestCompleted| BT
-  RM --> MD
-  RM -->|exposure read| PP
-  TE --> RM
+  SR -.->|Backtest.Completed| BT
   PT --> MD
   PT --> SR
   PT --> TE
-  PP -.->|FillRecorded, AccountSnapshot| PT
-  PP -.->|AccountSnapshot| UB
+  TE --> RM
+  PP -.->|Paper.FillRecorded| PT
+  PP -.->|Broker.AccountSnapshot| UB
   OR --> MI
   OR --> SR
   OR --> PT
 ```
 
-Dotted lines are event consumption, solid lines are interface calls. Strategy
-Research consumes `BacktestCompleted` instead of calling Backtesting, which keeps
-the graph acyclic (Backtesting reads strategy versions, Strategy reads results by
-event).
+Dotted lines are event consumption, solid lines are interface calls. Both count as
+dependencies (rule 3). Nothing points back at an engine that reaches it, so the
+graph is acyclic. Two choices keep it that way:
+
+- **Backtesting does not call Strategy Research.** The caller (Orchestration, or
+  the API) passes the strategy version's parameters in the backtest request as a
+  plain value. Backtesting never imports Strategy Research. Strategy Research
+  consumes `Backtest.Completed` to set its verdict.
+- **Risk does not call Market Data or Portfolio.** Paper Trading builds the
+  exposure snapshot from its own virtual account state and passes it, with a
+  market snapshot, through Execution to Risk. Risk checks the `asOf` stamps (rule
+  4). Portfolio only reads fills and broker snapshots; nothing gates on it.
+
+Consequence to review (section 5, question 6): when real broker positions exist,
+the exposure snapshot used for gating must also include them, so the caller that
+builds it needs a read path to Universal Broker.
 
 ## 4. Event contracts (Proposal)
 
@@ -119,10 +133,10 @@ Event list (names are the proposal; the "today" column is Fact):
 
 | Producer | Event | Consumers | Today |
 |---|---|---|---|
-| Market Data | `MarketData.SnapshotPublished`, `MarketData.Stale` | Intelligence, Risk, Paper, Orchestration | none; overview is pulled |
+| Market Data | `MarketData.SnapshotPublished`, `MarketData.Stale` | Intelligence, Paper, Orchestration | none; overview is pulled |
 | Universal Broker | `Broker.AccountSnapshot`, `Broker.ConnectionExpired`, `Broker.Disconnected` | Portfolio, Alerts | `broker_events` rows; alerts for the last two |
 | Market Intelligence | `Intelligence.SnapshotPublished` | Orchestration, Dashboard API | not built |
-| Strategy Research | `Strategy.VersionCreated`, `Strategy.VersionValidated` | Backtesting, Paper | rows in `strategy_versions` |
+| Strategy Research | `Strategy.VersionCreated`, `Strategy.VersionValidated` | Paper | rows in `strategy_versions` |
 | Backtesting | `Backtest.Completed` | Strategy Research | `backtest_runs` status |
 | Risk Management | `Risk.Approved`, `Risk.Denied`, `Risk.LimitReached`, `Risk.KillSwitchSet` | Execution, Paper, Alerts | alert kind `PAPER_RISK_LIMIT_REACHED` |
 | Trade Execution | `Execution.OrderQueued`, `Execution.OrderFilled`, `Execution.OrderCancelled` | Paper, Portfolio, Alerts | alert kind `PAPER_ORDER_CANCELLED` |
@@ -155,6 +169,12 @@ These need an owner decision before downstream implementation.
    Orchestration, and can never change an outcome.
 5. **Frontend consumers.** Codex owns the screens; each engine's API stays in
    `contracts/openapi.yaml`, changed only by a separate contract PR.
+6. **Exposure for gating.** Today only paper state exists, so Paper Trading can
+   supply the exposure snapshot. With real broker data (gate G3 and later) the
+   snapshot must include broker positions. Decide then whether Execution reads
+   Universal Broker directly (adds an edge, still acyclic) or Portfolio supplies a
+   reconciled snapshot (adds Execution to Portfolio and needs Portfolio to stop
+   depending on Paper).
 
 ## 6. Review record
 

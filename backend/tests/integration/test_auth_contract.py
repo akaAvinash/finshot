@@ -12,7 +12,7 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from tests.support import PHONE, Browser
+from tests.support import PHONE, Browser, activate_authenticator
 
 pytestmark = pytest.mark.integration
 
@@ -65,6 +65,10 @@ def test_responses_match_contract_schemas(contract: dict[str, Any], browser: Bro
     assert "csrfToken" in verified.json()  # required by the contract
 
     check(contract, "AuthSession", browser.get("/api/v1/auth/me").json())
+    limited = browser.get("/api/v1/auth/sessions")  # setup required: no authenticator yet
+    assert limited.status_code == 403
+    check(contract, "AuthError", limited.json())
+    activate_authenticator(PHONE)
     check(contract, "SessionList", browser.get("/api/v1/auth/sessions").json())
     assert verified.json()["user"]["phoneMasked"] != PHONE
 
@@ -117,7 +121,7 @@ def test_status_codes_used_are_documented_in_the_contract(
 
 
 def test_settings_bodies_match_contract_schemas(contract: dict[str, Any], browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     profile = browser.get("/api/v1/settings/profile")
     check(contract, "SettingsProfile", profile.json())
     saved = browser.send(
@@ -146,7 +150,7 @@ def test_display_name_contract_pattern_agrees_with_the_server(
     contract: dict[str, Any], browser: Browser
 ) -> None:
     """Names the schema accepts are saved; names it rejects get 400."""
-    browser.login()
+    browser.login_ready()
     for name in ("A", "  Avi nash  ", "a" * 48 + " ", "a" * 49, " ", "", "A\x00B", "A\tB"):
         body = {"displayName": name, "timezone": "UTC"}
         errors = list(

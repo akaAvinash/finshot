@@ -36,7 +36,7 @@ from tests.integration.test_paper import (
 from tests.integration.test_paper import (
     contract as contract,  # fixture
 )
-from tests.support import OTHER_PHONE, Browser, FakeClock, db_rows
+from tests.support import OTHER_PHONE, PHONE, Browser, FakeClock, activate_authenticator, db_rows
 
 pytestmark = pytest.mark.integration
 
@@ -61,7 +61,7 @@ def report(browser: Browser, **params: str) -> dict[str, Any]:
 def replayed(client: TestClient, clock: FakeClock, **overrides: Any) -> tuple[Browser, str]:
     """A user whose SBIN strategy replayed every demo session."""
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser, **overrides)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -93,7 +93,7 @@ def test_requires_a_session(browser: Browser, contract: Any) -> None:
     [{"from": "2026-13-01"}, {"to": "yesterday"}, {"from": "2026-01-02", "to": "2026-01-01"}],
 )
 def test_invalid_period_is_400(browser: Browser, contract: Any, params: dict[str, str]) -> None:
-    browser.login()
+    browser.login_ready()
     for path in (REPORT, CSV):
         response = browser.get(path, params=params)
         assert response.status_code == 400, response.text
@@ -103,7 +103,7 @@ def test_invalid_period_is_400(browser: Browser, contract: Any, params: dict[str
 
 def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> None:
     browser = Browser(make_app(reports_enabled=False))
-    browser.login()
+    browser.login_ready()
     for path in (REPORT, CSV):
         response = browser.get(path)
         assert response.status_code == 503
@@ -112,7 +112,7 @@ def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> 
 
 
 def test_empty_until_a_strategy_is_assigned(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     body = report(browser)
     assert body == {"status": "empty"}
     check(contract, "ReportResult", body)
@@ -195,7 +195,7 @@ def test_open_position_is_marked_at_the_last_close(
     client: TestClient, clock: FakeClock, contract: Any
 ) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -350,7 +350,7 @@ def test_reconciliation_reports_a_mismatch(client: TestClient, clock: FakeClock)
 def test_users_are_isolated(client: TestClient, clock: FakeClock) -> None:
     replayed(client, clock)
     other = Browser(client)
-    other.login(phone=OTHER_PHONE)
+    other.login_ready(phone=OTHER_PHONE)
     assert report(other) == {"status": "empty"}
     assert other.get(CSV).text.count("\r\n") == 1  # header only
 
@@ -416,6 +416,7 @@ def test_migration_backfills_the_current_replay(
     command.downgrade(_alembic(db_url), "0006")
     assert db_rows(db_url, "SELECT to_regclass('paper_replays') AS t")[0]["t"] is None
     command.upgrade(_alembic(db_url), "head")
+    activate_authenticator(PHONE)  # the downgrade dropped the authenticator table
     rows = db_rows(db_url, "SELECT * FROM paper_replays")
     assert [
         (str(r["strategy_id"]), r["replay"], r["version_number"], r["strategy_name"]) for r in rows

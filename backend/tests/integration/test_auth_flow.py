@@ -39,7 +39,7 @@ def cookies_of(response: Any) -> list[dict[str, Any]]:
 def test_full_login_session_logout_flow(browser: Browser) -> None:
     assert browser.get("/api/v1/auth/me").status_code == 401
 
-    login = browser.login()
+    login = browser.login_ready()
     body = login.json()
     assert body["user"]["phoneMasked"] == "+91******3210"
     assert body["user"]["displayName"] is None
@@ -684,9 +684,9 @@ def test_login_rotates_an_existing_session(browser: Browser) -> None:
 
 def test_tenant_isolation_for_sessions(client: TestClient) -> None:
     alice, alice2, bob = Browser(client), Browser(client), Browser(client)
-    alice.login()
-    alice2.login()
-    bob.login(phone=OTHER_PHONE)
+    alice.login_ready()
+    alice2.login_ready()
+    bob.login_ready(phone=OTHER_PHONE)
 
     alice_sessions = alice.get("/api/v1/auth/sessions").json()["sessions"]
     bob_sessions = bob.get("/api/v1/auth/sessions").json()["sessions"]
@@ -707,8 +707,8 @@ def test_tenant_isolation_for_sessions(client: TestClient) -> None:
 
 def test_sessions_list_excludes_revoked_and_expired(client: TestClient, clock: FakeClock) -> None:
     a, b = Browser(client), Browser(client)
-    a.login()
-    b.login()
+    a.login_ready()
+    b.login_ready()
     assert len(a.get("/api/v1/auth/sessions").json()["sessions"]) == 2
     b.post("/api/v1/auth/logout")
     assert len(a.get("/api/v1/auth/sessions").json()["sessions"]) == 1
@@ -716,9 +716,9 @@ def test_sessions_list_excludes_revoked_and_expired(client: TestClient, clock: F
 
 def test_sessions_list_excludes_idle_expired_sessions(client: TestClient, clock: FakeClock) -> None:
     stale, live = Browser(client), Browser(client)
-    stale.login()
+    stale.login_ready()
     clock.advance(31 * 60)  # `stale` is now past its idle timeout but never revoked
-    live.login()
+    live.login_ready()
     sessions = live.get("/api/v1/auth/sessions").json()["sessions"]
     assert len(sessions) == 1 and sessions[0]["current"] is True
     assert (

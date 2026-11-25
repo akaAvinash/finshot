@@ -102,7 +102,7 @@ def test_requires_a_session(browser: Browser, contract: Any) -> None:
 
 
 def test_write_requires_session_csrf_token(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     response = send(
         browser, {"action": "create", "parameters": PARAMS}, headers=browser.headers(csrf="")
     )
@@ -115,7 +115,7 @@ def test_write_requires_session_csrf_token(browser: Browser) -> None:
 
 
 def test_new_user_has_no_strategies(browser: Browser, clock: FakeClock, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     body = browser.get(BASE).json()
     check(contract, "StrategyResult", body)
     assert body["status"] == "ready"
@@ -124,7 +124,7 @@ def test_new_user_has_no_strategies(browser: Browser, clock: FakeClock, contract
 
 
 def test_create_makes_an_unreviewed_draft(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = send(
         browser,
         {
@@ -146,7 +146,7 @@ def test_create_makes_an_unreviewed_draft(browser: Browser, contract: Any) -> No
 
 
 def test_activation_needs_backtest_and_risk_review(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     strategy = create(browser)
     for backtest, review in [
         ("unavailable", "pending"),
@@ -163,7 +163,7 @@ def test_activation_needs_backtest_and_risk_review(browser: Browser) -> None:
 
 
 def test_version_lifecycle(browser: Browser, clock: FakeClock, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     strategy = create(browser)
     sid = strategy["id"]
     approve(sid)
@@ -213,7 +213,7 @@ def test_version_lifecycle(browser: Browser, clock: FakeClock, contract: Any) ->
 
 
 def test_paused_strategy_without_draft_reactivates_same_version(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     approve(sid)
     send(browser, {"action": "activate", "id": sid})
@@ -224,7 +224,7 @@ def test_paused_strategy_without_draft_reactivates_same_version(browser: Browser
 
 
 def test_save_draft_resets_checks(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     approve(sid)
     s = find(send(browser, {"action": "save-draft", "id": sid, "parameters": PARAMS}).json(), sid)
@@ -248,7 +248,7 @@ def test_save_draft_resets_checks(browser: Browser) -> None:
 def test_risk_review_follows_tier_limits(
     browser: Browser, tier: str, size: int, stop: int, review: str
 ) -> None:
-    browser.login()
+    browser.login_ready()
     created = create(browser, riskTier=tier, positionSizeBps=size, stopLossBps=stop)
     assert created["draft"]["riskReview"] == review
     # save-draft applies the same rule, in both directions.
@@ -281,7 +281,7 @@ def test_risk_review_follows_tier_limits(
 
 
 def test_pause_requires_active(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     response = send(browser, {"action": "pause", "id": sid})
     assert response.status_code == 409
@@ -289,7 +289,7 @@ def test_pause_requires_active(browser: Browser) -> None:
 
 @pytest.mark.parametrize("bad_id", ["not-a-uuid", "00000000-0000-4000-8000-000000000000"])
 def test_unknown_ids_are_404(browser: Browser, bad_id: str) -> None:
-    browser.login()
+    browser.login_ready()
     for body in (
         {"action": "activate", "id": bad_id},
         {"action": "pause", "id": bad_id},
@@ -305,8 +305,8 @@ def test_users_cannot_see_or_change_each_others_strategies(
 ) -> None:
     client = make_app()
     first, second = Browser(client), Browser(client)
-    first.login()
-    second.login(phone=OTHER_PHONE)
+    first.login_ready()
+    second.login_ready(phone=OTHER_PHONE)
     sid = create(first)["id"]
     approve(sid)
     assert second.get(BASE).json()["data"]["strategies"] == []
@@ -344,7 +344,7 @@ def test_users_cannot_see_or_change_each_others_strategies(
     ],
 )
 def test_invalid_commands_are_400(browser: Browser, body: dict[str, Any]) -> None:
-    browser.login()
+    browser.login_ready()
     response = send(browser, body)
     assert response.status_code == 400, response.text
     assert response.json()["code"] == "INVALID_REQUEST"
@@ -353,7 +353,7 @@ def test_invalid_commands_are_400(browser: Browser, body: dict[str, Any]) -> Non
 
 def test_strategy_limit_holds_under_concurrency(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     user_id = db_rows(_db(), "SELECT id FROM users")[0]["id"]
     db_rows(
         _db(),
@@ -396,7 +396,7 @@ def test_strategy_limit_holds_under_concurrency(client: TestClient) -> None:
 
 def test_disabled_is_503(make_app: Callable[..., TestClient]) -> None:
     browser = Browser(make_app(strategies_enabled=False))
-    browser.login()
+    browser.login_ready()
     for response in (browser.get(BASE), send(browser, {"action": "create", "parameters": PARAMS})):
         assert response.status_code == 503
         assert response.json()["code"] == "STRATEGY_UNAVAILABLE"
@@ -416,7 +416,7 @@ def test_every_contract_strategy_operation_is_implemented(contract: Any, browser
 
 
 def test_error_bodies_match_contract(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     check(contract, "StrategyError", send(browser, {}).json())
     check(contract, "StrategyError", send(browser, {"action": "pause", "id": "x"}).json())
     sid = create(browser)["id"]
@@ -424,7 +424,7 @@ def test_error_bodies_match_contract(browser: Browser, contract: Any) -> None:
 
 
 def test_versions_are_immutable_in_the_database(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     approve(sid)
     send(browser, {"action": "activate", "id": sid})
@@ -477,7 +477,7 @@ def test_check_constraints_keep_their_intended_names() -> None:
 
 def test_concurrent_activations_create_one_version(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     approve(sid)
     active = browser.activate()
@@ -505,7 +505,7 @@ def test_concurrent_activations_create_one_version(client: TestClient) -> None:
 def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
     """An activation committed between the snapshot's two reads must not show
     the draft and the new version together."""
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     service = browser.client.app.state.strategies  # type: ignore[attr-defined]
     stored = json.dumps(
@@ -547,7 +547,7 @@ def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
 def test_command_result_shows_changes_committed_after_it(browser: Browser) -> None:
     """The result of a command is read fresh: a change committed by another
     request after this one must not be hidden by this request's own objects."""
-    browser.login()
+    browser.login_ready()
     sid = create(browser)["id"]
     service = browser.client.app.state.strategies  # type: ignore[attr-defined]
 
@@ -574,7 +574,7 @@ def test_command_result_shows_changes_committed_after_it(browser: Browser) -> No
 def test_result_as_of_is_the_time_the_result_is_read(browser: Browser, clock: FakeClock) -> None:
     """asOf describes when the returned snapshot was built, not when the
     command started."""
-    browser.login()
+    browser.login_ready()
     service = browser.client.app.state.strategies  # type: ignore[attr-defined]
     started = clock.now
     service._before_result_snapshot = lambda: clock.advance(5)
@@ -605,7 +605,7 @@ def test_contract_and_server_agree_on_trimmed_lengths(
 ) -> None:
     """The command schema and the server accept exactly the same names and
     descriptions: lengths count after surrounding whitespace is trimmed."""
-    browser.login()
+    browser.login_ready()
     body = {"action": "create", "parameters": {**PARAMS, "name": name, "description": description}}
     schema = {"$ref": "#/components/schemas/StrategyCommand", "components": contract["components"]}
     contract_accepts = Draft202012Validator(schema).is_valid(body)

@@ -11,17 +11,17 @@ Recorded 2026-11-25 by a read-only check on the staging host. Nothing was change
 | Item | Value | Status |
 |---|---|---|
 | Backend live on staging | `c700c7e37084d5d33760913edeb1c8da4466fdfc` (#45), release dir `~/tradeo-staging/repo`, image `tradeo-staging-api:local` (10570d619226, built 2026-11-25 14:45 UTC) | Fact, from the host |
-| Backend vs main | `c700c7e` is on main. Against main `2bc5602`, `backend/` differs only by `docs/HANDOFF.md`. Staging runs main's backend code. | Fact, from `git diff` |
-| Frontend live on staging | Since 2026-11-25 18:39 UTC: image label `de9612b7fb3c12c8c2726e1853be4980235cb98c` (image c9815da7177e), branch `codex/staging-api-proxies`, PR #50 (API proxy routes). Before that: `9675ec05eb0975de4b1cb77080e69016bed74986` (image 0a9e423d4671). | Fact, from the host |
-| Frontend vs main | `de9612b` is **not on main** until PR #50 merges. The earlier `9675ec0` tree equalled main's frontend. Re-pin to the merge commit once #50 lands. | Fact, from git |
+| Backend vs main | `c700c7e` is on main. Against main `e2c7b0e` (after #49 and #50), `backend/` and `contracts/` differ only by docs, `scripts/verify_staging.py` and its unit test, none of which run in the API. Staging runs main's backend code. | Fact, from `git diff` |
+| Frontend live on staging | Since 2026-11-25 18:39 UTC: image label `de9612b7fb3c12c8c2726e1853be4980235cb98c` (image c9815da7177e), the PR #50 branch head. Before that: `9675ec0` (image 0a9e423d4671). | Fact, from the host |
+| Frontend vs main | PR #50 landed on main as `4c338e3`. `git diff de9612b e2c7b0e -- frontend` is empty, so the staging frontend equals main's. | Fact, from `git diff` |
+| **Pinned revision** | **main `e2c7b0e43227a3a2bf401ada466033e7b83fa1ca`.** Staging's backend and frontend code equal it; no deploy was needed. | Fact, from `git diff` |
 | Alembic head, live DB | `0012`, from `SELECT version_num FROM alembic_version` in a read-only transaction. Equals the head in this repo (`0012_recovery_codes`). | Fact, from the host |
 | Preceding backend release | `~/tradeo-staging/repo-8c8e08a` (`8c8e08a1d88460a8481918a955bf9e03d119439a`), then `~/tradeo-staging/repo-9e5cf9b` (migration 0002). Tarballs kept. | Fact, from the host |
 | Rollback frontend image | `tradeo-staging-frontend:rollback-de9612b...` = image 0a9e423d4671, the `9675ec0` build | Fact, from the host |
 | Rollback API image | None. The API image has only the `:local` tag. | Fact, from the host |
 
-The Settings and recovery frontend and the c700c7e backend are what the demo
-handoff runs on. Nothing needs deploying for T03 unless the owner wants the
-doc-only commits on main.
+The demo handoff runs main `e2c7b0e`'s code: the `c700c7e` backend build and
+the `de9612b` frontend build. Nothing else needs deploying for T03.
 
 ## Health checks
 
@@ -35,29 +35,18 @@ Evidence from the staging host. Inside the api container (`http://127.0.0.1:8000
 | `GET /api/v1/market/instruments` | `200`, 12 instruments |
 | Frontend `/login` inside the container, and through the ingress at `127.0.0.1:18446` | `200` and `200` |
 
-Through the tailnet origin `https://homelab.tail14603a.ts.net:8446`, `/health/live`,
-`/health/ready`, `/api/v1/market/overview` and `/api/v1/market/instruments`
-all return **404**. The ingress sends everything to the frontend, and at
-`9675ec0` the frontend proxies only `/api/v1/auth/*`, `/api/v1/alerts*`,
-`/api/v1/settings/profile` and `/api/v1/reports/paper/trades.csv`.
-Port `127.0.0.1:8000` on the host belongs to an unrelated container, not to Tradeo.
-
-**Fixed for T09, T10 and T11 by the `de9612b` frontend (PR #50).** Re-checked
-through the tailnet origin at 2026-11-25 18:44 UTC, signed out:
-`market/overview` 200 (`source: demo`, 12 quotes), `market/instruments` 200
-(12), `market/instruments/NSE:NIFTY50/candles?timeframe=1D` 200, and
-`auth/me`, `brokers/preview`, `strategies/preview`, `auto-trading/paper`,
-`reports/paper`, `alerts` all 401 (previously 404). `/health/*` stays
-unreachable from outside by design; probe it inside the host.
-
-Signed-in run through the tailnet origin, 2026-11-25 18:44 UTC, from the owner's
-PC (`STAGING_BASE_URL=https://homelab.tail14603a.ts.net:8446`): 8 PASS and 2
-FAIL. The 2 FAILs are `/health/live` and `/health/ready` (404 from outside, as
-expected). PASS: `market/overview` (`source=demo`, 12 quotes),
-`market/instruments` (12), `auth/me`, `brokers/preview` (`status=ready`,
-2 connections), `strategies/preview` (`status=ready`, 0 strategies),
-`auto-trading/paper` and `reports/paper` (both `status=empty`, no strategy
-assigned), `alerts` (3 items).
+The ingress sends everything on the tailnet origin
+`https://homelab.tail14603a.ts.net:8446` to the frontend. Until the PR #50
+frontend went live, it proxied only `/api/v1/auth/*`, `/api/v1/alerts*`,
+`/api/v1/settings/profile` and `/api/v1/reports/paper/trades.csv`, so
+`market/*`, `brokers/preview`, `strategies/preview`, `auto-trading/paper` and
+`reports/paper` returned 404 there. Re-checked signed out at 18:44 UTC with
+`de9612b` live: `market/overview` 200 (`source: demo`, 12 quotes),
+`market/instruments` 200 (12), `market/instruments/NSE:NIFTY50/candles?timeframe=1D`
+200, and the six session routes 401. T09, T10 and T11 can use the origin.
+`/health/*` stays unreachable from outside by design (404); probe it inside
+the host. Port `127.0.0.1:8000` on the host belongs to an unrelated container,
+not to Tradeo.
 
 The API publishes no host port, so run the smoke script inside the API
 container. Unauthenticated run, 2026-11-25 (script fed on stdin, GET only):
@@ -169,13 +158,46 @@ This account has no strategy assigned, so paper trading and the paper report
 are `status: empty`. Their populated shapes (the Dashboard fields above) are not
 exercised on staging yet; assign a demo strategy and re-run to cover them.
 
-To repeat the run:
+Signed-in run through the tailnet origin, after the PR #50 frontend went live:
+the owner ran the script from a tailnet PC with
+`STAGING_BASE_URL=https://homelab.tail14603a.ts.net:8446` and their session,
+2026-11-25 18:44 UTC. Every API route passed through the frontend proxy. The
+two health checks fail by design, because `/health/*` is not exposed on the
+public origin (they pass inside the container, above):
+
+```
+FAIL  /health/live  http=404  no JSON object
+FAIL  /health/ready  http=404  no JSON object
+PASS  /api/v1/market/overview  http=200  keys=['asOf', 'quotes', 'session', 'source'] source=demo quotes[]=12
+PASS  /api/v1/market/instruments  http=200  keys=['instruments'] instruments[]=12
+PASS  /api/v1/auth/me  http=200  keys=['session', 'user']
+PASS  /api/v1/brokers/preview  http=200  keys=['data', 'status'] status=ready connections[]=2 events[]=0
+PASS  /api/v1/strategies/preview  http=200  keys=['data', 'status'] status=ready strategies[]=0
+PASS  /api/v1/auto-trading/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/reports/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/alerts  http=200  keys=['asOf', 'items', 'nextCursor', 'unread'] items[]=3
+2 failed
+```
+
+To repeat it from a tailnet PC (Windows PowerShell 5.1 or 7), from the root of
+a checkout of main:
+
+```powershell
+$env:STAGING_BASE_URL = 'https://homelab.tail14603a.ts.net:8446'
+$s = Read-Host 'Session cookie' -AsSecureString
+$env:STAGING_SESSION_COOKIE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))
+python backend/scripts/verify_staging.py
+Remove-Item Env:STAGING_SESSION_COOKIE; Remove-Variable s
+```
+
+Expect 8 PASS and the two `/health/*` FAILs.
+
+To repeat the in-container run:
 
 1. Sign in at `https://homelab.tail14603a.ts.net:8446` (email code, then
    authenticator) and copy the value of the `__Host-tradeo_session` cookie
    from the browser's developer tools.
-2. From a PowerShell prompt at the root of a checkout that has the script (main
-   once this is merged), copy it to the host:
+2. From a PowerShell prompt at the root of a checkout that has the script (main), copy it to the host:
 
    ```powershell
    Get-Content backend/scripts/verify_staging.py -Raw | ssh avinaks@100.108.199.120 'umask 077; cat > /tmp/verify_staging.py'

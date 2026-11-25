@@ -62,9 +62,9 @@ def worker(client: TestClient) -> int:
 def signed_in(client: TestClient, phone: str | None = None) -> Browser:
     browser = Browser(client)
     if phone is None:
-        browser.login()
+        browser.login_ready()
     else:
-        browser.login(phone=phone)
+        browser.login_ready(phone=phone)
     return browser
 
 
@@ -297,7 +297,7 @@ def test_broker_expiry_alerts_once_and_disconnect_alerts(
     )
     clock.advance(8 * 3600)
     assert worker(client) == 1
-    browser.login()  # the first session reached its absolute expiry
+    browser.login_ready()  # the first session reached its absolute expiry
     assert (
         browser.post(f"{BROKERS}/zerodha/actions", json={"action": "disconnect"}).status_code == 200
     )

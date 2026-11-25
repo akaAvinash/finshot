@@ -65,6 +65,10 @@ def _invalid_otp() -> ApiError:
     return ApiError(401, "INVALID_OTP", "The code is invalid or has expired.")
 
 
+def totp_setup_required() -> ApiError:
+    return ApiError(403, "TOTP_SETUP_REQUIRED", "Set up your authenticator app to continue.")
+
+
 def _csrf_failed() -> ApiError:
     return ApiError(403, "CSRF_FAILED", "The request could not be verified. Reload and try again.")
 

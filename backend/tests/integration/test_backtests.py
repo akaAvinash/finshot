@@ -156,7 +156,7 @@ def start(browser: Browser, body: dict[str, Any], **kwargs: Any) -> Any:
 def draft_ref(browser: Browser) -> str:
     """Log in (if needed), create a strategy and return its draft's revision id."""
     if browser.csrf is None:
-        browser.login()
+        browser.login_ready()
     sid = create_strategy(browser)
     return f"{sid}:draft"
 
@@ -207,7 +207,7 @@ def test_start_requires_session_csrf_token(browser: Browser, contract: Any) -> N
 
 
 def test_new_user_workspace(browser: Browser, clock: FakeClock, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     body = browser.get(BASE).json()
     check(contract, "BacktestWorkspaceResult", body)
     data = body["data"]
@@ -220,7 +220,7 @@ def test_new_user_workspace(browser: Browser, clock: FakeClock, contract: Any) -
 
 
 def test_workspace_lists_each_version_and_the_draft(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     activate(browser, sid)
     save_draft(browser, sid, name="NIFTY Momentum v2", positionSizeBps=750, instrument="SBIN")
@@ -257,7 +257,7 @@ def test_workspace_lists_each_version_and_the_draft(browser: Browser, contract: 
 
 def test_run_lifecycle(client: TestClient, clock: FakeClock, contract: Any) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     activate(browser, sid)
     body = config(f"{sid}:1")
@@ -333,7 +333,7 @@ SHORT_WINDOW: dict[str, Any] = {"from": "2026-10-20", "outOfSampleFrom": "2026-1
 
 def test_completed_draft_run_sets_the_strategy_check(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     body = config(f"{sid}:draft", **LONG_WINDOW)
     expected = backtest_verdict(
@@ -362,7 +362,7 @@ def test_completed_draft_run_sets_the_strategy_check(client: TestClient) -> None
 
 def test_failing_draft_run_fails_the_check_and_the_latest_run_wins(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     short = config(f"{sid}:draft", **SHORT_WINDOW)
     result = expected_result(short, 900)
@@ -390,7 +390,7 @@ def test_runs_that_do_not_count_leave_the_check(
     client: TestClient, overrides: dict[str, Any]
 ) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     assert start(browser, config(f"{sid}:draft", **overrides)).status_code == 202
     assert work(client)
@@ -399,7 +399,7 @@ def test_runs_that_do_not_count_leave_the_check(
 
 def test_run_of_an_edited_draft_or_a_version_leaves_the_check(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     start(browser, config(f"{sid}:draft"))
     save_draft(browser, sid, positionSizeBps=800)  # edited after the run was queued
@@ -425,7 +425,7 @@ def test_completion_waits_for_a_concurrent_save_draft(client: TestClient) -> Non
     save-draft that arrives meanwhile waits and then resets the check. Without
     the lock the worker's verdict would overwrite the reset."""
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser)
     start(browser, config(f"{sid}:draft"))
     pool = ThreadPoolExecutor(max_workers=1)
@@ -460,7 +460,7 @@ def test_completion_waits_for_a_concurrent_save_draft(client: TestClient) -> Non
 
 def test_parameters_are_copied_when_queued(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = create_strategy(browser, positionSizeBps=900)
     body = config(f"{sid}:draft")
     run_id = start(browser, body).json()["id"]
@@ -686,7 +686,7 @@ def test_users_cannot_see_or_use_each_others_runs(make_app: Callable[..., TestCl
     client = make_app(backtest_worker_enabled=False)
     first, second = Browser(client), Browser(client)
     ref = draft_ref(first)
-    second.login(phone=OTHER_PHONE)
+    second.login_ready(phone=OTHER_PHONE)
     run_id = start(first, config(ref)).json()["id"]
     response = second.get(f"{RUNS}/{run_id}")
     assert response.status_code == 404
@@ -703,7 +703,7 @@ def test_users_cannot_see_or_use_each_others_runs(make_app: Callable[..., TestCl
 
 @pytest.mark.parametrize("bad_id", ["nope", str(uuid.uuid4()), "x" * 64])
 def test_unknown_run_ids_are_404(browser: Browser, bad_id: str) -> None:
-    browser.login()
+    browser.login_ready()
     response = browser.get(f"{RUNS}/{bad_id}")
     assert response.status_code == 404
     assert response.json()["code"] == "BACKTEST_NOT_FOUND"
@@ -711,7 +711,7 @@ def test_unknown_run_ids_are_404(browser: Browser, bad_id: str) -> None:
 
 def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> None:
     browser = Browser(make_app(backtests_enabled=False))
-    browser.login()
+    browser.login_ready()
     for response in (
         browser.get(BASE),
         browser.get(f"{RUNS}/{uuid.uuid4()}"),

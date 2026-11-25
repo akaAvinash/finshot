@@ -158,6 +158,20 @@ Read the current code over SSH on the server:
 are refused, so staging can never message a real person. The code is the
 operator's to read; it never appears in logs or API responses.
 
+## Setup required (contract 0.10.0)
+
+A session whose account has no active authenticator (`user.totpEnabled` is
+false) may only call `getCsrfToken`, `getCurrentUser`, `logout`, `logoutAll`,
+`enrollTotp` and `confirmTotp`. Every other session operation answers
+`403 TOTP_SETUP_REQUIRED` after the 401 check and before CSRF, and changes
+nothing. In code: `SetupSession` (any valid session) for the six, and
+`RequiredSession` (adds the authenticator check) for everything else, so a new
+route is restricted by default. Confirming an authenticator lifts the limit on
+every session of the account, because `totpEnabled` is read from the database
+on each request. Tests: `tests/integration/test_auth_setup_required.py` reads
+the restricted list from the contract. Domain tests use
+`Browser.login_ready()`, which gives the test account an authenticator row.
+
 ## Step-up (TOTP)
 
 - `POST /auth/totp/enroll`: needs a sign-in within 15 minutes (else 403

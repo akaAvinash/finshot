@@ -157,6 +157,15 @@ class Browser:
         assert response.status_code == 200, response.text
         return response
 
+    def login_ready(self, code: str = "123456", phone: str = PHONE) -> Any:
+        """Sign in and give the account an active authenticator, so the session
+        is no longer limited to setting one up. Domain tests use this; the
+        auth tests use `login` to exercise the setup-required limit."""
+        deactivate_authenticator(phone)  # a code cannot start a session once one is active
+        response = self.login(code, phone)
+        activate_authenticator(phone)
+        return response
+
     def post(self, path: str, **kwargs: Any) -> Any:
         return self.send("POST", path, headers=kwargs.pop("headers", self.headers()), **kwargs)
 
@@ -172,6 +181,33 @@ def invite_phone(phone: str, email: str | None = None) -> None:
         " email = COALESCE(:e, invites.email)",
         p=phone,
         e=email,
+    )
+
+
+def activate_authenticator(phone: str) -> None:
+    """Mark the invited user's authenticator confirmed directly in the database
+    (the secret is a placeholder: nothing here signs in with it)."""
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        return
+    db_rows(
+        url,
+        "INSERT INTO totp_credentials (user_id, secret_enc, created_at, confirmed_at, last_step)"
+        " SELECT id, :secret, now(), now(), 0 FROM users WHERE phone_e164 = :p"
+        " ON CONFLICT (user_id) DO UPDATE SET confirmed_at = now(), pending_expires_at = NULL",
+        p=phone,
+        secret=b"test-placeholder",
+    )
+
+
+def deactivate_authenticator(phone: str) -> None:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        return
+    db_rows(
+        url,
+        "DELETE FROM totp_credentials WHERE user_id IN (SELECT id FROM users WHERE phone_e164 = :p)",
+        p=phone,
     )
 
 

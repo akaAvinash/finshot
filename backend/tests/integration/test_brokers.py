@@ -108,7 +108,7 @@ def test_requires_a_session(browser: Browser) -> None:
 
 
 def test_write_requires_session_csrf_token(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     missing = act(browser, "zerodha", "connect", headers=browser.headers(csrf=""))
     assert missing.status_code == 403
     assert missing.json()["code"] == "CSRF_FAILED"
@@ -122,8 +122,8 @@ def test_write_requires_session_csrf_token(browser: Browser) -> None:
 def test_token_from_another_session_is_rejected(make_app: Callable[..., TestClient]) -> None:
     client = make_app()
     first, second = Browser(client), Browser(client)
-    first.login()
-    second.login(phone=OTHER_PHONE)
+    first.login_ready()
+    second.login_ready(phone=OTHER_PHONE)
     response = act(second, "zerodha", "connect", headers=second.headers(csrf=first.csrf))
     assert response.status_code == 403
     # Header and cookie agree but belong to the first session: only the
@@ -142,7 +142,7 @@ def test_token_from_another_session_is_rejected(make_app: Callable[..., TestClie
 
 
 def test_new_user_starts_disconnected(browser: Browser, clock: FakeClock, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = browser.get(BASE)
     assert response.status_code == 200
     body = response.json()
@@ -159,7 +159,7 @@ def test_new_user_starts_disconnected(browser: Browser, clock: FakeClock, contra
 
 
 def test_full_lifecycle(browser: Browser, clock: FakeClock, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     connected = act(browser, "zerodha", "connect")
     assert connected.status_code == 200, connected.text
     snap = connected.json()
@@ -210,7 +210,7 @@ def test_full_lifecycle(browser: Browser, clock: FakeClock, contract: Any) -> No
 def test_actions_that_do_not_fit_the_state_conflict(
     browser: Browser, setup: list[str], action: str
 ) -> None:
-    browser.login()
+    browser.login_ready()
     for step in setup:
         assert act(browser, "fyers", step).status_code == 200
     before = db_rows(_db(), "SELECT count(*) AS n FROM broker_events")[0]["n"]
@@ -224,7 +224,7 @@ def test_expired_connection_can_only_reconnect_or_disconnect(
     long_session: Browser, clock: FakeClock
 ) -> None:
     browser = long_session
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     act(browser, "zerodha", "sync")
     clock.advance(8 * 3600)  # exactly at expiresAt: expired
@@ -240,7 +240,7 @@ def test_expired_connection_can_only_reconnect_or_disconnect(
 
 def test_expired_connection_can_disconnect(long_session: Browser, clock: FakeClock) -> None:
     browser = long_session
-    browser.login()
+    browser.login_ready()
     act(browser, "fyers", "connect")
     clock.advance(9 * 3600)
     assert act(browser, "fyers", "disconnect").status_code == 200
@@ -257,7 +257,7 @@ def test_expired_connection_can_disconnect(long_session: Browser, clock: FakeClo
     ],
 )
 def test_invalid_requests_are_400(browser: Browser, broker: str, body: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = browser.post(f"{BASE}/{broker}/actions", json=body)
     assert response.status_code == 400
     assert response.json()["code"] == "INVALID_REQUEST"
@@ -266,8 +266,8 @@ def test_invalid_requests_are_400(browser: Browser, broker: str, body: Any) -> N
 def test_users_only_see_their_own_connections(make_app: Callable[..., TestClient]) -> None:
     client = make_app()
     first, second = Browser(client), Browser(client)
-    first.login()
-    second.login(phone=OTHER_PHONE)
+    first.login_ready()
+    second.login_ready(phone=OTHER_PHONE)
     assert act(first, "zerodha", "connect").status_code == 200
     other = second.get(BASE).json()["data"]
     assert account(other, "zerodha") is None
@@ -279,7 +279,7 @@ def test_users_only_see_their_own_connections(make_app: Callable[..., TestClient
 
 
 def test_events_are_capped_at_50_oldest_first(browser: Browser, clock: FakeClock) -> None:
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     for _ in range(51):
         clock.advance(1)
@@ -293,7 +293,7 @@ def test_events_are_capped_at_50_oldest_first(browser: Browser, clock: FakeClock
 
 def test_concurrent_connects_create_one_connection(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     active = browser.activate()
     headers = {
         **browser.headers(),
@@ -337,7 +337,7 @@ class WrongAccountAdapter(DemoBrokerAdapter):
 @pytest.mark.parametrize("adapter", [FailingAdapter(), SlowAdapter()])
 def test_source_failure_is_503_and_writes_nothing(make_broker_app: Any, adapter: Any) -> None:
     browser = make_broker_app(adapter, broker_timeout_seconds=0.1)
-    browser.login()
+    browser.login_ready()
     response = act(browser, "zerodha", "connect")
     assert response.status_code == 503
     assert response.json()["code"] == "BROKER_UNAVAILABLE"
@@ -348,7 +348,7 @@ def test_source_failure_is_503_and_writes_nothing(make_broker_app: Any, adapter:
 
 def test_sync_for_a_different_account_is_not_recorded(make_broker_app: Any) -> None:
     browser = make_broker_app(WrongAccountAdapter())
-    browser.login()
+    browser.login_ready()
     assert act(browser, "zerodha", "connect").status_code == 200
 
     def broker_state() -> list[list[dict[str, Any]]]:
@@ -367,7 +367,7 @@ def test_sync_for_a_different_account_is_not_recorded(make_broker_app: Any) -> N
 
 def test_disabled_provider_is_503(make_broker_app: Any) -> None:
     browser = make_broker_app(broker_provider="disabled")
-    browser.login()
+    browser.login_ready()
     for response in (browser.get(BASE), act(browser, "zerodha", "connect")):
         assert response.status_code == 503
         assert response.json()["code"] == "BROKER_UNAVAILABLE"
@@ -388,7 +388,7 @@ def test_every_contract_broker_operation_is_implemented(contract: Any, browser: 
 
 def test_error_bodies_match_contract(browser: Browser, contract: Any) -> None:
     check(contract, "BrokerError", browser.get(BASE).json())
-    browser.login()
+    browser.login_ready()
     check(contract, "BrokerError", act(browser, "fyers", "sync").json())
 
 
@@ -410,7 +410,7 @@ def test_broker_migration_rolls_back_and_forward(db_url: str) -> None:
 
 
 def test_deleting_a_user_removes_their_broker_rows(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     db_rows(_db(), "DELETE FROM users")
     assert db_rows(_db(), "SELECT 1 FROM broker_connections") == []
@@ -418,7 +418,7 @@ def test_deleting_a_user_removes_their_broker_rows(browser: Browser) -> None:
 
 
 def test_database_rejects_non_demo_connections(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     with pytest.raises(Exception, match="environment_demo"):
         db_rows(_db(), "UPDATE broker_connections SET environment = 'LIVE'")
@@ -491,7 +491,7 @@ def test_contract_accepts_both_providers_disconnected_and_rejects_extras(contrac
 def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
     """An action committed between the snapshot's two reads must not show up
     in one read and not the other."""
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     service = browser.client.app.state.brokers  # type: ignore[attr-defined]
     user_id = db_rows(_db(), "SELECT id FROM users")[0]["id"]
@@ -522,7 +522,7 @@ def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
 def test_action_result_shows_changes_committed_after_it(browser: Browser) -> None:
     """The result of an action is read fresh: a sync committed by another
     request after this one must not be hidden by this request's own objects."""
-    browser.login()
+    browser.login_ready()
     act(browser, "zerodha", "connect")
     service = browser.client.app.state.brokers  # type: ignore[attr-defined]
     later = "2030-01-01T00:00:00+00:00"
@@ -545,7 +545,7 @@ def test_action_result_shows_changes_committed_after_it(browser: Browser) -> Non
 def test_result_as_of_is_the_time_the_result_is_read(browser: Browser, clock: FakeClock) -> None:
     """asOf describes when the returned snapshot was built, not when the
     action started, while the event keeps the action's time."""
-    browser.login()
+    browser.login_ready()
     service = browser.client.app.state.brokers  # type: ignore[attr-defined]
     started = clock.now
     service._before_result_snapshot = lambda: clock.advance(5)

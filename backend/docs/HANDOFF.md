@@ -27,7 +27,8 @@ the development kit is the roadmap.
 | Auth: invite-only sign-in, OTP providers, spend caps, TOTP step-up | #33 contract, #34 (migration `0010`) |
 | Settings: profile (display name, timezone) and ending another session | #35 contract, #36 (migration `0011`) |
 | Registration by emailed code, then authenticator sign-in | #37 contract, #38 (no migration) |
-| Recovery codes for a lost authenticator | #40 contract, this PR (migration `0012`) |
+| Recovery codes for a lost authenticator | #40 contract, #41 (migration `0012`) |
+| Setup required until an authenticator is active | #43 contract, this PR (no migration) |
 
 ## Open
 

@@ -12,11 +12,11 @@ Recorded 2026-11-25 by a read-only check on the staging host. Nothing was change
 |---|---|---|
 | Backend live on staging | `c700c7e37084d5d33760913edeb1c8da4466fdfc` (#45), release dir `~/tradeo-staging/repo`, image `tradeo-staging-api:local` (10570d619226, built 2026-11-25 14:45 UTC) | Fact, from the host |
 | Backend vs main | `c700c7e` is on main. Against main `2bc5602`, `backend/` differs only by `docs/HANDOFF.md`. Staging runs main's backend code. | Fact, from `git diff` |
-| Frontend live on staging | image label `9675ec05eb0975de4b1cb77080e69016bed74986` (image 0a9e423d4671), from branch `codex/account-settings` | Fact, from the host |
-| Frontend vs main | `9675ec0` is not an ancestor of main (#47 landed as the squash `1cabcc0`), but `git diff 9675ec0 origin/main -- frontend` is empty. The frontend tree equals main's. | Fact, from `git diff` |
+| Frontend live on staging | Since 2026-11-25 18:39 UTC: image label `de9612b7fb3c12c8c2726e1853be4980235cb98c` (image c9815da7177e), branch `codex/staging-api-proxies`, PR #50 (API proxy routes). Before that: `9675ec05eb0975de4b1cb77080e69016bed74986` (image 0a9e423d4671). | Fact, from the host |
+| Frontend vs main | `de9612b` is **not on main** until PR #50 merges. The earlier `9675ec0` tree equalled main's frontend. Re-pin to the merge commit once #50 lands. | Fact, from git |
 | Alembic head, live DB | `0012`, from `SELECT version_num FROM alembic_version` in a read-only transaction. Equals the head in this repo (`0012_recovery_codes`). | Fact, from the host |
 | Preceding backend release | `~/tradeo-staging/repo-8c8e08a` (`8c8e08a1d88460a8481918a955bf9e03d119439a`), then `~/tradeo-staging/repo-9e5cf9b` (migration 0002). Tarballs kept. | Fact, from the host |
-| Rollback frontend image | `tradeo-staging-frontend:rollback-9675ec05...`, which is the build of `36145d11a8b75d467ec782452f89b234a6f41a77` (on main, #44) | Fact, from the host |
+| Rollback frontend image | `tradeo-staging-frontend:rollback-de9612b...` = image 0a9e423d4671, the `9675ec0` build | Fact, from the host |
 | Rollback API image | None. The API image has only the `:local` tag. | Fact, from the host |
 
 The Settings and recovery frontend and the c700c7e backend are what the demo
@@ -42,12 +42,13 @@ all return **404**. The ingress sends everything to the frontend, and at
 `/api/v1/settings/profile` and `/api/v1/reports/paper/trades.csv`.
 Port `127.0.0.1:8000` on the host belongs to an unrelated container, not to Tradeo.
 
-**Consequence for T09, T10 and T11:** Dashboard, Brokers and Strategies cannot
-reach `market/*`, `brokers/preview`, `strategies/preview`, `auto-trading/paper`
-or `reports/paper` (JSON) through the staging origin until the frontend proxy
-(or the ingress) routes them to the API. That is frontend work (Codex) or an
-infra change (owner approval), not a backend change. Also, `/health/*` is not
-reachable from outside; probe it inside the host.
+**Fixed for T09, T10 and T11 by the `de9612b` frontend (PR #50).** Re-checked
+through the tailnet origin at 2026-11-25 18:44 UTC, signed out:
+`market/overview` 200 (`source: demo`, 12 quotes), `market/instruments` 200
+(12), `market/instruments/NSE:NIFTY50/candles?timeframe=1D` 200, and
+`auth/me`, `brokers/preview`, `strategies/preview`, `auto-trading/paper`,
+`reports/paper`, `alerts` all 401 (previously 404). `/health/*` stays
+unreachable from outside by design; probe it inside the host.
 
 The API publishes no host port, so run the smoke script inside the API
 container. Unauthenticated run, 2026-11-25 (script fed on stdin, GET only):

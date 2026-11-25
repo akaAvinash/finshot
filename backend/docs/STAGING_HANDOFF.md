@@ -49,10 +49,21 @@ or `reports/paper` (JSON) through the staging origin until the frontend proxy
 infra change (owner approval), not a backend change. Also, `/health/*` is not
 reachable from outside; probe it inside the host.
 
-Run the smoke script on the staging host against the API container, or against
-any origin that routes `/api` and `/health` to the API:
+The API publishes no host port, so run the smoke script inside the API
+container. Unauthenticated run, 2026-11-25 (script fed on stdin, GET only):
 
-`STAGING_BASE_URL=http://127.0.0.1:<api-port> python backend/scripts/verify_staging.py`
+```
+PASS  /health/live  http=200  keys=['status'] status=ok
+PASS  /health/ready  http=200  keys=['checks', 'status'] status=ok
+PASS  /api/v1/market/overview  http=200  keys=['asOf', 'quotes', 'session', 'source'] source=demo quotes[]=12
+PASS  /api/v1/market/instruments  http=200  keys=['instruments'] instruments[]=12
+SKIP  (six signed-in checks, no session cookie)
+0 failed
+```
+
+Every signed-in route exists on the live API: without a cookie, `auth/me`,
+`brokers/preview`, `strategies/preview`, `auto-trading/paper`, `reports/paper`
+and `alerts` each return `401 UNAUTHENTICATED` (not 404).
 
 Not run: the full `./ops verify`. Its first step inserts synthetic rows and
 runs `UPDATE users SET updated_at = now()`, so it writes to the staging
@@ -122,10 +133,36 @@ on the account routes; finish setup first.
 | Paper reports | `GET /api/v1/reports/paper` | session | `200`, `status: empty` until a strategy is assigned, then `ready` |
 
 Evidence status: the signed-in checks have **not run**. They need the owner's
-own session cookie (export it as `STAGING_SESSION_COOKIE` in the owner's shell;
-never paste it into chat, Jira or Git), and the staging origin does not route
-most of these paths to the API (see Health checks). Port evidence is recorded
-above (no host ports for Postgres, Redis, API, frontend).
+own session cookie, which never goes into chat, Jira, Git or a command line.
+The owner runs them like this:
+
+1. Sign in at `https://homelab.tail14603a.ts.net:8446` (email code, then
+   authenticator) and copy the value of the `__Host-tradeo_session` cookie
+   from the browser's developer tools.
+2. From a PowerShell prompt in this repository, copy the script to the host:
+
+   ```powershell
+   Get-Content backend/scripts/verify_staging.py -Raw | ssh avinaks@100.108.199.120 'umask 077; cat > /tmp/verify_staging.py'
+   ```
+
+3. Open an SSH session and run it in the API container. `read -rs` keeps the
+   cookie off the screen, out of shell history and off the process list;
+   `-e STAGING_SESSION_COOKIE` with no value passes it from the environment.
+
+   ```sh
+   ssh -t avinaks@100.108.199.120
+   cd ~/tradeo-staging/repo/backend/staging
+   read -rsp 'Session cookie: ' STAGING_SESSION_COOKIE; echo; export STAGING_SESSION_COOKIE
+   docker compose --project-name tradeo-staging -f compose.yaml exec -T \
+       -e STAGING_BASE_URL=http://127.0.0.1:8000 -e STAGING_SESSION_COOKIE \
+       api python - < /tmp/verify_staging.py
+   unset STAGING_SESSION_COOKIE; rm /tmp/verify_staging.py; exit
+   ```
+
+4. Paste the PASS/FAIL lines (they contain no values or cookie) into TRAD-6.
+
+Port evidence is recorded above (no host ports for Postgres, Redis, API,
+frontend).
 
 ## Dashboard API note (T09, for Codex)
 
@@ -143,6 +180,32 @@ the UI.
 | Day P&L | `GET /reports/paper?from=<today>&to=<today>`, the `daily` entry for today, `realisedPaise` | Realised P&L for the session date | "vs previous close" semantics. Unrealised P&L is for the whole open position, not per day. |
 | Portfolio value | `GET /auto-trading/paper`, `account.equityPaise` | Cash plus open position at the last replayed close | A live portfolio. Paper only. |
 | Portfolio chart | `GET /reports/paper`, `daily` | Daily realised P&L and fees, so a cumulative realised line | An equity curve with mark-to-market history. The API has none. |
+
+Paths above are inside the response envelope: `/reports/paper` returns
+`{status, data}`, so the fields are `data.summary`, `data.daily`,
+`data.journal`; `/auto-trading/paper` puts the account at `data.account`.
+
+### Field by field, against `DashboardSnapshot` (`frontend/src/lib/api/dashboard-fixture.ts`)
+
+| Fixture field | Source | Status |
+|---|---|---|
+| `asOf` | `overview.asOf` for market cards; `report.data.asOf` for paper cards | Available. They can differ; show each card's own. |
+| `indices[].symbol`, `name` | `instruments[]` where `kind = index`: `symbol`, `name` | Available. Live catalog: NIFTY 50, BANKNIFTY, FINNIFTY, INDIA VIX. |
+| `indices[].price`, `changePercent` | `overview.quotes[]` by `instrumentId` | Available. `volume` is null for indices. |
+| `watchlist[]` | `instruments[]` where `kind = equity` joined to `overview.quotes[]` | Available for the 8 catalog equities (RELIANCE, HDFCBANK, SBIN, TCS, INFY, ICICIBANK, BHARTIARTL, ITC). No per-user list. |
+| `portfolioValue` | `paper.data.account.equityPaise / 100` | Available once a strategy is assigned. |
+| `dayPnl` | `report?from=D&to=D` → `data.daily[0].realisedPaise / 100` | Realised only. No entry when D had no fill. |
+| `dayReturn` | none | **Unavailable.** No prior-day equity. Hide it, or label it as day P&L over `capitalPaise`. |
+| `monthPnl` | `report?from=<month start>&to=D` → `data.summary.netPaise / 100` | Available. `netPaise` includes the current open position's unrealised P&L. |
+| `monthReturn` | none | **Unavailable** as a true return. `netPaise / capitalPaise` is P&L over starting capital, not a time-weighted return; label it if used. |
+| `winningTrades` | `data.summary.winningTrades` | Available. |
+| `totalTrades` | `data.summary.closedTrades` | Available. Not `fills`: a buy and its sell are two fills, one closed trade. |
+| `portfolio[]` (`date`, `value`) | `data.daily[]`: `capitalPaise` plus cumulative `realisedPaise` | **Partial.** Realised only, only on fill dates, no mark-to-market history. |
+| `recentTrades[].id`, `side`, `quantity` | `data.journal[]` | Available. `side` is `Buy` or `Sell`, as in the fixture. |
+| `recentTrades[].symbol` | `journal[].instrument` (instrument id) joined to `instruments[].symbol` | Available. Catalog instruments only; there are no option contracts such as the fixture's `NIFTY 50 24500 CE`. |
+| `recentTrades[].price` | `journal[].fillPaise / 100` | Available. |
+| `recentTrades[].pnl` | `journal[].pnlPaise / 100` | Available with a caveat: `0` on every buy. |
+| `recentTrades[].timeIst` | `journal[].filledAt` formatted in Asia/Kolkata | Available. |
 
 Other notes:
 

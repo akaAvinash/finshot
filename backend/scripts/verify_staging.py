@@ -5,13 +5,16 @@ shape of each response (top-level keys, counts, the `source` label), never
 response values such as balances, and never the session cookie.
 
 Usage. STAGING_BASE_URL must reach the API itself. On staging the public
-https origin serves only the frontend, which proxies just a few API paths, so
-run this on the staging host against the API container (http://127.0.0.1:<port>,
-loopback only), or against an origin that routes /api and /health to the API:
+https origin serves only the frontend, which proxies just a few API paths, and
+the API publishes no host port. So run it inside the API container, feeding the
+script on stdin (see backend/docs/STAGING_HANDOFF.md for the full command):
 
-    STAGING_BASE_URL=https://<api-origin-or-http://127.0.0.1:<port>> \
-    STAGING_SESSION_COOKIE=<value of __Host-tradeo_session> \
-    python backend/scripts/verify_staging.py
+    docker compose --project-name tradeo-staging -f compose.yaml exec -T \
+        -e STAGING_BASE_URL=http://127.0.0.1:8000 -e STAGING_SESSION_COOKIE \
+        api python - < verify_staging.py
+
+Any https:// origin that routes /api and /health to the API also works. Plain
+http is accepted only for a loopback host.
 
 Without STAGING_SESSION_COOKIE only the unauthenticated checks run. The
 cookie value comes from a normal sign-in (email code, then authenticator) and
@@ -26,6 +29,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 SESSION_COOKIE_NAME = "__Host-tradeo_session"
@@ -107,8 +111,9 @@ CHECKS = [
 
 def main() -> int:
     base = os.environ.get("STAGING_BASE_URL", "").rstrip("/")
-    loopback = base.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]"))
-    if not (base.startswith("https://") or loopback):
+    parts = urllib.parse.urlsplit(base)
+    loopback = parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1")
+    if not (parts.scheme == "https" and parts.hostname) and not loopback:
         print(
             "Set STAGING_BASE_URL to an https:// origin or an http://127.0.0.1 address.",
             file=sys.stderr,

@@ -43,17 +43,28 @@ def test_junit_ingestion_reads_properties_and_blocked(tmp_path):
 
 
 @pytest.mark.req("QA-GATE-001")
-def test_gate_blocks_high_failures_missing_sets_unrun_gates_and_stale_sha(tmp_path):
-    rs = parse_junit(_write(tmp_path, "qa"))
+def test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha(tmp_path):
+    rs = parse_junit(_write(tmp_path, "qa", sev="critical"))
     gate = analysis.merge_eligibility(
         rs, required_sources=["qa", "backend"], tested_sha="a" * 40, expected_sha="b" * 40
     )
     text = " | ".join(gate.reasons)
     assert gate.verdict == "NOT_ELIGIBLE"
-    assert "high failure" in text
+    assert "critical failure" in text
     assert "'backend' is missing" in text
     assert "critical gate not executed" in text
     assert "stale" in text
+
+
+@pytest.mark.req("QA-GATE-001")
+def test_gate_high_failure_warns_by_default_and_blocks_when_configured(tmp_path):
+    rs = [r for r in parse_junit(_write(tmp_path, "qa", sev="high")) if r.outcome != "blocked"]
+    default = analysis.merge_eligibility(rs, required_sources=["qa"], tested_sha="a", expected_sha="a")
+    assert default.verdict == "ELIGIBLE" and any("high failure" in w for w in default.warnings)
+    strict = analysis.merge_eligibility(
+        rs, required_sources=["qa"], tested_sha="a", expected_sha="a", block_on=("critical", "high")
+    )
+    assert strict.verdict == "NOT_ELIGIBLE" and any("high failure" in r for r in strict.reasons)
 
 
 @pytest.mark.req("QA-GATE-002")
@@ -184,3 +195,26 @@ def test_supervisor_report_end_to_end_without_ai(tmp_path, monkeypatch):
     md = (out / "qa-summary.md").read_text()
     assert "NOT_ELIGIBLE" in md and "Tested commit" in md and "AI analysis disabled" in md
     assert "9876543210" not in (out / "defects.md").read_text(), "defect evidence is redacted"
+
+
+@pytest.mark.req("QA-GATE-004")
+def test_nightly_status_marks_only_tested_pr_heads_and_fails_closed():
+    from qa.scripts.publish_pr_status import statuses
+
+    matrix = [
+        {"label": "main", "checkout_sha": "m" * 40, "merge_sha": "", "pr": 0},
+        {"label": "pr-1", "checkout_sha": "b" * 40, "merge_sha": "h" * 40, "pr": 1},
+        {"label": "pr-2", "checkout_sha": "b" * 40, "merge_sha": "k" * 40, "pr": 2},
+        {"label": "pr-3", "checkout_sha": "b" * 40, "merge_sha": "z" * 40, "pr": 3},
+    ]
+    ok = {"merge_eligibility": {"verdict": "ELIGIBLE", "reasons": [], "warnings": ["high failure: x"]}}
+    bad = {
+        "merge_eligibility": {"verdict": "NOT_ELIGIBLE", "reasons": ["critical failure: y"], "warnings": []},
+        "defects_by_severity": {"critical": 1},
+    }
+    got = {s["pr"]: s for s in statuses(matrix, {"pr-1": ok, "pr-2": bad}, "https://run")}
+    assert set(got) == {1, 2, 3}
+    assert got[1]["state"] == "success" and got[1]["sha"] == "h" * 40
+    assert got[2]["state"] == "failure" and "critical" in got[2]["description"]
+    assert got[3]["state"] == "error"  # no report is never a pass
+    assert all(s["context"] == "qa/nightly" and len(s["description"]) <= 140 for s in got.values())

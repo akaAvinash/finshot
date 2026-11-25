@@ -19,7 +19,7 @@ createdb qa_tradeo
 export QA_DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/qa_tradeo
 export QA_REDIS_URL=redis://localhost:6379/14
 
-python -m pytest -c qa/pytest.ini qa/tests -m "not slow"   # PR scope, ~4 min
+python -m pytest -c qa/pytest.ini qa/tests -m "not slow"   # quick local scope, ~4 min
 python -m pytest -c qa/pytest.ini qa/tests                 # everything incl. expiry waits, ~9 min
 python -m pytest -c qa/pytest.ini qa/tests/financial qa/tests/framework qa/tests/policy   # no services needed
 ```

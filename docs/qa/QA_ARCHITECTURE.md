@@ -3,7 +3,7 @@
 ```
                  GitHub Actions (read-only token, no secrets)            trusted, no candidate code
  ┌──────────────────────────────────────────────────────────────┐      ┌──────────────────────────┐
- │ qa-suite.yml (one candidate = base sha [+ PR head shas])      │      │ gate / morning-report    │
+ │ qa-suite.yml (one candidate = base sha [+ PR head shas])      │      │ morning-report, pr-status│
  │  prepare: merge check ─┬─ backend: ruff + pytest (777)        │JUnit │  supervisor (rules)      │
  │                        ├─ qa: independent suite ──────────────┼─────▶│  + optional AI review    │
  │                        │   + secret scan + pip-audit          │      │  qa-summary.md, json,    │
@@ -36,4 +36,4 @@
 ## Independence controls
 
 - `qa/tests/policy` fails if `qa/` imports `app.*`, embeds real endpoints/credentials, uses non-`.invalid` emails, or if the AI agent gains GitHub write calls.
-- Workflows: `pull_request` only (never `pull_request_target`), `permissions: contents: read`, git credentials removed before candidate code runs, actions pinned to commit SHAs, job timeouts.
+- Workflows: nightly schedule and manual dispatch only (no PR trigger, never `pull_request_target`); the status-write token lives in its own job, `permissions: contents: read`, git credentials removed before candidate code runs, actions pinned to commit SHAs, job timeouts.

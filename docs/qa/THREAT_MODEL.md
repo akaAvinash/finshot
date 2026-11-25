@@ -21,7 +21,7 @@ Scope: authentication surface, QA/CI pipeline, AI agent. STRIDE per asset; "Test
 
 | Threat | Control |
 |---|---|
-| PR code steals secrets | `pull_request` only, no secrets in suite jobs, read-only token, git credentials removed before code runs |
+| PR code steals secrets | no `pull_request_target`, no secrets in suite jobs, status token only in a job that runs no PR code, read-only token, git credentials removed before code runs |
 | Malicious PR alters the gate | Gate job checks out the **base** commit's QA tooling, not the PR's |
 | Supply chain | Actions pinned to commit SHAs; `npm ci --ignore-scripts`; pip-audit and npm audit |
 | Artifact leakage | Evidence redacted; synthetic data only; 14-30 day retention |

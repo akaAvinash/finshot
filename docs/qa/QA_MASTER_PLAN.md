@@ -19,7 +19,7 @@ Scope: demo, sandbox and paper only. No live orders, no production, no real brok
 | 1 Foundation | Reusable black-box framework | Starts backend, validates contract, self-tests pass | Done |
 | 2 Auth qualification | Independent auth E2E (API level) | Every implemented auth rule has a passing or failing test with evidence | Done for API level; browser journey (AUTH-UI-001) specified |
 | 3 AI agent MVP | Ingest, analyse, report, deterministic fallback | Works with no provider; guardrails tested | Done |
-| 4 Continuous QA | PR, main, nightly, manual workflows | Workflows lint-clean; first run on GitHub | Written, actionlint clean; first GitHub run happens on the PR |
+| 4 Continuous QA | Nightly and manual workflows (no per-PR run, owner 2026-11-25) | Workflows lint-clean; first run on GitHub | Written, actionlint clean; first GitHub run happens on the PR |
 | 5 Baseline regression | Pinned candidate fully run | Report with real numbers | Done locally at `1cabcc0` (see `QA_HANDOFF.md`) |
 | 6 Expansion | Engines as they land | Traceability rows move from specified to automated | Ongoing |
 

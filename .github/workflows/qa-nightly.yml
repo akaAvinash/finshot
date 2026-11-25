@@ -1,4 +1,6 @@
-# Mode C (nightly full regression, 00:00 IST = 18:30 UTC) and mode D (manual run).
+# Nightly full regression (00:00 IST = 18:30 UTC) and manual runs. This is the only QA trigger:
+# owner policy 2026-11-25 is no per-PR QA run, and only critical findings block a merge.
+# The verdict reaches each tested PR as the commit status `qa/nightly` (pr-status job).
 # The schedule only becomes active once this file is on the default branch.
 #
 # Untrusted PR code runs only inside qa-suite.yml (read token, no secrets).
@@ -126,3 +128,27 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with: { name: morning-report, path: morning/, retention-days: 30 }
+
+  pr-status:
+    # Separate job so the status-write token never shares a job with the optional AI key.
+    needs: [discover, morning-report]
+    if: always() && needs.discover.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.12" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: morning-report, path: morning }
+      - name: Set qa/nightly on each tested PR head (failure only for critical findings or missing results)
+        if: always()  # with no morning report every tested PR gets "error", never a pass
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.discover.outputs.matrix }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python qa/scripts/publish_pr_status.py --morning morning/morning.json --matrix "$MATRIX" --run-url "$RUN_URL"

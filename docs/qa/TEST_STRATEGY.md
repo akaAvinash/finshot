@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Unit / component | `backend/tests/unit`, `frontend/tests/{unit,component}` | Product teams | PR, main, nightly (reused by QA CI) |
 | Backend integration | `backend/tests/integration` (real Postgres/Redis) | Backend | PR, main, nightly |
-| Independent API/E2E | `qa/tests/authentication`, `security`, `reliability` | QA | PR (`not slow`), main, nightly (all) |
+| Independent API/E2E | `qa/tests/authentication`, `security`, `reliability` | QA | nightly (all), manual |
 | Browser E2E | `frontend/tests/e2e` (preview mode) | Frontend | main, nightly |
 | Financial oracles | `qa/tests/financial` | QA | every run |
 | Static / supply chain | ruff, eslint, tsc, secret scan, pip-audit, npm audit | QA CI | every run |

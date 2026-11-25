@@ -64,7 +64,8 @@ qa/tests/financial/test_oracles.py::test_position_size_never_exceeds_risk_budget
 qa/tests/financial/test_oracles.py::test_drawdown_bounds,financial,FIN-DD-002,high,no,no,pr+nightly,drawdown bounds
 qa/tests/financial/test_oracles.py::test_money_rounding_half_up_to_paise,financial,FIN-CHG-002,medium,no,no,pr+nightly,money rounding half up to paise
 qa/tests/framework/test_ai_agent.py::test_junit_ingestion_reads_properties_and_blocked,framework,QA-AI-001,high,no,no,pr+nightly,junit ingestion reads properties and blocked
-qa/tests/framework/test_ai_agent.py::test_gate_blocks_high_failures_missing_sets_unrun_gates_and_stale_sha,framework,QA-GATE-001,high,no,no,pr+nightly,gate blocks high failures missing sets unrun gates and stale sha
+qa/tests/framework/test_ai_agent.py::test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha,framework,QA-GATE-001,high,no,no,pr+nightly,gate blocks critical failures missing sets unrun gates and stale sha
+qa/tests/framework/test_ai_agent.py::test_gate_high_failure_warns_by_default_and_blocks_when_configured,framework,QA-GATE-001,high,no,no,pr+nightly,gate high failure warns by default and blocks when configured
 qa/tests/framework/test_ai_agent.py::test_gate_low_failure_is_a_warning_only,framework,QA-GATE-002,high,no,no,pr+nightly,gate low failure is a warning only
 qa/tests/framework/test_ai_agent.py::test_gate_counts_cancelled_job_as_not_passed,framework,QA-GATE-003,high,no,no,pr+nightly,gate counts cancelled job as not passed
 qa/tests/framework/test_ai_agent.py::test_failure_grouping_normalises_volatile_values,framework,QA-AI-002,high,no,no,pr+nightly,failure grouping normalises volatile values
@@ -74,6 +75,7 @@ qa/tests/framework/test_ai_agent.py::test_guarded_llm_rejects_non_schema_replies
 qa/tests/framework/test_ai_agent.py::test_guarded_llm_enforces_daily_budget,framework,QA-AI-006,high,no,no,pr+nightly,guarded llm enforces daily budget
 qa/tests/framework/test_ai_agent.py::test_no_provider_configured_means_deterministic_mode,framework,QA-AI-007,high,no,no,pr+nightly,no provider configured means deterministic mode
 qa/tests/framework/test_ai_agent.py::test_supervisor_report_end_to_end_without_ai,framework,QA-AI-008 QA-GATE-001,high,no,no,pr+nightly,supervisor report end to end without ai
+qa/tests/framework/test_ai_agent.py::test_nightly_status_marks_only_tested_pr_heads_and_fails_closed,framework,QA-GATE-004,high,no,no,pr+nightly,nightly status marks only tested pr heads and fails closed
 qa/tests/framework/test_framework_selfcheck.py::test_totp_oracle_matches_rfc6238_vectors,framework,QA-FW-001,high,no,no,pr+nightly,totp oracle matches rfc6238 vectors
 qa/tests/framework/test_framework_selfcheck.py::test_hotp_matches_rfc4226_vectors,framework,QA-FW-001,high,no,no,pr+nightly,hotp matches rfc4226 vectors
 qa/tests/framework/test_framework_selfcheck.py::test_otpauth_parser,framework,QA-FW-001,high,no,no,pr+nightly,otpauth parser

@@ -2,7 +2,8 @@
 
 | ID | Risk | Likelihood | Impact | Mitigation | Status |
 |---|---|---|---|---|---|
-| R1 | QA gate not a required check, so failing PRs can still merge | High | High | Owner adds `qa gate` to branch protection after the first green run | Open (needs owner) |
+| R1 | `qa/nightly` not a required check, so PRs with critical findings can still merge | High | High | Owner adds `qa/nightly` to branch protection after the first nightly run | Open (needs owner) |
+| R1b | Only critical findings block (owner policy); high findings (e.g. vulnerable dependency) can merge | Medium | Medium | Morning report lists them first under warnings; owner triages daily | Accepted by owner 2026-11-25 |
 | R2 | Nightly schedule inactive until workflow is on main | Certain | Medium | Owner reviews/merges the QA PR | Open (needs owner) |
 | R3 | Staging unreachable from GitHub runners | Certain | Medium | Disposable services in CI; staging smoke via Remote Control on the owner's device | Accepted |
 | R4 | Financial engines checked only by product tests; no independent cross-check yet | High | Critical | Oracles exist; cross-check tests FIN-X-* next | Open |

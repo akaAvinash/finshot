@@ -14,7 +14,7 @@ Audited commit: `main` at `1cabcc0` ("Connect Tradeo account Settings to the bac
 | Contract | `contracts/openapi.yaml` v0.10.0 (OpenAPI 3.1), plus preview contracts. | QA client validates every response against it. |
 | Auth implementation | Invite-only; registration by emailed code (SMTP provider) or mock; phone + TOTP sign-in; recovery codes; step-up; setup-required restriction; operator CLI. SMS (MSG91) and passkeys not built. | Authentication qualified black-box over HTTP. |
 | Staging | `homelab.tail14603a.ts.net:8446` is a private Tailscale host; unreachable from cloud runners. | All CI uses disposable local Postgres/Redis; staging checks need Remote Control on the owner's device. |
-| Branch protection | (From project memory, not re-read: settings API needs admin) 0 approvals, CodeRabbit required. | The new `qa gate` check is **not** required until the owner adds it. |
+| Branch protection | (From project memory, not re-read: settings API needs admin) 0 approvals, CodeRabbit required. | The new `qa/nightly` status is **not** required until the owner adds it. |
 
 ## Feature status used by the QA plan
 

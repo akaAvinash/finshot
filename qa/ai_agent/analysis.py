@@ -205,7 +205,11 @@ def merge_eligibility(
     tested_sha: str | None,
     expected_sha: str | None,
     job_outcomes: dict[str, str] | None = None,
+    block_on: tuple[str, ...] = ("critical",),
 ) -> Eligibility:
+    """Merge verdict. Only failures whose severity is in ``block_on`` block (owner policy
+    2026-11-25: critical only); other failures are warnings. Missing, stale, cancelled or
+    unexecuted critical results always block, because they cannot show that nothing critical failed."""
     reasons: list[str] = []
     warnings: list[str] = []
     if not results:
@@ -220,7 +224,7 @@ def merge_eligibility(
         if outcome not in ("success", "skipped-not-applicable"):
             reasons.append(f"mandatory job '{job}' ended '{outcome}'")
     for r in results:
-        if r.is_failure and r.severity in ("critical", "high"):
+        if r.is_failure and r.severity in block_on:
             reasons.append(f"{r.severity} failure: {r.nodeid}")
         elif r.is_failure:
             warnings.append(f"{r.severity} failure: {r.nodeid}")

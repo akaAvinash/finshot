@@ -146,7 +146,8 @@ QA-AI-005,qa_framework,QA,LLM replies schema-validated; circuit breaker,brief s1
 QA-AI-006,qa_framework,QA,Daily AI spending cap enforced before calling,brief s12,P0,automated
 QA-AI-007,qa_framework,QA,No provider = deterministic mode,brief s12,P0,automated
 QA-AI-008,qa_framework,QA,Supervisor report end to end,brief s17,P1,automated
-QA-GATE-001,qa_framework,QA,Gate: failed/missing/stale/unrun mandatory results never count as pass,brief s16,P0,automated
-QA-GATE-002,qa_framework,QA,"Gate: low/medium failures warn, do not block",RELEASE_GATES,P1,automated
+QA-GATE-001,qa_framework,QA,Gate: only critical failures (and missing/stale/cancelled results) block,brief s16,P0,automated
+QA-GATE-002,qa_framework,QA,"Gate: high/medium/low failures warn, do not block",RELEASE_GATES,P1,automated
 QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated
 QA-POL-005,qa_framework,QA,Traceability matrix and test catalog match the test markers,brief s7,P1,automated
+QA-GATE-004,qa_framework,QA,Nightly verdict published as qa/nightly status on each tested PR head; no report is an error,owner 2026-11-25,P0,automated

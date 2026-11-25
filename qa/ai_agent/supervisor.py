@@ -114,6 +114,7 @@ def build_report(args: argparse.Namespace) -> dict:
         tested_sha=args.tested_sha,
         expected_sha=args.expected_sha,
         job_outcomes=jobs,
+        block_on=tuple(args.block_on),
     )
     changed = Path(args.changed_files).read_text().split() if args.changed_files else []
     ai_status, _ = (
@@ -187,6 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--title", default="Tradeo QA report")
     ap.add_argument("--no-ai", action="store_true")
     ap.add_argument("--fail-on-ineligible", action="store_true")
+    ap.add_argument(
+        "--block-on",
+        nargs="+",
+        default=["critical"],
+        choices=["critical", "high", "medium", "low"],
+        help="failure severities that make a candidate NOT_ELIGIBLE (default: critical)",
+    )
     args = ap.parse_args(argv)
 
     out = Path(args.out)

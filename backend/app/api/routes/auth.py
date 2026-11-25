@@ -17,6 +17,8 @@ from app.auth.schemas import (
     OtpRequest,
     OtpVerify,
     OtpVerifyResponse,
+    RecoveryCodesOut,
+    RecoveryLogin,
     SessionExpiryOut,
     SessionListOut,
     SessionSummaryOut,
@@ -163,6 +165,21 @@ async def login_with_totp(
     )
 
 
+@router.post("/login/recovery", response_model=OtpVerifyResponse)
+async def login_with_recovery_code(
+    body: RecoveryLogin, request: Request, response: Response, auth: Auth, session: OptionalSession
+) -> OtpVerifyResponse:
+    auth.enforce_csrf(request, session)
+    info, token, csrf = await auth.login_with_recovery_code(
+        request=request, phone=body.phone, code=body.recovery_code, current_session=session
+    )
+    set_cookie(response, SESSION_COOKIE, token)
+    set_cookie(response, CSRF_COOKIE, csrf)
+    return OtpVerifyResponse(
+        user=_user_out(info), session=_session_out(auth, info), csrf_token=csrf
+    )
+
+
 @router.get("/me", response_model=AuthSessionOut)
 async def me(auth: Auth, session: RequiredSession) -> AuthSessionOut:
     return AuthSessionOut(user=_user_out(session), session=_session_out(auth, session))
@@ -265,6 +282,18 @@ async def step_up(
         ip=auth.client_ip(request),
     )
     return StepUpResultOut(step_up_until=until)
+
+
+@router.post("/totp/recovery-codes", response_model=RecoveryCodesOut)
+async def regenerate_recovery_codes(
+    request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+) -> RecoveryCodesOut:
+    auth.enforce_csrf(request, session)
+    ensure_stepped_up(auth, session)
+    codes, created_at = await stepup.regenerate_recovery_codes(
+        user_id=session.user_id, ip=auth.client_ip(request)
+    )
+    return RecoveryCodesOut(codes=codes, created_at=created_at)
 
 
 @router.post("/totp/disable", status_code=status.HTTP_204_NO_CONTENT)

@@ -261,10 +261,11 @@ def test_redeeming_while_regenerating_ends_in_one_consistent_state(
     other.get_csrf()
     barrier = threading.Barrier(2)
 
-    def regenerate() -> int:
+    def regenerate() -> tuple[int, str | None]:
         barrier.wait()
-        status: int = owner.post(CODES).status_code
-        return status
+        response = owner.post(CODES)
+        error: str | None = None if response.status_code == 200 else response.json()["code"]
+        return response.status_code, error
 
     def redeem() -> int:
         barrier.wait()
@@ -275,8 +276,13 @@ def test_redeeming_while_regenerating_ends_in_one_consistent_state(
         regen, login = pool.submit(regenerate), pool.submit(redeem)
         results = (regen.result(), login.result())
     assert results[1] in (200, 401), results  # never a 500
-    # 403 when the sign-in committed first and closed this session's step-up window.
-    assert results[0] in (200, 403, 409), results
+    # 403 STEP_UP_REQUIRED when the sign-in committed first and closed this
+    # session's step-up window; 409 if it got past that check but lost the lock.
+    assert results[0] in {
+        (200, None),
+        (403, "STEP_UP_REQUIRED"),
+        (409, "TOTP_NOT_ENROLLED"),
+    }, results
     count = len(db_rows(db_url, "SELECT 1 FROM recovery_codes"))
     has_authenticator = bool(db_rows(db_url, "SELECT 1 FROM totp_credentials"))
     # Either the sign-in won (no authenticator, no codes) or regeneration finished first

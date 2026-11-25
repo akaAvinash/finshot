@@ -20,7 +20,10 @@ def _limiter(redis: Redis) -> RateLimiter:
 
 @pytest.fixture
 async def redis() -> Redis:
-    r = Redis.from_url(os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15"))
+    url = os.environ.get("TEST_REDIS_URL")
+    if not url:
+        pytest.skip("TEST_REDIS_URL unset")
+    r = Redis.from_url(url)
     await r.flushdb()
     yield r
     await r.flushdb()

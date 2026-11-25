@@ -690,6 +690,65 @@ class AuthService:
             )
         return count
 
+    async def get_profile(self, info: SessionInfo) -> tuple[str | None, str]:
+        """The caller's display name and timezone."""
+        async with self._factory() as db:
+            row = (
+                await db.execute(
+                    select(User.display_name, User.timezone).where(User.id == info.user_id)
+                )
+            ).one()
+        return row.display_name, row.timezone
+
+    async def update_profile(
+        self, info: SessionInfo, *, display_name: str, timezone: str
+    ) -> tuple[str | None, str]:
+        now = self.clock()
+        async with self._factory() as db, db.begin():
+            await db.execute(
+                update(User)
+                .where(User.id == info.user_id)
+                .values(display_name=display_name, timezone=timezone, updated_at=now)
+            )
+            # The values are not logged: only that the profile changed.
+            await self._audit(
+                db,
+                action="settings.profile_updated",
+                user_id=info.user_id,
+                resource=f"user:{info.user_id}",
+                metadata={},
+            )
+        return display_name, timezone
+
+    async def revoke_other_session(self, info: SessionInfo, session_id: uuid.UUID) -> None:
+        """End one of the caller's other active sessions (the caller checked step-up)."""
+        if session_id == info.session_id:
+            raise ApiError(409, "CURRENT_SESSION", "Sign out to end this session.")
+        now = self.clock()
+        idle = timedelta(seconds=self.settings.session_idle_ttl_seconds)
+        async with self._factory() as db, db.begin():
+            revoked = await db.scalar(
+                update(SessionRow)
+                .where(
+                    SessionRow.id == session_id,
+                    SessionRow.user_id == info.user_id,  # tenant isolation
+                    SessionRow.revoked_at.is_(None),
+                    SessionRow.expires_at > now,
+                    SessionRow.last_seen_at + idle > now,
+                )
+                .values(revoked_at=now)
+                .returning(SessionRow.id)
+            )
+            if revoked is None:
+                raise ApiError(404, "SESSION_NOT_FOUND", "This session was not found.")
+            await self._audit(
+                db,
+                action="session.revoked",
+                user_id=info.user_id,
+                resource=f"session:{session_id}",
+                metadata={},
+            )
+
     async def list_sessions(self, info: SessionInfo) -> list[tuple[SessionRow, bool]]:
         now = self.clock()
         idle = timedelta(seconds=self.settings.session_idle_ttl_seconds)

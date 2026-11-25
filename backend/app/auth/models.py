@@ -35,6 +35,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(r"phone_e164 ~ '^\+91[6-9][0-9]{9}$'", name="phone_format"),
         CheckConstraint("status IN ('active', 'disabled')", name="status_valid"),
+        CheckConstraint("timezone IN ('Asia/Kolkata', 'UTC')", name="timezone_valid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -44,6 +45,7 @@ class User(Base):
     phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     display_name: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(16), server_default="active")
+    timezone: Mapped[str] = mapped_column(String(32), server_default="Asia/Kolkata")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

@@ -147,6 +147,8 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auth/logout",
         "/api/v1/auth/logout-all",
         "/api/v1/auth/sessions",
+        "/api/v1/auth/sessions/{sessionId}",
+        "/api/v1/settings/profile",
         "/api/v1/auth/totp/enroll",
         "/api/v1/auth/totp/confirm",
         "/api/v1/auth/totp/disable",

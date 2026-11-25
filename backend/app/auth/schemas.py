@@ -3,11 +3,12 @@ contracts/openapi.yaml."""
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 PHONE_PATTERN = r"^\+91[6-9][0-9]{9}$"
@@ -93,3 +94,32 @@ class TotpEnrollmentOut(_Wire):
 class StepUpResultOut(_Wire):
     totp_enabled: Literal[True] = True
     step_up_until: datetime
+
+
+Timezone = Literal["Asia/Kolkata", "UTC"]
+
+
+def _clean_display_name(value: str) -> str:
+    """Trim, then require 1 to 48 characters with no control characters."""
+    name = value.strip()
+    if not 1 <= len(name) <= 48:
+        raise ValueError("display name must be 1 to 48 characters")
+    if any(unicodedata.category(ch) == "Cc" for ch in name):
+        raise ValueError("display name must not contain control characters")
+    return name
+
+
+class SettingsProfileOut(_Wire):
+    display_name: str | None
+    timezone: Timezone
+    phone_masked: str
+
+
+class SettingsProfileIn(_Strict):
+    display_name: Annotated[str, Field(max_length=200)]
+    timezone: Timezone
+
+    @field_validator("display_name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _clean_display_name(value)

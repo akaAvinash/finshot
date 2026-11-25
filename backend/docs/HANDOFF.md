@@ -76,6 +76,8 @@ and live trading.
 
 ## Staging (read-only check, 2026-11-25)
 
+Pinned-revision handoff, health checks, migrations, rollback and the Dashboard API note: `backend/docs/STAGING_HANDOFF.md` (TRAD-6).
+
 - Staging OTP: after the upgrade, set `OTP_PROVIDER=staging`,
   `OTP_STAGING_FILE`, `OTP_STAGING_ALLOWLIST` (synthetic numbers), then
   `invite add` each number and read codes with `staging-otp` over SSH.

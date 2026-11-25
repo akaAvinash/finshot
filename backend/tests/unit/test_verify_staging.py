@@ -137,3 +137,29 @@ def test_documented_origins_are_accepted(monkeypatch: pytest.MonkeyPatch, base: 
     monkeypatch.setenv("STAGING_BASE_URL", base)
     monkeypatch.setattr(verify, "CHECKS", [])
     assert verify.main() == 0
+
+
+def test_loopback_http_ignores_an_http_proxy_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, second_origin: tuple[HTTPServer, list[str | None]]
+) -> None:
+    origin, seen = second_origin
+    proxied: list[str] = []
+
+    class Proxy(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            proxied.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    for proxy in _serve(Proxy):
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        status, body = verify.fetch(f"http://127.0.0.1:{origin.server_port}", "/x", "abc")
+    assert (status, body) == (200, {"status": "ok"})
+    assert proxied == []
+    assert seen == ["__Host-tradeo_session=abc"]

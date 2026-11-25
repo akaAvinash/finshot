@@ -47,7 +47,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+def _opener(scheme: str) -> urllib.request.OpenerDirector:
+    """Never follow redirects. Plain http is loopback only (checked in main()),
+    so it must not go through an http_proxy from the environment either: the
+    proxy would see the cookie in cleartext."""
+    handlers: list[object] = [_NoRedirect]
+    if scheme == "http":
+        handlers.insert(0, urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
 
 
 def fetch(base: str, path: str, cookie: str | None) -> tuple[int, object | None]:
@@ -56,7 +63,7 @@ def fetch(base: str, path: str, cookie: str | None) -> tuple[int, object | None]
     if cookie:
         request.add_header("Cookie", f"{SESSION_COOKIE_NAME}={cookie}")
     try:
-        with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
+        with _opener(request.type).open(request, timeout=TIMEOUT_SECONDS) as response:
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as exc:
         status, raw = exc.code, exc.read()

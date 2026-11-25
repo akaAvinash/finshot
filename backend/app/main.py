@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
+from app.agents.service import AgentService
 from app.api.router import api_router
 from app.api.routes import health
 from app.auth.crypto import Keys
@@ -110,6 +111,12 @@ def create_app(
             clock=clock,
             enabled=settings.reports_enabled,
         )
+        app.state.agents = AgentService(
+            session_factory=app.state.session_factory,
+            clock=clock,
+            enabled=settings.agents_enabled,
+            stale_after_seconds=settings.agent_stale_after_seconds,
+        )
         workers: list[asyncio.Task[None]] = []
         if settings.backtests_enabled and settings.backtest_worker_enabled:
             workers.append(
@@ -120,6 +127,10 @@ def create_app(
         if settings.paper_enabled and settings.paper_worker_enabled:
             workers.append(
                 asyncio.create_task(app.state.paper.run_worker(settings.paper_worker_poll_seconds))
+            )
+        if settings.agents_enabled and settings.agent_worker_enabled:
+            workers.append(
+                asyncio.create_task(app.state.agents.run_worker(settings.agent_worker_poll_seconds))
             )
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:

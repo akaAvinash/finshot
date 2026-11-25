@@ -124,6 +124,13 @@ def test_openapi_documents_400_not_422(client: TestClient) -> None:
         assert set(document["paths"][path]["get"]["responses"]) == {"200", "400", "401", "503"}
     csv_ok = document["paths"]["/api/v1/reports/paper/trades.csv"]["get"]["responses"]["200"]
     assert set(csv_ok["content"]) == {"text/csv"}
+    # Agents are read-only and advisory: GET only, no CSRF-protected writes.
+    for path in ("/api/v1/agents", "/api/v1/agents/health"):
+        assert set(document["paths"][path]) == {"get"}, path
+        assert set(document["paths"][path]["get"]["responses"]) == {"200", "401", "503"}
+    events = document["paths"]["/api/v1/agents/events"]
+    assert set(events) == {"get"}
+    assert set(events["get"]["responses"]) == {"200", "400", "401", "503"}
 
 
 def test_no_order_routes_exist(client: TestClient) -> None:
@@ -154,6 +161,9 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auto-trading/paper/commands",
         "/api/v1/reports/paper",
         "/api/v1/reports/paper/trades.csv",
+        "/api/v1/agents",
+        "/api/v1/agents/health",
+        "/api/v1/agents/events",
     }
     # Market data is read-only.
     for path, operations in paths.items():

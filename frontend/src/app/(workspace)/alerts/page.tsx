@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { Alerts } from "@/components/alerts/alerts";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { AccountAlerts } from "@/components/alerts/account-alerts";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 export const metadata: Metadata = { title: "Alerts" };
 
 export default async function AlertsPage() {
-  await requirePreviewSession();
-  return <Alerts />;
+  const { mode } = await requireWorkspaceSession();
+  return mode === "staging" ? <AccountAlerts /> : <Alerts />;
 }

@@ -6,9 +6,10 @@ Contract: `contracts/openapi.yaml` (tag Auth, tag Step-up). Code: `app/auth/`.
 
 | Situation | Mechanism | Status |
 |---|---|---|
-| First sign-in on a device | OTP to an invited phone (SMS) or email | SMS adapter **not built** (see MSG91) |
+| Registration (first sign-in) | One-time code to the invite's email (or SMS) | Email via SMTP built; SMS adapter **not built** (see MSG91) |
+| Every later sign-in | Phone number plus authenticator code (`POST /auth/login/totp`); no code is sent | Built |
 | Regular use | Server-side session cookie, CSRF token, idle and absolute expiry | Built |
-| Sensitive operations | Authenticator code (TOTP, RFC 6238) opening a 10-minute step-up window | Built; no operation gated yet |
+| Sensitive operations | Authenticator code (TOTP, RFC 6238) opening a 10-minute step-up window | Built; ending another session is gated |
 | Passkeys | `PasskeyAuthenticator` interface, `UnavailablePasskeys` placeholder | Interface only |
 | External site | Cloudflare Access in front of the origin | Infrastructure, not in this repo |
 | QA | `mock` provider (fixed code `123456`) | Development and test only |
@@ -31,6 +32,29 @@ admin API):
 
 Migration `0010` invites every phone that already has a user, so existing
 accounts keep working.
+
+## Registration, then authenticator sign-in
+
+1. An invited number asks for a code (`channel: email` goes to the invite's
+   address) and verifies it. That creates the account and a session.
+2. The user sets up an authenticator (`/auth/totp/enroll`, `/auth/totp/confirm`).
+3. From then on `POST /auth/login/totp` (phone number + current code) is the
+   way in. A successful login opens the step-up window, so a gated action does
+   not need a second code. Once an authenticator is active a one-time code can
+   no longer start a session: `otp/request` still answers 202 but sends
+   nothing, and `otp/verify` refuses (401 `INVALID_OTP`, the code stays unused).
+4. Lost authenticator: `totp-reset` on the server, then register again by
+   emailed code. There are no recovery codes yet.
+
+Failure handling: every failure is `401 INVALID_CREDENTIALS` (wrong or reused
+code, uninvited number, unknown number, no authenticator, revoked invite). The
+IP is throttled on every attempt, the phone on failures only (default 5 per 15
+minutes, the same for every well-formed number, 429 `RATE_LIMITED`). Trade-off:
+anyone who knows a number can lock that number out for the window by failing
+five times; throttling the phone is what bounds guessing a six-digit code.
+Failed attempts are audited as `login_failed` with an IP hash and no code. An
+unknown number runs the same HMAC work, but response timing is not otherwise
+equalised.
 
 ## Providers
 

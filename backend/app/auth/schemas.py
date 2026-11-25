@@ -123,3 +123,8 @@ class SettingsProfileIn(_Strict):
     @classmethod
     def _name(cls, value: str) -> str:
         return _clean_display_name(value)
+
+
+class TotpLogin(_Strict):
+    phone: str = Field(pattern=PHONE_PATTERN)
+    code: str = Field(pattern=r"^[0-9]{6}$")

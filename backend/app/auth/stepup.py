@@ -170,6 +170,18 @@ class StepUpService:
         if failure is not None:
             raise failure
 
+    # ------------------------------------------------------- sign-in support
+
+    async def consume_login_code(
+        self, db: AsyncSession, user_id: uuid.UUID, code: str, now: datetime
+    ) -> Outcome:
+        """Check a sign-in code against the active secret (single use per time step)."""
+        return await self._consume(db, user_id, code, now, pending=False)
+
+    def dummy_check(self, code: str, now: datetime) -> None:
+        """The same HMAC work as a real check, for a number that has no secret."""
+        totp.matching_step(b"\x00" * 20, code, now.timestamp())
+
     # --------------------------------------------------------------- helpers
 
     async def _throttle(self, user_id: uuid.UUID, ip: str, kind: str) -> None:

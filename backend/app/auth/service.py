@@ -23,6 +23,7 @@ from app.auth.models import AuditEvent, Invite, OtpChallenge, TotpCredential, Us
 from app.auth.models import Session as SessionRow
 from app.auth.otp import DisabledOtpProvider, OtpDeliveryError, OtpProvider, generate_code
 from app.auth.ratelimit import RateLimiter
+from app.auth.stepup import StepUpService
 from app.core.config import Settings
 from app.core.errors import ApiError
 
@@ -54,6 +55,10 @@ class SessionInfo:
 
 def _unauthenticated() -> ApiError:
     return ApiError(401, "UNAUTHENTICATED", "Sign in to continue.")
+
+
+def _invalid_credentials() -> ApiError:
+    return ApiError(401, "INVALID_CREDENTIALS", "The phone number or code is not valid.")
 
 
 def _invalid_otp() -> ApiError:
@@ -126,7 +131,9 @@ class AuthService:
         keys: Keys,
         clock: Clock = utc_now,
         email_provider: OtpProvider | None = None,
+        stepup: StepUpService | None = None,
     ) -> None:
+        self._stepup = stepup
         self.settings = settings
         self._factory = session_factory
         self._limiter = limiter
@@ -418,11 +425,24 @@ class AuthService:
             )
         if invite is None:
             return None, None
+        # Once an authenticator is active, a code can no longer start a session,
+        # so none is sent (the response to the caller is the same).
+        if await self._has_authenticator(phone):
+            return None, None
         if channel == "email":
             if not invite.email or self._email_provider is None:
                 return None, None
             return invite.email, self._email_provider
         return phone, self._provider
+
+    async def _has_authenticator(self, phone: str) -> bool:
+        async with self._factory() as db:
+            confirmed = await db.scalar(
+                select(TotpCredential.confirmed_at)
+                .join(User, User.id == TotpCredential.user_id)
+                .where(User.phone_e164 == phone)
+            )
+        return confirmed is not None
 
     def _provider_for(self, channel: str) -> OtpProvider:
         if channel == "email":
@@ -586,6 +606,10 @@ class AuthService:
                     select(TotpCredential.confirmed_at).where(TotpCredential.user_id == user_row.id)
                 )
             ) is not None
+            if totp_enabled:
+                # The authenticator is the way in now; the rolled-back transaction
+                # leaves the code unused.
+                raise _invalid_otp()
 
             # Rotation: a session that was valid before login does not survive it.
             if current_session is not None:
@@ -639,6 +663,162 @@ class AuthService:
         )
         csrf = self.issue_token("session", str(session_id), expires_at)
         return info, token, csrf
+
+    async def login_with_totp(
+        self,
+        *,
+        request: Request,
+        phone: str,
+        code: str,
+        current_session: SessionInfo | None,
+    ) -> tuple[SessionInfo, str, str]:
+        """Sign in with the phone number and a current authenticator code.
+
+        Every failure is the same 401. Attempts are throttled per IP (all
+        attempts) and per phone (failures only, so a successful login does not
+        use up the allowance)."""
+        s = self.settings
+        stepup = self._stepup
+        if stepup is None:
+            raise _invalid_credentials()
+        ip = self.client_ip(request)
+        ip_key = hmac_hex(self.keys.identifier, "ip", ip)[:32]
+        phone_key = hmac_hex(self.keys.identifier, "phone", phone)[:32]
+        window = s.rate_limit_totp_window_seconds
+        retry = await self._limiter.hit("totp_login_ip", ip_key, s.rate_limit_totp_per_ip, window)
+        if retry is None:
+            retry = await self._limiter.exceeded(
+                "totp_login_phone", phone_key, s.rate_limit_totp_per_user
+            )
+        if retry is not None:
+            raise _rate_limited(retry)
+
+        now = self.clock()
+        token = secrets.token_urlsafe(32)
+        session_id = uuid.uuid4()
+        expires_at = now + timedelta(seconds=s.session_absolute_ttl_seconds)
+        label = device_label_from_user_agent(request.headers.get("user-agent"))
+        failed_user: uuid.UUID | None = None
+        info: SessionInfo | None = None
+        async with self._factory() as db, db.begin():
+            row = (
+                await db.execute(
+                    select(User.id, User.status, User.display_name, User.created_at)
+                    .join(Invite, Invite.phone_e164 == User.phone_e164)
+                    .join(TotpCredential, TotpCredential.user_id == User.id)
+                    .where(
+                        User.phone_e164 == phone,
+                        Invite.revoked_at.is_(None),
+                        TotpCredential.confirmed_at.is_not(None),
+                    )
+                )
+            ).first()
+            outcome = "missing"
+            if row is not None and row.status == "active":
+                outcome = await stepup.consume_login_code(db, row.id, code, now)
+            else:
+                stepup.dummy_check(code, now)  # similar work for an unknown number
+            if row is None or outcome != "ok":
+                failed_user = row.id if row is not None else None
+            else:
+                step_up_until = min(now + timedelta(seconds=s.step_up_ttl_seconds), expires_at)
+                await self._open_session(
+                    db,
+                    session_id=session_id,
+                    token=token,
+                    user_id=row.id,
+                    now=now,
+                    expires_at=expires_at,
+                    label=label,
+                    ip=ip,
+                    current_session=current_session,
+                    step_up_until=step_up_until,
+                    method="totp",
+                )
+                info = SessionInfo(
+                    session_id=session_id,
+                    user_id=row.id,
+                    phone_e164=phone,
+                    display_name=row.display_name,
+                    user_created_at=row.created_at,
+                    created_at=now,
+                    last_seen_at=now,
+                    expires_at=expires_at,
+                    device_label=label,
+                    totp_enabled=True,
+                    step_up_until=step_up_until,
+                )
+        if info is None:
+            await self._limiter.hit(
+                "totp_login_phone", phone_key, s.rate_limit_totp_per_user, window
+            )
+            async with self._factory() as db, db.begin():
+                await self._audit(
+                    db,
+                    action="login_failed",
+                    user_id=failed_user,
+                    resource=None,
+                    metadata={"ip_hash": self._ip_hash(ip), "method": "totp"},
+                )
+            raise _invalid_credentials()
+        csrf = self.issue_token("session", str(session_id), expires_at)
+        return info, token, csrf
+
+    async def _open_session(
+        self,
+        db: AsyncSession,
+        *,
+        session_id: uuid.UUID,
+        token: str,
+        user_id: uuid.UUID,
+        now: datetime,
+        expires_at: datetime,
+        label: str | None,
+        ip: str,
+        current_session: SessionInfo | None,
+        step_up_until: datetime | None,
+        method: str,
+    ) -> None:
+        """Inside the login transaction: rotate, insert the session, audit, alert."""
+        # Rotation: a session that was valid before login does not survive it.
+        if current_session is not None:
+            await db.execute(
+                update(SessionRow)
+                .where(SessionRow.id == current_session.session_id)
+                .values(revoked_at=now)
+            )
+        db.add(
+            SessionRow(
+                id=session_id,
+                user_id=user_id,
+                session_digest=self._session_digest(token),
+                created_at=now,
+                last_seen_at=now,
+                expires_at=expires_at,
+                device_label=label,
+                step_up_until=step_up_until,
+            )
+        )
+        await self._audit(
+            db,
+            action="login_succeeded",
+            user_id=user_id,
+            resource=f"session:{session_id}",
+            metadata={"ip_hash": self._ip_hash(ip), "method": method},
+        )
+        await alerts.record(
+            db,
+            user_id=user_id,
+            kind="NEW_SIGN_IN",
+            dedupe_key=f"sign-in:{session_id}",
+            message=(
+                f"A new session started on {label}."
+                if label
+                else "A new session started on an unrecognised device."
+            ),
+            at=now,
+            link=("session", str(session_id)),
+        )
 
     # ---------------------------------------------------------------- sessions
 

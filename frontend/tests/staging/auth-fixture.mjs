@@ -49,6 +49,12 @@ const fixtureAddresses = new Map([
   ["independent", "2001:db8::3"],
 ]);
 
+const workspaceReads = new Set(["/api/v1/brokers/preview", "/api/v1/strategies/preview", "/api/v1/auto-trading/paper"]);
+const workspaceCommands = new Set([
+  "/api/v1/brokers/preview/zerodha/actions", "/api/v1/brokers/preview/fyers/actions",
+  "/api/v1/strategies/preview/commands", "/api/v1/auto-trading/paper/commands",
+]);
+
 createServer((incoming, response) => {
   const headers = { ...incoming.headers };
   const clientIp = fixtureAddresses.get(headers["x-fixture-client"]) ?? fixtureAddresses.get("primary");
@@ -145,6 +151,55 @@ createServer(async (request, response) => {
   const signedIn = Boolean(session);
   const csrfToken = cookies[csrfName];
   const clientIp = request.headers["x-forwarded-for"];
+
+  const marketRead = request.method === "GET" && url.pathname.startsWith("/api/v1/market/");
+  const workspaceRead = request.method === "GET" && workspaceReads.has(url.pathname);
+  const workspaceCommand = request.method === "POST" && workspaceCommands.has(url.pathname);
+  if (marketRead || workspaceRead || workspaceCommand) {
+    if (clientIp !== fixtureAddresses.get("primary") || request.headers["x-tradeo-client-ip"] || request.headers["x-tradeo-ingress-token"]) {
+      return error(response, 400, "UNEXPECTED_HEADERS");
+    }
+    const allowedCookies = marketRead ? [] : workspaceCommand ? [sessionName, csrfName] : [sessionName];
+    if (Object.keys(cookies).some((name) => !allowedCookies.includes(name))) return error(response, 400, "UNEXPECTED_HEADERS");
+    if (marketRead) {
+      if (request.headers.authorization || request.headers.origin || request.headers["x-csrf-token"]) {
+        return error(response, 400, "UNEXPECTED_HEADERS");
+      }
+      if (url.pathname === "/api/v1/market/overview") {
+        return json(response, 200, { source: "demo", quotes: [] }, { "Set-Cookie": "fixture-unrelated=ignored; Path=/" });
+      }
+      if (url.pathname === "/api/v1/market/instruments") {
+        const query = url.searchParams.get("query");
+        if (query === "fixture-invalid-media") {
+          return response.writeHead(502, { "Content-Type": "text/html" }).end("Unexpected HTML response");
+        }
+        if (query === "fixture-provider-offline") {
+          return error(response, 503, "MARKET_DATA_UNAVAILABLE", { "Retry-After": "5", "X-Request-Id": "market-fixture" });
+        }
+        const instruments = query === "M&M" ? [{ id: "NSE:M&M", symbol: "M&M", name: "Mahindra & Mahindra",
+          exchange: "NSE", kind: "equity", currency: "INR", aliases: [] }] : [];
+        return json(response, 200, { instruments });
+      }
+      const candleId = /^\/api\/v1\/market\/instruments\/([^/]+)\/candles$/.exec(url.pathname)?.[1];
+      if (candleId) {
+        return json(response, 200, { instrumentId: decodeURIComponent(candleId), timeframe: url.searchParams.get("timeframe"), source: "demo", candles: [] });
+      }
+      return error(response, 404, "NOT_FOUND");
+    }
+    if (!session) return error(response, 401, "UNAUTHENTICATED");
+    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (workspaceRead) return json(response, 200, { status: "empty" });
+    if (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
+      return error(response, 403, "CSRF_FAILED");
+    }
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    try {
+      return json(response, 200, { received: JSON.parse(Buffer.concat(chunks).toString()) });
+    } catch {
+      return error(response, 400, "INVALID_REQUEST");
+    }
+  }
 
   if (url.pathname === "/api/v1/settings/profile") {
     if (!session) return error(response, 401, "UNAUTHENTICATED");

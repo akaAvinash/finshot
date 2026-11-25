@@ -235,6 +235,14 @@ class StepUpService:
         of concurrent submissions of one code only one gets the row. On success
         the authenticator and every other code are removed too, and every
         step-up window of the account is closed."""
+        # Same lock order as regeneration and disable: the authenticator row first.
+        confirmed = await db.scalar(
+            select(TotpCredential.confirmed_at)
+            .where(TotpCredential.user_id == user_id)
+            .with_for_update()
+        )
+        if confirmed is None:
+            return "invalid"
         spent = await db.scalar(
             delete(RecoveryCode)
             .where(

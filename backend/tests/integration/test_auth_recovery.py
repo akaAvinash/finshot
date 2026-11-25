@@ -226,3 +226,58 @@ def test_bad_bodies_are_rejected(client: TestClient) -> None:
         {"phone": PHONE, "recoveryCode": "AAAAA-AAAAA", "extra": 1},
     ):
         assert b.post(LOGIN, json=payload).status_code == 400
+
+
+def test_different_codes_redeemed_concurrently_never_deadlock(
+    make_app: MakeApp, clock: FakeClock, db_url: str
+) -> None:
+    first = make_app()
+    _, _, codes = signed_in_with_codes(first, clock)
+    browsers = [Browser(make_app()) for _ in range(4)]
+    for b in browsers:
+        b.get_csrf()
+    barrier = threading.Barrier(len(browsers))
+
+    def fire(args: tuple[Browser, str]) -> int:
+        b, code = args
+        barrier.wait()
+        status: int = b.post(LOGIN, json={"phone": PHONE, "recoveryCode": code}).status_code
+        return status
+
+    with ThreadPoolExecutor(len(browsers)) as pool:
+        statuses = list(pool.map(fire, zip(browsers, codes[:4], strict=True)))
+    # Exactly one wins; the rest find the authenticator and codes already gone.
+    assert statuses.count(200) == 1, statuses
+    assert statuses.count(401) == 3, statuses
+    assert db_rows(db_url, "SELECT 1 FROM recovery_codes") == []
+
+
+def test_redeeming_while_regenerating_ends_in_one_consistent_state(
+    make_app: MakeApp, clock: FakeClock, db_url: str
+) -> None:
+    app = make_app()
+    owner, _, codes = signed_in_with_codes(app, clock)
+    other = Browser(make_app())
+    other.get_csrf()
+    barrier = threading.Barrier(2)
+
+    def regenerate() -> int:
+        barrier.wait()
+        status: int = owner.post(CODES).status_code
+        return status
+
+    def redeem() -> int:
+        barrier.wait()
+        status: int = other.post(LOGIN, json={"phone": PHONE, "recoveryCode": codes[0]}).status_code
+        return status
+
+    with ThreadPoolExecutor(2) as pool:
+        regen, login = pool.submit(regenerate), pool.submit(redeem)
+        results = (regen.result(), login.result())
+    assert results[1] in (200, 401), results  # never a 500
+    assert results[0] in (200, 409), results
+    count = len(db_rows(db_url, "SELECT 1 FROM recovery_codes"))
+    has_authenticator = bool(db_rows(db_url, "SELECT 1 FROM totp_credentials"))
+    # Either the sign-in won (no authenticator, no codes) or regeneration finished first
+    # (code gone, authenticator kept with ten new codes).
+    assert (has_authenticator, count) in {(False, 0), (True, 10)}, (has_authenticator, count)

@@ -33,6 +33,7 @@ class Person:
     phone: str = field(default_factory=synthetic_phone)
     device: TotpDevice | None = None
     recovery_codes: list[str] = field(default_factory=list)
+    submitted_totp: list[str] = field(default_factory=list)  # codes sent, so log scans can look for them
     clients: list[ApiClient] = field(default_factory=list)
 
     @property
@@ -78,6 +79,7 @@ class Person:
         assert uri.secret == enrollment["secret"]
         self.device = TotpDevice(enrollment["secret"])
         code, step = self.device.fresh_code()
+        self.submitted_totp.append(code)
         r = client.post("/auth/totp/confirm", {"code": code})
         assert r.status_code == 200, r.text
         self.device.mark_used(step)
@@ -94,6 +96,7 @@ class Person:
         client = client or self.new_client()
         client.fetch_csrf()
         code, step = self.device.fresh_code()
+        self.submitted_totp.append(code)
         r = client.post("/auth/login/totp", {"phone": self.phone, "code": code})
         assert r.status_code == 200, r.text
         self.device.mark_used(step)

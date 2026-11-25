@@ -23,9 +23,10 @@ from qa.config.settings import QaSettings, UnsafeTargetError
 from qa.core.contract import Contract
 from qa.core.faults import TcpProxy
 from qa.core.redaction import redact
-from qa.financial_oracles.oracles import Fill, Side, apply_fills, money, profit_factor
+from qa.core.totp import uri_exposes_phone
+from qa.financial_oracles.oracles import Fill, Side, apply_fills, money, profit_factor, unrealized_pnl
 from qa.reporting.results import TestResult, parse_junit
-from qa.scripts import nightly_candidates
+from qa.scripts import morning_report, nightly_candidates, npm_audit_junit
 from qa.scripts.dependency_audit import audit_cases
 
 pytestmark = [pytest.mark.suite("framework"), pytest.mark.severity("high")]
@@ -90,6 +91,15 @@ def test_limits_are_checked_before_every_retry(tmp_path, limit):
     with pytest.raises(LLMUnavailable, match=match):
         llm.ask_json("r", "s", "data", SCHEMA)
     assert p.calls == 1, "the retry must not run past a limit"
+
+
+@pytest.mark.req("QA-AI-006")
+def test_breaker_opening_stops_the_retry(tmp_path):
+    p = _Provider(["not json", '{"ok": true}'])
+    llm = GuardedLLM(p, _limits(max_retries=1, breaker_threshold=1), tmp_path)
+    with pytest.raises(LLMUnavailable):
+        llm.ask_json("r", "s", "data", SCHEMA)
+    assert p.calls == 1, "an open breaker must stop the retry"
 
 
 # --- disposable-target guard -------------------------------------------------------------
@@ -203,22 +213,26 @@ def test_cut_during_connect_never_registers_the_link(monkeypatch):
     echo = _Echo()
     proxy = TcpProxy("127.0.0.1", echo.port)
     real = socket.create_connection
+    hook_ran = threading.Event()
 
     def connect_then_cut(addr, timeout=None):
         conn = real(addr, timeout=timeout)
-        proxy.cut()  # outage starts between connect and registration
+        hook_ran.set()
+        proxy.cut()  # outage starts between the upstream connect and registration
         return conn
 
     monkeypatch.setattr("qa.core.faults.socket.create_connection", connect_then_cut)
     proxy.start()
     try:
-        with socket.create_connection(("127.0.0.1", proxy.port), timeout=5) as c:
+        c = real(("127.0.0.1", proxy.port), timeout=5)  # the real function, not the patched one
+        with c:
             c.settimeout(2)
             try:
                 c.sendall(b"xyz")
                 got = c.recv(3)
             except OSError:
                 got = b""
+        assert hook_ran.wait(2), "the proxy never reached its upstream connect, so the race was not exercised"
         time.sleep(0.3)
         assert got == b"" and echo.received == 0, "bytes crossed a cut proxy"
     finally:
@@ -345,3 +359,178 @@ def test_profit_factor_accepts_one_shot_iterators():
 @pytest.mark.parametrize(("x", "want"), [("1.005", "1.01"), ("-1.005", "-1.01"), ("2.675", "2.68"), ("0.004", "0.00")])
 def test_money_half_paise_ties_round_away_from_zero(x, want):
     assert money(D(x)) == D(want)
+
+
+@pytest.mark.req("FIN-PNL-001")
+def test_unrealised_pnl_uses_the_exact_cost_basis():
+    # avg = (1.00 + 5 * 1.01) / 6 is not a finite decimal. 3 shares left, marked 0.98:
+    # exact unrealised P&L is -0.085, which rounds away from zero to -0.09.
+    state = apply_fills([Fill(Side.BUY, 1, D("1.00")), Fill(Side.BUY, 5, D("1.01")), Fill(Side.SELL, 3, D("1.01"))])
+    assert state.quantity == 3
+    assert money(unrealized_pnl(state, D("0.98"))) == D("-0.09")
+    short = apply_fills([Fill(Side.SELL, 1, D("1.00")), Fill(Side.SELL, 5, D("1.01")), Fill(Side.BUY, 3, D("1.01"))])
+    # Short mirror: exact -0.065 is a tie and rounds away from zero; a rounded average would give -0.06.
+    assert money(unrealized_pnl(short, D("1.03"))) == D("-0.07")
+
+
+# --- QR URI privacy helper -----------------------------------------------------------------
+
+
+@pytest.mark.critical_gate
+@pytest.mark.severity("critical")
+@pytest.mark.req("AUTH-TOTP-002")
+def test_uri_privacy_check_sees_a_percent_encoded_full_phone():
+    leaked = "otpauth://totp/Tradeo:%2B919876543210?secret=ABCDEFGHIJKLMNOP&issuer=Tradeo"
+    assert "+919876543210" not in leaked, "the raw URI alone would hide the encoded number"
+    assert "label" in uri_exposes_phone(leaked, "+919876543210")
+    masked = "otpauth://totp/Tradeo:%2B91XXXXXX3210?secret=ABCDEFGHIJKLMNOP&issuer=Tradeo"
+    assert uri_exposes_phone(masked, "+919876543210") == []
+
+
+# --- nested JUnit: testsuite root ----------------------------------------------------------
+
+
+@pytest.mark.req("QA-AI-001")
+def test_nested_failure_under_a_testsuite_root_is_not_lost(tmp_path):
+    p = tmp_path / "root-suite.xml"
+    p.write_text(
+        '<testsuite name="outer"><testcase classname="a" name="ok"/>'
+        '<testsuite name="inner"><testcase classname="b" name="bad">'
+        '<properties><property name="severity" value="critical"/></properties><failure message="x"/></testcase>'
+        "</testsuite></testsuite>"
+    )
+    results = parse_junit(p)
+    assert sorted(r.nodeid for r in results) == ["a::ok", "b::bad"]
+    gate = analysis.merge_eligibility(results, required_sources=[], tested_sha=None, expected_sha=None)
+    assert gate.verdict == "NOT_ELIGIBLE"
+
+
+# --- incomplete audits block, findings do not -----------------------------------------------
+
+
+def _gate(cases_xml: str, tmp_path: Path):
+    p = tmp_path / "audit.xml"
+    p.write_text(f'<testsuites><testsuite name="x">{cases_xml}</testsuite></testsuites>')
+    return analysis.merge_eligibility(
+        parse_junit(p, source="dependency-audit"),
+        required_sources=["dependency-audit"],
+        tested_sha=None,
+        expected_sha=None,
+    )
+
+
+@pytest.mark.req("SEC-DEP-001")
+def test_incomplete_pip_audit_blocks_but_findings_only_warn(tmp_path):
+    incomplete, _ = audit_cases(2, "", "network error")
+    assert _gate("".join(incomplete), tmp_path).verdict == "NOT_ELIGIBLE"
+    vuln = {"dependencies": [{"name": "x", "version": "1", "vulns": [{"id": "V-1", "fix_versions": ["2"]}]}]}
+    found, _ = audit_cases(1, json.dumps(vuln), "")
+    gate = _gate("".join(found), tmp_path)
+    assert gate.verdict == "ELIGIBLE" and gate.warnings, "high findings are non-blocking warnings"
+
+
+@pytest.mark.req("SEC-DEP-001")
+def test_npm_audit_severity_is_kept_and_only_critical_blocks(tmp_path):
+    def run(vulns, rc):
+        cases, _ = npm_audit_junit.audit_cases(rc, json.dumps({"vulnerabilities": vulns}))
+        return _gate("".join(cases), tmp_path)
+
+    high = {"lodash": {"severity": "high", "range": "<4", "via": ["Prototype pollution"]}}
+    crit = {"evil": {"severity": "critical", "range": "*", "via": [{"title": "RCE"}]}}
+    assert run(high, 1).verdict == "ELIGIBLE" and run(high, 1).warnings
+    assert run(crit, 1).verdict == "NOT_ELIGIBLE"
+    assert run({}, 0).verdict == "ELIGIBLE"
+    broken, _ = npm_audit_junit.audit_cases(1, '{"error": {"code": "ENOAUDIT"}}')
+    assert _gate("".join(broken), tmp_path).verdict == "NOT_ELIGIBLE", "a failed npm audit is incomplete, not clean"
+    empty, _ = npm_audit_junit.audit_cases(1, "")
+    assert _gate("".join(empty), tmp_path).verdict == "NOT_ELIGIBLE"
+
+
+# --- morning report gate inputs -------------------------------------------------------------
+
+_M = {"label": "pr-9", "checkout_sha": "b" * 40, "merge_sha": "c" * 40, "pr": 9}
+
+
+def _cmd(**kw):
+    args = dict(run_e2e=False, candidate_result="success", current_sha="c" * 40)
+    return morning_report.supervisor_cmd(_M, ["a.xml"], "out", "url", **{**args, **kw})
+
+
+def _after(cmd, flag):
+    return cmd[cmd.index(flag) + 1 :]
+
+
+@pytest.mark.req("QA-GATE-001")
+def test_e2e_result_set_is_required_only_when_e2e_ran():
+    assert "frontend-e2e" not in _after(_cmd(run_e2e=False), "--required")[:8]
+    assert "frontend-e2e" in _after(_cmd(run_e2e=True), "--required")[:8]
+    # A candidate whose build failed before Playwright wrote frontend-e2e.xml is not eligible.
+    r = [TestResult(s, "a::b", "passed", 0.0) for s in morning_report.REQUIRED]
+    gate = analysis.merge_eligibility(
+        r, required_sources=morning_report.required_sources(True), tested_sha=None, expected_sha=None
+    )
+    assert gate.verdict == "NOT_ELIGIBLE" and "frontend-e2e" in gate.reasons[0]
+
+
+@pytest.mark.req("QA-GATE-003")
+def test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings():
+    cancelled = _after(_cmd(candidate_result="cancelled"), "--jobs")
+    assert json.loads(cancelled[0]) == {"candidate": "cancelled"}
+    assert "--jobs" not in _cmd(candidate_result="failure"), "non-critical failures must not block"
+    assert "--jobs" not in _cmd(candidate_result="success")
+    gate = analysis.merge_eligibility(
+        [TestResult("qa", "a::b", "passed", 0.0)],
+        required_sources=["qa"],
+        tested_sha=None,
+        expected_sha=None,
+        job_outcomes=json.loads(cancelled[0]),
+    )
+    assert gate.verdict == "NOT_ELIGIBLE"
+
+
+@pytest.mark.req("QA-GATE-004")
+def test_report_compares_against_the_current_commit_and_fails_closed():
+    assert _after(_cmd(current_sha="c" * 40), "--expected-sha")[0] == "c" * 40
+    unknown = _after(_cmd(current_sha=None), "--expected-sha")[0]
+    gate = analysis.merge_eligibility(
+        [TestResult("qa", "a::b", "passed", 0.0)], required_sources=[], tested_sha="c" * 40, expected_sha=unknown
+    )
+    assert gate.verdict == "NOT_ELIGIBLE", "a failed lookup must not read as current"
+    newer = analysis.merge_eligibility(
+        [TestResult("qa", "a::b", "passed", 0.0)], required_sources=[], tested_sha="c" * 40, expected_sha="d" * 40
+    )
+    assert newer.verdict == "NOT_ELIGIBLE" and "stale" in newer.reasons[0]
+
+
+# --- workflow shell: merge script -----------------------------------------------------------
+
+
+@pytest.mark.req("QA-GATE-004")
+def test_merge_script_stops_at_the_first_failed_fetch(tmp_path):
+    script = Path(__file__).parents[2] / "scripts" / "merge_heads.sh"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "f").write_text("x")
+    _git(repo, "add", "f")
+    _git(repo, "commit", "-qm", "base")
+    # `origin` points nowhere, so every fetch fails; the second sha must never be reached.
+    _git(repo, "remote", "add", "origin", str(tmp_path / "missing.git"))
+    log = tmp_path / "attempts"
+    wrapper = tmp_path / "git"
+    real_git = subprocess.run(["which", "git"], capture_output=True, text=True, check=True).stdout.strip()
+    wrapper.write_text(f'#!/bin/bash\ncase " $* " in *" fetch "*) echo "$@" >> {log};; esac\nexec {real_git} "$@"\n')
+    wrapper.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "FETCH_TOKEN": "t",
+        "HEAD_SHA": f"{'a' * 40} {'b' * 40}",
+    }
+    proc = subprocess.run(["bash", str(script)], cwd=repo, env=env, capture_output=True, text=True)
+    assert proc.returncode != 0
+    assert len(log.read_text().splitlines()) == 1, "a failed fetch must stop the run before the next head"
+    bad = subprocess.run(
+        ["bash", str(script)], cwd=repo, env={**env, "HEAD_SHA": "not-a-sha"}, capture_output=True, text=True
+    )
+    assert bad.returncode == 2

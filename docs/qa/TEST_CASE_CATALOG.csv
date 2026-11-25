@@ -87,6 +87,7 @@ qa/tests/framework/test_framework_selfcheck.py::test_set_cookie_parser_reads_att
 qa/tests/framework/test_harness_regressions.py::test_gate_requires_tested_sha_when_expected_sha_is_given,framework,QA-GATE-001,high,no,no,pr+nightly,gate requires tested sha when expected sha is given
 qa/tests/framework/test_harness_regressions.py::test_corrupt_cache_entry_is_a_miss,framework,QA-AI-005,high,no,no,pr+nightly,corrupt cache entry is a miss
 qa/tests/framework/test_harness_regressions.py::test_limits_are_checked_before_every_retry,framework,QA-AI-006,high,no,no,pr+nightly,limits are checked before every retry
+qa/tests/framework/test_harness_regressions.py::test_breaker_opening_stops_the_retry,framework,QA-AI-006,high,no,no,pr+nightly,breaker opening stops the retry
 qa/tests/framework/test_harness_regressions.py::test_database_url_query_cannot_redirect_the_target,framework,QA-POL-002,high,no,no,pr+nightly,database url query cannot redirect the target
 qa/tests/framework/test_harness_regressions.py::test_plain_disposable_url_is_accepted,framework,QA-POL-002,high,no,no,pr+nightly,plain disposable url is accepted
 qa/tests/framework/test_harness_regressions.py::test_validators_are_scoped_to_their_contract,framework,QA-FW-002,high,no,no,pr+nightly,validators are scoped to their contract
@@ -101,6 +102,15 @@ qa/tests/framework/test_harness_regressions.py::test_open_pr_discovery_follows_p
 qa/tests/framework/test_harness_regressions.py::test_cost_basis_is_not_rounded_before_realised_pnl,framework,FIN-PNL-001,high,no,no,pr+nightly,cost basis is not rounded before realised pnl
 qa/tests/framework/test_harness_regressions.py::test_profit_factor_accepts_one_shot_iterators,framework,FIN-PF-001,high,no,no,pr+nightly,profit factor accepts one shot iterators
 qa/tests/framework/test_harness_regressions.py::test_money_half_paise_ties_round_away_from_zero,framework,FIN-CHG-002,high,no,no,pr+nightly,money half paise ties round away from zero
+qa/tests/framework/test_harness_regressions.py::test_unrealised_pnl_uses_the_exact_cost_basis,framework,FIN-PNL-001,high,no,no,pr+nightly,unrealised pnl uses the exact cost basis
+qa/tests/framework/test_harness_regressions.py::test_uri_privacy_check_sees_a_percent_encoded_full_phone,framework,AUTH-TOTP-002,critical,yes,no,pr+nightly,uri privacy check sees a percent encoded full phone
+qa/tests/framework/test_harness_regressions.py::test_nested_failure_under_a_testsuite_root_is_not_lost,framework,QA-AI-001,high,no,no,pr+nightly,nested failure under a testsuite root is not lost
+qa/tests/framework/test_harness_regressions.py::test_incomplete_pip_audit_blocks_but_findings_only_warn,framework,SEC-DEP-001,high,no,no,pr+nightly,incomplete pip audit blocks but findings only warn
+qa/tests/framework/test_harness_regressions.py::test_npm_audit_severity_is_kept_and_only_critical_blocks,framework,SEC-DEP-001,high,no,no,pr+nightly,npm audit severity is kept and only critical blocks
+qa/tests/framework/test_harness_regressions.py::test_e2e_result_set_is_required_only_when_e2e_ran,framework,QA-GATE-001,high,no,no,pr+nightly,e2e result set is required only when e2e ran
+qa/tests/framework/test_harness_regressions.py::test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings,framework,QA-GATE-003,high,no,no,pr+nightly,cancelled candidate is not eligible but plain failures stay warnings
+qa/tests/framework/test_harness_regressions.py::test_report_compares_against_the_current_commit_and_fails_closed,framework,QA-GATE-004,high,no,no,pr+nightly,report compares against the current commit and fails closed
+qa/tests/framework/test_harness_regressions.py::test_merge_script_stops_at_the_first_failed_fetch,framework,QA-GATE-004,high,no,no,pr+nightly,merge script stops at the first failed fetch
 qa/tests/policy/test_independence.py::test_qa_code_never_imports_product_code,policy,QA-POL-001,high,no,no,pr+nightly,Expected values must not come from the implementation under test.
 qa/tests/policy/test_independence.py::test_no_real_endpoints_or_credentials_in_qa_code,policy,QA-POL-002,high,no,no,pr+nightly,no real endpoints or credentials in qa code
 qa/tests/policy/test_independence.py::test_synthetic_contact_data_only,policy,QA-POL-003,high,no,no,pr+nightly,Emails in the framework use the reserved .invalid TLD.

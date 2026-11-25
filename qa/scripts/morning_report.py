@@ -8,13 +8,89 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-REQUIRED = ["backend", "qa", "frontend-unit", "secret-scan", "dependency-audit"]
+REQUIRED = ["backend", "qa", "frontend-unit", "secret-scan", "dependency-audit", "npm-audit"]
+E2E_SOURCE = "frontend-e2e"
+UNKNOWN_SHA = "current-commit-unknown"  # never equals a tested sha, so a failed lookup fails closed
+
+
+def required_sources(run_e2e: bool) -> list[str]:
+    """Result sets every candidate must produce; the e2e set only when e2e was requested."""
+    return [*REQUIRED, E2E_SOURCE] if run_e2e else list(REQUIRED)
+
+
+def supervisor_cmd(
+    m: dict,
+    files: list[str],
+    dest: str,
+    run_url: str,
+    *,
+    run_e2e: bool,
+    candidate_result: str,
+    current_sha: str | None,
+) -> list[str]:
+    """Command line for one candidate's report. Pure, so the gate inputs can be tested."""
+    tested = m["merge_sha"].split()[-1] if m["merge_sha"] else m["checkout_sha"]
+    cmd = [
+        sys.executable,
+        "-m",
+        "qa.ai_agent.supervisor",
+        "--junit",
+        *(files or ["/dev/null"]),
+        "--out",
+        dest,
+        "--required",
+        *required_sources(run_e2e),
+        "--tested-sha",
+        tested,
+        "--expected-sha",
+        current_sha or UNKNOWN_SHA,
+        "--base-sha",
+        m["checkout_sha"],
+        "--head-sha",
+        m["merge_sha"] or m["checkout_sha"],
+        "--branch",
+        m["label"],
+        "--run-url",
+        run_url,
+        "--title",
+        f"Nightly: {m['label']}",
+        "--environment",
+        "GitHub-hosted ubuntu-latest, Postgres 16 + Redis 7 service containers",
+    ]
+    # A cancelled run is not a pass even if some JUnit files were written first. Plain
+    # failures are deliberately not passed: non-critical failures must stay warnings.
+    if candidate_result == "cancelled":
+        cmd += ["--jobs", json.dumps({"candidate": "cancelled"})]
+    if m.get("pr"):
+        cmd += ["--pr", str(m["pr"])]
+    if m["label"] != "main":  # one AI pass at most per night: main only
+        cmd.append("--no-ai")
+    return cmd
+
+
+def current_sha_for(m: dict, repo: str, token: str, default_branch: str = "main") -> str | None:
+    """Tip the candidate should match now: the PR head, or the default branch tip. None if unknown."""
+    if not repo or not token:
+        return None
+    from qa.scripts.nightly_candidates import gh
+
+    try:
+        if m.get("pr"):
+            return gh(f"/repos/{repo}/pulls/{m['pr']}", token)["head"]["sha"]  # type: ignore[index]
+        if m["label"] == "main":
+            return gh(f"/repos/{repo}/commits/{default_branch}", token)["sha"]  # type: ignore[index]
+    except Exception:  # noqa: BLE001 - any lookup failure means unknown, which blocks
+        return None
+    return (
+        m["merge_sha"].split()[-1] if m["merge_sha"] else m["checkout_sha"]
+    )  # explicit sha / integration: nothing newer exists
 
 
 def main() -> int:
@@ -24,7 +100,12 @@ def main() -> int:
     ap.add_argument("--candidates", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--run-url", default="")
+    ap.add_argument("--run-e2e", choices=["true", "false"], default="false")
+    ap.add_argument("--candidate-result", default="success", help="needs.candidate.result")
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = ap.parse_args()
+    run_e2e = args.run_e2e == "true"
+    token = os.environ.get("GITHUB_TOKEN", "")
 
     results = Path(args.results)
     out = Path(args.out)
@@ -38,35 +119,15 @@ def main() -> int:
         label = m["label"]
         files = sorted(str(p) for p in results.glob(f"junit-{label}-*/**/*.xml"))
         dest = out / label
-        cmd = [
-            sys.executable,
-            "-m",
-            "qa.ai_agent.supervisor",
-            "--junit",
-            *(files or ["/dev/null"]),
-            "--out",
+        cmd = supervisor_cmd(
+            m,
+            files,
             str(dest),
-            "--required",
-            *REQUIRED,
-            "--tested-sha",
-            m["merge_sha"].split()[-1] if m["merge_sha"] else m["checkout_sha"],
-            "--base-sha",
-            m["checkout_sha"],
-            "--head-sha",
-            m["merge_sha"] or m["checkout_sha"],
-            "--branch",
-            label,
-            "--run-url",
             args.run_url,
-            "--title",
-            f"Nightly: {label}",
-            "--environment",
-            "GitHub-hosted ubuntu-latest, Postgres 16 + Redis 7 service containers",
-        ]
-        if m.get("pr"):
-            cmd += ["--pr", str(m["pr"])]
-        if label != "main":  # one AI pass at most per night: main only
-            cmd.append("--no-ai")
+            run_e2e=run_e2e,
+            candidate_result=args.candidate_result,
+            current_sha=current_sha_for(m, args.repo, token),
+        )
         subprocess.run(cmd, check=False)
         rep_path = dest / "qa-report.json"
         rep = json.loads(rep_path.read_text()) if rep_path.exists() else None

@@ -208,8 +208,9 @@ def merge_eligibility(
     block_on: tuple[str, ...] = ("critical",),
 ) -> Eligibility:
     """Merge verdict. Only failures whose severity is in ``block_on`` block (owner policy
-    2026-11-25: critical only); other failures are warnings. Missing, stale, cancelled or
-    unexecuted critical results always block, because they cannot show that nothing critical failed."""
+    2026-11-25: critical only); other failures are warnings. Missing, stale, cancelled,
+    incomplete (a mandatory check that could not run) or unexecuted critical results always
+    block, because they cannot show that nothing critical failed."""
     reasons: list[str] = []
     warnings: list[str] = []
     if not results:
@@ -230,6 +231,8 @@ def merge_eligibility(
             reasons.append(f"{r.severity} failure: {r.nodeid}")
         elif r.is_failure:
             warnings.append(f"{r.severity} failure: {r.nodeid}")
+        if "incomplete" in r.tags and r.is_failure:
+            reasons.append(f"mandatory check did not complete: {r.nodeid}")
         if "critical_gate" in r.tags and r.outcome in ("skipped", "blocked"):
             reasons.append(f"critical gate not executed: {r.nodeid}")
     return Eligibility("NOT_ELIGIBLE" if reasons else "ELIGIBLE", reasons, warnings)

@@ -17,7 +17,7 @@ AUTH-OTP-010,authentication,Auth,SMS (MSG91) delivery,contracts/openapi.yaml 0.1
 AUTH-VAL-001,authentication,Auth,"Phone and code formats validated (boundaries, classes)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_malformed_codes_rejected_before_lookup test_malformed_phone_numbers_rejected
 AUTH-VAL-002,authentication,Auth,Unknown request fields rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_unknown_fields_rejected
 AUTH-TOTP-001,authentication,Auth,Authenticator enrolment returns a 160-bit secret and matching otpauth URI,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_enrolment_returns_valid_secret_and_qr_uri
-AUTH-TOTP-002,authentication,Auth,Manual setup from the text secret works; QR label hides phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_enrolment_returns_valid_secret_and_qr_uri
+AUTH-TOTP-002,authentication,Auth,Manual setup from the text secret works; QR label hides phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_enrolment_returns_valid_secret_and_qr_uri test_uri_privacy_check_sees_a_percent_encoded_full_phone
 AUTH-TOTP-003,authentication,Auth,Wrong confirm code does not activate,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_confirm_with_wrong_code_does_not_activate
 AUTH-TOTP-004,authentication,Auth,Second enrolment refused while active,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_second_enrolment_refused_when_active
 AUTH-TOTP-005,authentication,Auth,Phone + TOTP sign-in opens a step-up window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_phone_and_totp_sign_in
@@ -80,10 +80,10 @@ SEC-LEAK-002,security,Platform,SMTP password never logged,AUTH.md SMTP,P0,automa
 SEC-LEAK-003,security,Platform,API never echoes codes,contract,P1,automated,test_api_responses_never_echo_codes
 SEC-LEAK-004,security,Platform,Operator invite list masks numbers and emails,AUTH.md,P2,automated,test_operator_invite_list_masks_numbers
 SEC-SECRET-001,security,Platform,No credentials committed to the repository,brief s15,P0,automated-ci,
-SEC-DEP-001,security,Platform,"No known-vulnerable dependencies (pip-audit, npm audit)",brief s14,P1,automated-ci,test_failed_audit_is_never_reported_clean
+SEC-DEP-001,security,Platform,"No known-vulnerable dependencies (pip-audit, npm audit)",brief s14,P1,automated-ci,test_failed_audit_is_never_reported_clean test_incomplete_pip_audit_blocks_but_findings_only_warn test_npm_audit_severity_is_kept_and_only_critical_blocks
 SEC-ZAP-001,security,Platform,OWASP ZAP baseline scan of the running stack,brief s5,P2,specified,
 SEC-AUTHZ-001,authorization,Platform,Every non-auth route enforces session + setup + CSRF (route inventory from contract),contract,P0,specified,
-FIN-PNL-001,financial,Portfolio,Weighted-average long P&L (manual example),QA oracle,P0,automated,test_cost_basis_is_not_rounded_before_realised_pnl test_long_round_trip_pnl
+FIN-PNL-001,financial,Portfolio,Weighted-average long P&L (manual example),QA oracle,P0,automated,test_cost_basis_is_not_rounded_before_realised_pnl test_long_round_trip_pnl test_unrealised_pnl_uses_the_exact_cost_basis
 FIN-PNL-002,financial,Portfolio,Short and reversal P&L (manual example),QA oracle,P0,automated,test_short_and_reversal
 FIN-PNL-003,financial,Portfolio,P&L conservation property for any fill sequence,QA oracle,P0,automated,test_pnl_conservation
 FIN-CHG-001,financial,Portfolio,"Charges from an explicit schedule, paise rounding",QA oracle,P1,automated,test_charges_with_explicit_schedule
@@ -139,16 +139,16 @@ QA-POL-001,qa_framework,QA,QA code never imports product code,brief s10,P0,autom
 QA-POL-002,qa_framework,QA,No real endpoints or credentials in QA code,brief s15,P0,automated,test_database_url_query_cannot_redirect_the_target test_no_real_endpoints_or_credentials_in_qa_code test_plain_disposable_url_is_accepted
 QA-POL-003,qa_framework,QA,Synthetic contact data only,brief s8,P0,automated,test_synthetic_contact_data_only
 QA-POL-004,qa_framework,QA,AI agent has no merge/write capability,brief s13,P0,automated,test_ai_agent_has_no_merge_or_write_capability
-QA-AI-001,qa_framework,QA,JUnit ingestion incl. properties and blocked,brief s11,P1,automated,test_junit_ingestion_reads_properties_and_blocked test_nested_suites_count_each_case_once
+QA-AI-001,qa_framework,QA,JUnit ingestion incl. properties and blocked,brief s11,P1,automated,test_junit_ingestion_reads_properties_and_blocked test_nested_failure_under_a_testsuite_root_is_not_lost test_nested_suites_count_each_case_once
 QA-AI-002,qa_framework,QA,Failure grouping,brief s11,P1,automated,test_failure_grouping_normalises_volatile_values
 QA-AI-003,qa_framework,QA,Suite selection from changed files,brief s11,P2,automated,test_suite_selection_from_changed_files
 QA-AI-004,qa_framework,QA,LLM input redacted and delimited as untrusted,brief s13,P0,automated,test_guarded_llm_redacts_and_delimits_untrusted_input
 QA-AI-005,qa_framework,QA,LLM replies schema-validated; circuit breaker,brief s12,P0,automated,test_corrupt_cache_entry_is_a_miss test_guarded_llm_rejects_non_schema_replies_and_opens_breaker
-QA-AI-006,qa_framework,QA,Daily AI spending cap enforced before calling,brief s12,P0,automated,test_guarded_llm_enforces_daily_budget test_limits_are_checked_before_every_retry
+QA-AI-006,qa_framework,QA,Daily AI spending cap enforced before calling,brief s12,P0,automated,test_breaker_opening_stops_the_retry test_guarded_llm_enforces_daily_budget test_limits_are_checked_before_every_retry
 QA-AI-007,qa_framework,QA,No provider = deterministic mode,brief s12,P0,automated,test_no_provider_configured_means_deterministic_mode
 QA-AI-008,qa_framework,QA,Supervisor report end to end,brief s17,P1,automated,test_supervisor_report_end_to_end_without_ai
-QA-GATE-001,qa_framework,QA,Gate: only critical failures (and missing/stale/cancelled results) block,brief s16,P0,automated,test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha test_gate_high_failure_warns_by_default_and_blocks_when_configured test_gate_requires_tested_sha_when_expected_sha_is_given test_supervisor_report_end_to_end_without_ai
+QA-GATE-001,qa_framework,QA,Gate: only critical failures (and missing/stale/cancelled results) block,brief s16,P0,automated,test_e2e_result_set_is_required_only_when_e2e_ran test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha test_gate_high_failure_warns_by_default_and_blocks_when_configured test_gate_requires_tested_sha_when_expected_sha_is_given test_supervisor_report_end_to_end_without_ai
 QA-GATE-002,qa_framework,QA,"Gate: high/medium/low failures warn, do not block",RELEASE_GATES,P1,automated,test_gate_low_failure_is_a_warning_only
-QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated,test_gate_counts_cancelled_job_as_not_passed
+QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated,test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings test_gate_counts_cancelled_job_as_not_passed
 QA-POL-005,qa_framework,QA,Traceability matrix and test catalog match the test markers,brief s7,P1,automated,test_traceability_and_catalog_are_current
-QA-GATE-004,qa_framework,QA,Nightly verdict published as qa/nightly status on each tested PR head; no report is an error,owner 2026-11-25,P0,automated,test_integration_merge_chains_two_conflict_free_heads test_nightly_limit_does_not_make_a_pr_untestable test_nightly_status_marks_only_tested_pr_heads_and_fails_closed test_open_pr_discovery_follows_pagination
+QA-GATE-004,qa_framework,QA,Nightly verdict published as qa/nightly status on each tested PR head; no report is an error,owner 2026-11-25,P0,automated,test_integration_merge_chains_two_conflict_free_heads test_merge_script_stops_at_the_first_failed_fetch test_nightly_limit_does_not_make_a_pr_untestable test_nightly_status_marks_only_tested_pr_heads_and_fails_closed test_open_pr_discovery_follows_pagination test_report_compares_against_the_current_commit_and_fails_closed

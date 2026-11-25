@@ -50,10 +50,12 @@ def test_no_codes_secrets_or_pii_in_server_logs(backend_factory, sink):
             if v and v in logs:
                 leaks.append(label)
                 break
-    # An OTP is six digits; only flag it when it appears as a standalone token.
-    for code in emailed:
-        if re.search(rf"(?<!\d){code}(?!\d)", logs) and "emailed OTP" not in leaks:
-            leaks.append("emailed OTP")
+    # Emailed and submitted TOTP codes are six digits; flag them only as standalone tokens.
+    assert p.submitted_totp, "positive control: the lifecycle submitted TOTP codes"
+    for label, codes_ in (("emailed OTP", emailed), ("submitted TOTP code", p.submitted_totp)):
+        for code in codes_:
+            if re.search(rf"(?<!\d){re.escape(code)}(?!\d)", logs) and label not in leaks:
+                leaks.append(label)
     assert not leaks, f"sensitive values found in server logs: {sorted(set(leaks))}"
 
 

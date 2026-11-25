@@ -5,11 +5,10 @@ from __future__ import annotations
 import re
 import time
 from datetime import UTC, datetime
-from urllib.parse import unquote
 
 import pytest
 
-from qa.core.totp import STEP_SECONDS, TotpDevice, parse_otpauth, step_at
+from qa.core.totp import STEP_SECONDS, TotpDevice, parse_otpauth, step_at, uri_exposes_phone
 
 pytestmark = [pytest.mark.needs_services, pytest.mark.suite("authentication")]
 
@@ -31,8 +30,7 @@ def test_enrolment_returns_valid_secret_and_qr_uri(people):
     uri = parse_otpauth(e["otpauthUri"])
     assert uri.secret == e["secret"], "QR URI must carry the same secret as the manual-entry text"
     assert (uri.algorithm, uri.digits, uri.period) == ("SHA1", 6, 30)
-    for where, text in (("URI", e["otpauthUri"]), ("decoded URI", unquote(e["otpauthUri"])), ("label", uri.label)):
-        assert p.phone not in text and p.phone.lstrip("+") not in text, f"QR {where} exposes the full phone number"
+    assert not uri_exposes_phone(e["otpauthUri"], p.phone), "QR URI exposes the full phone number"
     # Manual setup: a device built from the text secret alone can confirm.
     dev = TotpDevice(e["secret"])
     code, _ = dev.fresh_code()

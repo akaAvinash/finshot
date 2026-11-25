@@ -53,7 +53,10 @@ def audit_cases(returncode: int, stdout: str, stderr: str) -> tuple[list[str], i
     if deps is None:
         failures = 1
         cases.append(
-            '<testcase classname="dependency_audit" name="pip-audit-ran"><error message="pip-audit output unreadable">'
+            '<testcase classname="dependency_audit" name="pip-audit-ran">'
+            # Tagged incomplete: the gate blocks on it (we cannot show nothing critical is affected).
+            '<properties><property name="tag" value="incomplete"/><property name="requirement" value="SEC-DEP-001"/>'
+            '</properties><error message="pip-audit did not complete">'
             f"{escape(stderr[-2000:])}</error></testcase>"
         )
     else:

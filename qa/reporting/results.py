@@ -36,7 +36,7 @@ _BLOCKED_MARKERS = ("blocked", "unset", "not implemented", "not_implemented")
 
 def parse_junit(path: Path, source: str | None = None) -> list[TestResult]:
     root = ET.parse(path).getroot()
-    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    suites = list(root.iter("testsuite"))  # includes the root when it is a testsuite
     out: list[TestResult] = []
     for suite in suites:
         for case in suite.findall("testcase"):  # direct children: nested suites are visited on their own

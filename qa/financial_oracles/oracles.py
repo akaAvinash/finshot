@@ -13,7 +13,7 @@ the schedule it means and cite where it came from.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, localcontext
 from enum import StrEnum
 from fractions import Fraction
@@ -42,6 +42,8 @@ class PositionState:
     quantity: int  # signed: >0 long, <0 short
     average_price: Decimal  # of the open quantity
     realized_pnl: Decimal
+    # Exact cost basis kept for unrealised P&L, so it is never computed from the rounded average.
+    average_exact: Fraction | None = field(default=None, compare=False, repr=False)
 
 
 def apply_fills(fills: Iterable[Fill]) -> PositionState:
@@ -73,7 +75,7 @@ def apply_fills(fills: Iterable[Fill]) -> PositionState:
             avg = Fraction(0)
         elif remainder > 0:
             avg = Fraction(f.price)
-    return PositionState(qty, _dec(avg), _dec(realized))
+    return PositionState(qty, _dec(avg), _dec(realized), avg)
 
 
 def _dec(x: Fraction) -> Decimal:
@@ -84,7 +86,8 @@ def _dec(x: Fraction) -> Decimal:
 
 
 def unrealized_pnl(state: PositionState, mark: Decimal) -> Decimal:
-    return (mark - state.average_price) * state.quantity
+    avg = state.average_exact if state.average_exact is not None else Fraction(state.average_price)
+    return _dec((Fraction(mark) - avg) * state.quantity)
 
 
 @dataclass(frozen=True)

@@ -92,3 +92,10 @@ class TotpDevice:
 
     def mark_used(self, step: int) -> None:
         self.last_used_step = max(self.last_used_step, step)
+
+
+def uri_exposes_phone(uri: str, phone: str) -> list[str]:
+    """Where a full phone number shows in an otpauth URI: raw, percent-decoded or in the label."""
+    forms = {"URI": uri, "decoded URI": unquote(uri), "label": parse_otpauth(uri).label}
+    needles = {phone, phone.lstrip("+")}
+    return [where for where, text in forms.items() if any(n and n in text for n in needles)]

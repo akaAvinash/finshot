@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Clock3, LockKeyhole } from "lucide-react";
+import Link from "next/link";
+import { Bell, Clock3, LockKeyhole } from "lucide-react";
 import { DashboardSkeleton, DataState } from "@/components/data-state";
 import { PageHeading } from "@/components/page-heading";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { useWorkspaceControls } from "@/components/workspace-controls-provider";
 import { WorkspacePreviewSelect } from "@/components/workspace-preview-select";
 import type { SensitiveSettingsChange, SettingsCommand } from "@/lib/api/workspace-controls-types";
 import { formatWorkspaceTime, sampleSettingsCode, settingsActions } from "@/lib/workspace-controls";
-import { NotificationSettings, ProfilePreferences } from "./settings-preferences";
+import { NotificationSettings, ProfilePreferences, SettingsCard } from "./settings-preferences";
 import { BrokerSettingsLink, describeRisk, RetentionSettings, RiskSettings, SecuritySettings, SettingsAudit } from "./settings-security";
 
 const confirmCopy = {
@@ -24,7 +25,7 @@ const confirmCopy = {
   "set-risk": { title: "Confirm demo risk limits", anchor: "risk-settings" },
 } as const;
 
-export function Settings() {
+export function Settings({ accountAlerts = false }: { accountAlerts?: boolean } = {}) {
   const client = useWorkspaceControls();
   const preview = useWorkspacePreview(client.getSettings, client.updateSettings);
   const [confirmation, setConfirmation] = useState<SensitiveSettingsChange | null>(null);
@@ -101,12 +102,15 @@ export function Settings() {
       <div className="grid items-start gap-4 min-[760px]:grid-cols-2">
         <div className="min-w-0 space-y-4">
           <ProfilePreferences key={`${snapshot.displayName}:${snapshot.timezone}`} snapshot={snapshot} disabled={disabled} displayNameRef={displayNameInput} onSave={(command) => void save(command)} />
-          <NotificationSettings
+          {accountAlerts ? <SettingsCard id="notification-preferences" title="Notifications" icon={Bell}
+            description="Manage the alert preferences saved for your account.">
+            <Button asChild variant="outline"><Link href="/alerts#account-alert-preferences">Manage alert preferences</Link></Button>
+          </SettingsCard> : <NotificationSettings
             values={snapshot.notifications}
             disabled={disabled}
             saveButtonRef={notificationSaveButton}
             onSave={(command) => void save(command)}
-          />
+          />}
           <BrokerSettingsLink />
         </div>
         <div className="min-w-0 space-y-4">

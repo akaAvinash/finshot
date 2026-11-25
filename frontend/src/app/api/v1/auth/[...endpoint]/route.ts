@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { readBoundedBody } from "@/lib/api/bounded-body";
 import { readAuthConfig } from "@/lib/auth/config";
 import { getTrustedClientIp } from "@/lib/auth/ingress";
 import { authCookieHeader, authEndpoints, authProxyResponse, getAuthEndpoint, requestUpstreamAuth } from "@/lib/auth/upstream";
@@ -7,27 +8,6 @@ const maxBodyBytes = 1024;
 
 function errorResponse(status: number, code: string, message: string) {
   return Response.json({ code, message }, { status, headers: { "Cache-Control": "no-store" } });
-}
-
-async function readBody(request: Request) {
-  const stream = request.body?.getReader();
-  if (!stream) return "";
-  const buffer = new Uint8Array(maxBodyBytes);
-  let length = 0;
-  try {
-    for (;;) {
-      const { done, value } = await stream.read();
-      if (done) return new TextDecoder().decode(buffer.subarray(0, length));
-      if (length + value.byteLength > maxBodyBytes) {
-        await stream.cancel();
-        return null;
-      }
-      buffer.set(value, length);
-      length += value.byteLength;
-    }
-  } finally {
-    stream.releaseLock();
-  }
 }
 
 type Context = { params: Promise<{ endpoint: string[] }> };
@@ -64,7 +44,7 @@ async function proxy(request: NextRequest, context: Context) {
       if (acceptsBody && !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
         return errorResponse(415, "UNSUPPORTED_MEDIA_TYPE", "Send a JSON request.");
       }
-      const payload = await readBody(request);
+      const payload = await readBoundedBody(request, maxBodyBytes);
       if (payload === null) return errorResponse(413, "PAYLOAD_TOO_LARGE", "The request is too large.");
       if (acceptsBody) {
         headers.set("Content-Type", "application/json");

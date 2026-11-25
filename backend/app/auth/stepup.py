@@ -9,6 +9,7 @@ the code or the secret."""
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth import totp
 from app.auth.crypto import Keys, hmac_hex
-from app.auth.models import AuditEvent, TotpCredential
+from app.auth.models import AuditEvent, RecoveryCode, TotpCredential
 from app.auth.models import Session as SessionRow
 from app.auth.ratelimit import RateLimiter
 from app.core.config import Settings
@@ -30,6 +31,14 @@ from app.core.errors import ApiError
 logger = structlog.get_logger(__name__)
 
 Outcome = Literal["ok", "invalid", "missing"]
+
+RECOVERY_CODE_COUNT = 10
+_RECOVERY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+
+def _new_recovery_code() -> str:
+    pick = secrets.choice
+    return "-".join("".join(pick(_RECOVERY_ALPHABET) for _ in range(5)) for _ in range(2))
 
 
 def step_up_required() -> ApiError:
@@ -119,6 +128,8 @@ class StepUpService:
                     .where(TotpCredential.user_id == user_id)
                     .values(confirmed_at=now, pending_expires_at=None)
                 )
+                # A new authenticator starts with no recovery codes.
+                await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
                 until = await self._open_window(db, session_id, now)
                 self._audit(db, user_id, "totp.enabled", now)
         if failure is not None or until is None:
@@ -161,6 +172,7 @@ class StepUpService:
                 self._audit(db, user_id, "totp.disable_failed", now)
             else:
                 await db.execute(delete(TotpCredential).where(TotpCredential.user_id == user_id))
+                await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
                 await db.execute(
                     update(SessionRow)
                     .where(SessionRow.user_id == user_id)
@@ -177,6 +189,81 @@ class StepUpService:
     ) -> Outcome:
         """Check a sign-in code against the active secret (single use per time step)."""
         return await self._consume(db, user_id, code, now, pending=False)
+
+    # --------------------------------------------------------- recovery codes
+
+    def _recovery_digest(self, user_id: uuid.UUID, code: str) -> str:
+        return hmac_hex(self._keys.totp, "recovery", str(user_id), code)
+
+    async def regenerate_recovery_codes(
+        self, *, user_id: uuid.UUID, ip: str
+    ) -> tuple[list[str], datetime]:
+        """Replace every recovery code of the account with a new set of ten.
+        The caller has already been checked for step-up. Needs an active
+        authenticator; the codes are returned once and only digests are kept."""
+        await self._throttle(user_id, ip, "recovery")
+        codes: list[str] = []
+        while len(codes) < RECOVERY_CODE_COUNT:
+            candidate = _new_recovery_code()
+            if candidate not in codes:
+                codes.append(candidate)
+        async with self._factory() as db, db.begin():
+            now = self._clock()
+            confirmed = await db.scalar(
+                select(TotpCredential.confirmed_at)
+                .where(TotpCredential.user_id == user_id)
+                .with_for_update()
+            )
+            if confirmed is None:
+                raise ApiError(409, "TOTP_NOT_ENROLLED", "Set up an authenticator first.")
+            await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
+            for code in codes:
+                db.add(
+                    RecoveryCode(
+                        user_id=user_id,
+                        digest=self._recovery_digest(user_id, code),
+                        created_at=now,
+                    )
+                )
+            self._audit(db, user_id, "totp.recovery_codes_created", now)
+        return codes, now
+
+    async def consume_recovery_code(
+        self, db: AsyncSession, user_id: uuid.UUID, code: str, now: datetime
+    ) -> Outcome:
+        """Spend one recovery code at sign-in. The DELETE is the compare-and-set:
+        of concurrent submissions of one code only one gets the row. On success
+        the authenticator and every other code are removed too, and every
+        step-up window of the account is closed."""
+        # Same lock order as regeneration and disable: the authenticator row first.
+        confirmed = await db.scalar(
+            select(TotpCredential.confirmed_at)
+            .where(TotpCredential.user_id == user_id)
+            .with_for_update()
+        )
+        if confirmed is None:
+            return "invalid"
+        spent = await db.scalar(
+            delete(RecoveryCode)
+            .where(
+                RecoveryCode.user_id == user_id,
+                RecoveryCode.digest == self._recovery_digest(user_id, code),
+            )
+            .returning(RecoveryCode.id)
+        )
+        if spent is None:
+            return "invalid"
+        await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
+        await db.execute(delete(TotpCredential).where(TotpCredential.user_id == user_id))
+        await db.execute(
+            update(SessionRow).where(SessionRow.user_id == user_id).values(step_up_until=None)
+        )
+        self._audit(db, user_id, "totp.reset_by_recovery_code", now)
+        return "ok"
+
+    def dummy_recovery_check(self, code: str) -> None:
+        """The same HMAC work as a real check, for a number that cannot sign in."""
+        self._recovery_digest(uuid.UUID(int=0), code)
 
     def dummy_check(self, code: str, now: datetime) -> None:
         """The same HMAC work as a real check, for a number that has no secret."""

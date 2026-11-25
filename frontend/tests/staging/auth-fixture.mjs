@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
 import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
+import { createAlertsFixture, isAlertsFixtureRequest } from "./alerts-fixture.mjs";
 
 const publicOrigin = "http://127.0.0.1:3101";
 const sessionName = "__Host-tradeo_session";
@@ -12,6 +13,7 @@ const challenges = new Map();
 const otpRequestsByIp = new Map();
 let failNextLogout = false;
 let reportMode = "ready";
+let alerts = createAlertsFixture();
 const returningNumber = "+919876543218";
 const registrationNumber = "+919876543219";
 const accountRows = new Map();
@@ -89,6 +91,7 @@ createServer(async (request, response) => {
     resetAccounts();
     failNextLogout = false;
     reportMode = "ready";
+    alerts = createAlertsFixture();
     return response.writeHead(204).end();
   }
   if (request.method === "POST" && request.url === "/__fixture/fail-next-logout") {
@@ -109,6 +112,39 @@ createServer(async (request, response) => {
   const signedIn = Boolean(session);
   const csrfToken = cookies[csrfName];
   const clientIp = request.headers["x-forwarded-for"];
+
+  if (isAlertsFixtureRequest(url.pathname)) {
+    if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
+    const writing = request.method === "POST" || request.method === "PUT";
+    if (writing && (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken)) {
+      return error(response, 403, "CSRF_FAILED");
+    }
+    const allowedCookies = writing ? [sessionName, csrfName] : [sessionName];
+    if (Object.keys(cookies).some((name) => !allowedCookies.includes(name))) return error(response, 400, "UNEXPECTED_HEADERS");
+    if (url.pathname === "/api/v1/alerts" && request.method === "GET") {
+      const page = alerts.list(url.searchParams);
+      return page ? json(response, 200, page) : error(response, 400, "INVALID_REQUEST");
+    }
+    if (url.pathname === "/api/v1/alerts/preferences") {
+      if (request.method === "GET") return json(response, 200, alerts.preferences());
+      if (request.method === "PUT") {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        try {
+          const prefs = alerts.save(JSON.parse(Buffer.concat(chunks).toString()));
+          return prefs ? json(response, 200, prefs) : error(response, 400, "INVALID_REQUEST");
+        } catch {
+          return error(response, 400, "INVALID_REQUEST");
+        }
+      }
+    }
+    const id = /^\/api\/v1\/alerts\/([^/]+)\/ack$/.exec(url.pathname)?.[1];
+    if (id && request.method === "POST") {
+      const item = alerts.acknowledge(id);
+      return item ? json(response, 200, item) : error(response, 404, "NOT_FOUND");
+    }
+    return error(response, 404, "NOT_FOUND");
+  }
 
   if (request.method === "GET" && ["/api/v1/reports/paper", "/api/v1/reports/paper/trades.csv"].includes(url.pathname)) {
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");

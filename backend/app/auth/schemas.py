@@ -91,6 +91,11 @@ class TotpEnrollmentOut(_Wire):
     expires_at: datetime
 
 
+class RecoveryCodesOut(_Wire):
+    codes: list[str]
+    created_at: datetime
+
+
 class StepUpResultOut(_Wire):
     totp_enabled: Literal[True] = True
     step_up_until: datetime
@@ -123,6 +128,14 @@ class SettingsProfileIn(_Strict):
     @classmethod
     def _name(cls, value: str) -> str:
         return _clean_display_name(value)
+
+
+RECOVERY_CODE_PATTERN = r"^[A-Z2-7]{5}-[A-Z2-7]{5}$"
+
+
+class RecoveryLogin(_Strict):
+    phone: str = Field(pattern=PHONE_PATTERN)
+    recovery_code: str = Field(pattern=RECOVERY_CODE_PATTERN)
 
 
 class TotpLogin(_Strict):

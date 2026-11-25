@@ -43,8 +43,17 @@ accounts keep working.
    not need a second code. Once an authenticator is active a one-time code can
    no longer start a session: `otp/request` still answers 202 but sends
    nothing, and `otp/verify` refuses (401 `INVALID_OTP`, the code stays unused).
-4. Lost authenticator: `totp-reset` on the server, then register again by
-   emailed code. There are no recovery codes yet.
+4. Recovery codes: a stepped-up session can create ten single-use codes
+   (`POST /auth/totp/recovery-codes`, shown once; only keyed digests are
+   stored in `recovery_codes`). `POST /auth/login/recovery` (phone number +
+   code) signs in once, spends the code and removes the authenticator and
+   every other code, so the person sets up a new authenticator and creates new
+   codes. A code lives only as long as the authenticator it was issued for:
+   `disableTotp`, the operator `totp-reset`, recovery sign-in and confirming a
+   new authenticator all delete the account's codes. Recovery sign-in shares
+   the authenticator sign-in allowance and answers the same uniform `401`.
+5. Lost authenticator and no codes: `totp-reset` on the server, then register
+   again by emailed code.
 
 Failure handling: every failure is `401 INVALID_CREDENTIALS` (wrong or reused
 code, uninvited number, unknown number, no authenticator, revoked invite). The

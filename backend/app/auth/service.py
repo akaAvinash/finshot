@@ -672,7 +672,37 @@ class AuthService:
         code: str,
         current_session: SessionInfo | None,
     ) -> tuple[SessionInfo, str, str]:
-        """Sign in with the phone number and a current authenticator code.
+        """Sign in with the phone number and a current authenticator code."""
+        return await self._login_with_factor(
+            request=request, phone=phone, code=code, current_session=current_session, recovery=False
+        )
+
+    async def login_with_recovery_code(
+        self,
+        *,
+        request: Request,
+        phone: str,
+        code: str,
+        current_session: SessionInfo | None,
+    ) -> tuple[SessionInfo, str, str]:
+        """Sign in with the phone number and an unused recovery code. The code
+        is spent and the authenticator is removed, so the session starts
+        without step-up and without an authenticator."""
+        return await self._login_with_factor(
+            request=request, phone=phone, code=code, current_session=current_session, recovery=True
+        )
+
+    async def _login_with_factor(
+        self,
+        *,
+        request: Request,
+        phone: str,
+        code: str,
+        current_session: SessionInfo | None,
+        recovery: bool,
+    ) -> tuple[SessionInfo, str, str]:
+        """Shared by authenticator and recovery sign-in, which draw on one
+        allowance so that trying both cannot double the guesses.
 
         Every failure is the same 401. Attempts are throttled per IP (all
         attempts) and per phone (failures only, so a successful login does not
@@ -719,13 +749,22 @@ class AuthService:
             ).first()
             outcome = "missing"
             if row is not None and row.status == "active":
-                outcome = await stepup.consume_login_code(db, row.id, code, now)
+                if recovery:
+                    outcome = await stepup.consume_recovery_code(db, row.id, code, now)
+                else:
+                    outcome = await stepup.consume_login_code(db, row.id, code, now)
+            elif recovery:
+                stepup.dummy_recovery_check(code)  # similar work for an unknown number
             else:
                 stepup.dummy_check(code, now)  # similar work for an unknown number
             if row is None or outcome != "ok":
                 failed_user = row.id if row is not None else None
             else:
-                step_up_until = min(now + timedelta(seconds=s.step_up_ttl_seconds), expires_at)
+                step_up_until = (
+                    None
+                    if recovery
+                    else min(now + timedelta(seconds=s.step_up_ttl_seconds), expires_at)
+                )
                 await self._open_session(
                     db,
                     session_id=session_id,
@@ -737,7 +776,7 @@ class AuthService:
                     ip=ip,
                     current_session=current_session,
                     step_up_until=step_up_until,
-                    method="totp",
+                    method="recovery" if recovery else "totp",
                 )
                 info = SessionInfo(
                     session_id=session_id,
@@ -749,7 +788,7 @@ class AuthService:
                     last_seen_at=now,
                     expires_at=expires_at,
                     device_label=label,
-                    totp_enabled=True,
+                    totp_enabled=not recovery,
                     step_up_until=step_up_until,
                 )
         if info is not None:
@@ -766,7 +805,10 @@ class AuthService:
                     action="login_failed",
                     user_id=failed_user,
                     resource=None,
-                    metadata={"ip_hash": self._ip_hash(ip), "method": "totp"},
+                    metadata={
+                        "ip_hash": self._ip_hash(ip),
+                        "method": "recovery" if recovery else "totp",
+                    },
                 )
             raise _invalid_credentials()
         csrf = self.issue_token("session", str(session_id), expires_at)

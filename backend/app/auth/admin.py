@@ -23,7 +23,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.models import AuditEvent, Invite, TotpCredential, User
+from app.auth.models import AuditEvent, Invite, RecoveryCode, TotpCredential, User
 from app.auth.models import Session as SessionRow
 from app.auth.otp import mask_destination, read_staging_codes
 
@@ -102,6 +102,7 @@ async def reset_totp(db: AsyncSession, phone: str, now: datetime) -> bool:
     if user_id is None:
         return False
     deleted = await db.execute(delete(TotpCredential).where(TotpCredential.user_id == user_id))
+    await db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
     await db.execute(
         update(SessionRow).where(SessionRow.user_id == user_id).values(step_up_until=None)
     )

@@ -25,11 +25,12 @@ the development kit is the roadmap.
 | E1: advisory agents | #25 contract, #27 |
 | E2: alerts | #30 contract, #31 (migration `0009`) |
 | Auth: invite-only sign-in, OTP providers, spend caps, TOTP step-up | #33 contract, #34 (migration `0010`) |
-| Settings: profile (display name, timezone) and ending another session | #35 contract, this PR (migration `0011`) |
+| Settings: profile (display name, timezone) and ending another session | #35 contract, #36 (migration `0011`) |
+| Registration by emailed code, then authenticator sign-in | #37 contract, this PR (no migration) |
 
 ## Open
 
-None. (Settings is listed as done because it merges with this file.)
+None. (Authenticator sign-in is listed as done because it merges with this file.)
 
 ## Review notes
 
@@ -59,14 +60,17 @@ and live trading.
    DLT-registered sender ID and template, an MSG91 account, and approval to
    spend. Not built until then (see `docs/AUTH.md`). SMTP credentials are
    also needed before email delivery can be used outside tests.
-2. Further Settings contracts (each its own PR, using step-up): phone change,
+2. Recovery codes for a lost authenticator (own contract; today an operator
+   resets it with `totp-reset`).
+3. Further Settings contracts (each its own PR, using step-up): phone change,
    data retention, risk limits. They stay preview-only in the frontend until
    then, and the demo confirmation code is never accepted by the API.
-3. Staging upgrade, waiting on owner approval and Codex #29: pg_dump, deploy
+4. Staging upgrade (owner approved 2026-11-25, runs through Remote Control over
+   Tailscale): pg_dump, deploy
    main, migrate `0002` to head, real `PUBLIC_ORIGIN`,
    `TRUSTED_PROXY_HOPS=1`, workers on. Rollback: restore the dump and redeploy
    release `9e5cf9b`.
-4. Hardening (kit order).
+5. Hardening (kit order).
 
 ## Staging (read-only check, 2026-11-25)
 

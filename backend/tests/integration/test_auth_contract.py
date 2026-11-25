@@ -161,3 +161,23 @@ def test_display_name_contract_pattern_agrees_with_the_server(
             "PUT", "/api/v1/settings/profile", json=body, headers=browser.headers()
         ).status_code
         assert (not errors) == (status == 200), (name, errors, status)
+
+
+def test_totp_login_bodies_match_contract_schemas(
+    contract: dict[str, Any], browser: Browser, clock: Any
+) -> None:
+    from tests.integration.test_auth_stepup import code_for, enroll_and_confirm
+
+    browser.login()
+    secret = enroll_and_confirm(browser, clock)
+    browser.post("/api/v1/auth/logout")
+    clock.advance(31)
+    browser.get_csrf()
+    bad = browser.post("/api/v1/auth/login/totp", json={"phone": PHONE, "code": "000000"})
+    assert bad.status_code == 401
+    check(contract, "AuthError", bad.json())
+    ok = browser.post(
+        "/api/v1/auth/login/totp", json={"phone": PHONE, "code": code_for(secret, clock)}
+    )
+    assert ok.status_code == 200
+    check(contract, "OtpVerifyResponse", ok.json())

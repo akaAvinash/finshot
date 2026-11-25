@@ -1,0 +1,154 @@
+req_id,area,engine,requirement,source,priority,status,tests
+AUTH-REG-001,authentication,Auth,Invited number registers with an emailed six-digit code and gets a session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_invited_number_registers_with_emailed_code
+AUTH-REG-002,authentication,Auth,"Uninvited number: same 202, nothing sent, challenge can never complete",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_uninvited_challenge_cannot_be_completed_with_any_guess test_uninvited_number_gets_identical_response_and_no_email
+AUTH-REG-003,authentication,Auth,"Invited number without email on file: same 202, nothing sent",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_invited_without_email_gets_same_202_and_nothing_sent
+AUTH-REG-004,authentication,Auth,Revoking an invite blocks codes already issued,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_revoked_invite_blocks_already_issued_code
+AUTH-REG-005,authentication,Auth,Interrupted registration can restart in a new browser context,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_interrupted_registration_can_restart
+AUTH-OTP-001,authentication,Auth,Code lifetime at most 5 minutes; contract fields present,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_challenge_expiry_and_resend_window_match_contract test_invited_number_registers_with_emailed_code
+AUTH-OTP-002,authentication,Auth,Expired code is rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_emailed_code_expires
+AUTH-OTP-003,authentication,Auth,Wrong code rejected with uniform INVALID_OTP,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_wrong_code_is_rejected_and_right_code_still_works
+AUTH-OTP-004,authentication,Auth,A code works once (replay rejected),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_code_cannot_be_replayed test_concurrent_redemption_of_one_code_succeeds_once
+AUTH-OTP-005,authentication,Auth,Challenge dies after 5 failed attempts,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_challenge_dies_after_five_failed_attempts
+AUTH-OTP-006,authentication,Auth,Resend issues a new code; 60 s resend cooldown,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_resend_cooldown_enforced test_resend_issues_new_code_and_old_challenge_handling
+AUTH-OTP-007,authentication,Auth,Challenge bound to the pre-login context that requested it,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_code_bound_to_pre_login_context
+AUTH-OTP-008,authentication,Auth,Email delivery failure returns 503 without provider details,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_email_delivery_failure_returns_503_without_details
+AUTH-OTP-009,authentication,Auth,"Real SMTP delivery to an owned mailbox (authorised, rate-limited)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,specified,
+AUTH-OTP-010,authentication,Auth,SMS (MSG91) delivery,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,not_implemented,
+AUTH-VAL-001,authentication,Auth,"Phone and code formats validated (boundaries, classes)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_malformed_codes_rejected_before_lookup test_malformed_phone_numbers_rejected
+AUTH-VAL-002,authentication,Auth,Unknown request fields rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_unknown_fields_rejected
+AUTH-TOTP-001,authentication,Auth,Authenticator enrolment returns a 160-bit secret and matching otpauth URI,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_enrolment_returns_valid_secret_and_qr_uri
+AUTH-TOTP-002,authentication,Auth,Manual setup from the text secret works; QR label hides phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_enrolment_returns_valid_secret_and_qr_uri test_uri_privacy_check_sees_a_percent_encoded_full_phone
+AUTH-TOTP-003,authentication,Auth,Wrong confirm code does not activate,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_confirm_with_wrong_code_does_not_activate
+AUTH-TOTP-004,authentication,Auth,Second enrolment refused while active,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_second_enrolment_refused_when_active
+AUTH-TOTP-005,authentication,Auth,Phone + TOTP sign-in opens a step-up window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_phone_and_totp_sign_in
+AUTH-TOTP-006,authentication,Auth,TOTP code replay rejected,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_totp_code_cannot_be_replayed
+AUTH-TOTP-007,authentication,Auth,"Clock drift: +/-1 step accepted, +/-2 rejected",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_clock_drift_one_step_accepted_two_steps_rejected
+AUTH-TOTP-008,authentication,Auth,"TOTP sign-in failures uniform across wrong code, unknown, uninvited, no authenticator",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_totp_login_failures_are_uniform
+AUTH-TOTP-009,authentication,Auth,Emailed code cannot start a session once an authenticator is active,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_email_code_cannot_start_session_once_authenticator_active
+AUTH-TOTP-010,authentication,Auth,TOTP sign-in throttled per phone with Retry-After,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_totp_login_rate_limited_per_phone
+AUTH-STEP-001,authentication,Auth,Wrong step-up code does not open the window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_step_up_wrong_code_does_not_open_window
+AUTH-STEP-002,authentication,Auth,Disable needs a valid code and closes every window,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_disable_requires_valid_code_and_closes_windows
+AUTH-STEP-003,authentication,Auth,"Step-up window bounded (10 min, never past session expiry)",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_step_up_window_bounded_by_session_expiry
+AUTH-STEP-004,authentication,Auth,Step-up window closes; gated action then needs step-up,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_step_up_window_closes
+AUTH-REC-001,authentication,Auth,Ten unique single-use recovery codes in the documented format,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_recovery_codes_generated_once_ten_unique
+AUTH-REC-002,authentication,Auth,Recovery code works once,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_recovery_code_single_use_and_resets_authenticator
+AUTH-REC-003,authentication,Auth,Recovery sign-in removes authenticator and all other codes; re-enrol possible,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_recovery_code_single_use_and_resets_authenticator
+AUTH-REC-004,authentication,Auth,Regenerating codes invalidates the old set,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_regenerating_codes_invalidates_old_set
+AUTH-REC-005,authentication,Auth,Recovery code of one account does not work for another,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_recovery_code_of_one_account_does_not_work_for_another
+AUTH-REC-006,authentication,Auth,Operator totp-reset then re-registration by email,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_operator_totp_reset_then_reregister
+AUTH-SESS-001,authentication,Auth,Unauthenticated requests rejected (401),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_unauthenticated_requests_are_rejected
+AUTH-SESS-002,authentication,Auth,Logout ends the session server-side; idempotent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_logout_ends_session_server_side test_logout_is_idempotent
+AUTH-SESS-003,authentication,Auth,Logout from all devices,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_logout_all_ends_every_device
+AUTH-SESS-004,authentication,Auth,Revoke another session with step-up; repeat answers 404,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_revoke_other_session_with_step_up
+AUTH-SESS-005,authentication,Auth,Own session cannot be revoked here; foreign ids look absent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_cannot_revoke_own_session_or_probe_foreign_ids
+AUTH-SESS-006,authentication,Auth,Concurrent sessions independent,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_concurrent_sessions_are_independent
+AUTH-SESS-007,authentication,Auth,CSRF refresh after revocation returns pre_login and clears cookie,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_csrf_refresh_after_revoked_session_returns_pre_login
+AUTH-SESS-008,authentication,Auth,Browser refresh keeps the session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,automated,test_browser_refresh_keeps_session
+AUTH-SESS-009,authentication,Auth,Parallel logins with one code produce one session,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_parallel_logins_create_distinct_sessions
+AUTH-SESS-010,authentication,Auth,Idle session expires,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_idle_session_expires
+AUTH-SESS-011,authentication,Auth,Activity extends idle expiry,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_activity_extends_idle_expiry
+AUTH-SESS-012,authentication,Auth,Absolute session expiry (12 h default),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,specified,
+AUTH-SETUP-001,authentication,Auth,Session without authenticator limited to setup operations,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_session_without_authenticator_is_limited_to_setup
+AUTH-CSRF-001,authentication,Auth,Session writes need the session CSRF token,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_session_writes_require_session_csrf
+AUTH-CSRF-002,authentication,Auth,Pre-login writes need a CSRF token,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_pre_login_writes_require_csrf
+AUTH-CSRF-003,authentication,Auth,CSRF header must match the caller's cookie,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_csrf_header_must_match_cookie
+AUTH-COOKIE-001,authentication,Auth,"Login cookies: __Host-, Secure, HttpOnly, SameSite, Path=/, no Domain, order",contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_login_cookies_have_secure_attributes
+AUTH-COOKIE-002,authentication,Auth,Session id rotates on login (no fixation),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_session_id_rotates_on_login
+AUTH-ISO-001,authentication,Auth,Session list shows only own sessions,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_session_list_only_shows_own_sessions
+AUTH-ISO-002,authentication,Auth,Profile settings isolated between accounts,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_profile_isolated_between_accounts
+AUTH-ENUM-001,authentication,Auth,OTP request does not reveal invite status,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_uninvited_number_gets_identical_response_and_no_email
+AUTH-ENUM-002,authentication,Auth,TOTP sign-in does not reveal account existence,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P0,automated,test_totp_login_failures_are_uniform
+AUTH-ENUM-003,authentication,Auth,Throttle identical for invited and uninvited numbers,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_throttle_is_identical_for_invited_and_uninvited
+AUTH-ENUM-004,authentication,Auth,Daily delivery cap fails identically for every number,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_daily_delivery_cap_fails_uniformly
+AUTH-ENUM-005,authentication,Auth,Response timing does not reveal accounts (statistical),contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P2,specified,
+AUTH-RATE-001,authentication,Auth,OTP requests throttled per phone,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_otp_requests_throttled_per_phone
+AUTH-RATE-002,authentication,Auth,Per-IP throttles on OTP request and verify,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,specified,
+AUTH-RATE-003,authentication,Auth,Resend cooldown enforced with Retry-After,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_resend_cooldown_enforced
+AUTH-CAP-001,authentication,Auth,Global daily OTP delivery cap,contracts/openapi.yaml 0.10.0; backend/docs/AUTH.md,P1,automated,test_daily_delivery_cap_fails_uniformly
+AUTH-UI-001,ui,Auth,"Browser sign-in journey (frontend + backend integration, Playwright)",frontend/src; contract,P0,specified,
+AUTH-PASSKEY-001,authentication,Auth,Passkeys,backend/docs/AUTH.md,P3,not_implemented,
+REL-AUTH-001,reliability,Auth,Redis outage: auth fails closed (5xx) and recovers,AUTH.md spend limits,P0,automated,test_redis_outage_fails_closed_for_otp_and_login
+REL-AUTH-002,reliability,Auth,"Database outage: auth fails closed, readiness 503, recovers",health contract,P0,automated,test_database_outage_fails_closed_and_recovers
+REL-AUTH-003,reliability,Auth,"SMTP outage: 503 OTP_DELIVERY_UNAVAILABLE, recovers",AUTH.md,P1,automated,test_email_delivery_failure_returns_503_without_details
+REL-HTTP-001,reliability,Platform,"500 answers keep X-Request-ID, security headers and the keep-alive connection",contract AuthError.requestId,P3,automated,test_500_responses_keep_request_id_and_security_headers
+SEC-HDR-001,security,Platform,Security headers on every response incl. errors,backend middleware,P2,automated,test_500_responses_keep_request_id_and_security_headers
+SEC-HDR-002,security,Platform,Security headers on auth responses,backend middleware,P1,automated,test_security_headers_on_auth_responses
+SEC-HOST-001,security,Platform,Unknown Host header rejected,ALLOWED_HOSTS,P2,automated,test_unknown_host_header_rejected
+SEC-INPUT-001,security,Platform,Hostile input rejected cleanly (no internals),contract,P2,automated,test_hostile_input_rejected_cleanly
+SEC-LEAK-001,security,Platform,"No codes, secrets, tokens or PII in server logs",AUTH.md Audit,P0,automated,test_no_codes_secrets_or_pii_in_server_logs
+SEC-LEAK-002,security,Platform,SMTP password never logged,AUTH.md SMTP,P0,automated,test_no_codes_secrets_or_pii_in_server_logs
+SEC-LEAK-003,security,Platform,API never echoes codes,contract,P1,automated,test_api_responses_never_echo_codes
+SEC-LEAK-004,security,Platform,Operator invite list masks numbers and emails,AUTH.md,P2,automated,test_operator_invite_list_masks_numbers
+SEC-SECRET-001,security,Platform,No credentials committed to the repository,brief s15,P0,automated-ci,
+SEC-DEP-001,security,Platform,"No known-vulnerable dependencies (pip-audit, npm audit)",brief s14,P1,automated-ci,test_failed_audit_is_never_reported_clean test_incomplete_pip_audit_blocks_but_findings_only_warn test_npm_audit_severity_is_kept_and_only_critical_blocks
+SEC-ZAP-001,security,Platform,OWASP ZAP baseline scan of the running stack,brief s5,P2,specified,
+SEC-AUTHZ-001,authorization,Platform,Every non-auth route enforces session + setup + CSRF (route inventory from contract),contract,P0,specified,
+FIN-PNL-001,financial,Portfolio,Weighted-average long P&L (manual example),QA oracle,P0,automated,test_cost_basis_is_not_rounded_before_realised_pnl test_long_round_trip_pnl test_unrealised_pnl_uses_the_exact_cost_basis
+FIN-PNL-002,financial,Portfolio,Short and reversal P&L (manual example),QA oracle,P0,automated,test_short_and_reversal
+FIN-PNL-003,financial,Portfolio,P&L conservation property for any fill sequence,QA oracle,P0,automated,test_pnl_conservation
+FIN-CHG-001,financial,Portfolio,"Charges from an explicit schedule, paise rounding",QA oracle,P1,automated,test_charges_with_explicit_schedule
+FIN-CHG-002,financial,Portfolio,Money rounding half-up to paise,QA oracle,P2,automated,test_money_half_paise_ties_round_away_from_zero test_money_rounding_half_up_to_paise
+FIN-SIZE-001,financial,Risk,"Position sizing examples (risk budget, lots, bps)",QA oracle,P0,automated,test_position_sizing_examples
+FIN-SIZE-002,financial,Risk,Position size never exceeds risk budget (property),QA oracle,P0,automated,test_position_size_never_exceeds_risk_budget
+FIN-DD-001,financial,Portfolio,Max drawdown example,QA oracle,P1,automated,test_drawdown_profit_factor_returns
+FIN-DD-002,financial,Portfolio,Drawdown bounds (property),QA oracle,P1,automated,test_drawdown_bounds
+FIN-PF-001,financial,Portfolio,Profit factor incl. undefined case,QA oracle,P2,automated,test_drawdown_profit_factor_returns test_profit_factor_accepts_one_shot_iterators
+FIN-RET-001,financial,Portfolio,Simple return,QA oracle,P2,automated,test_drawdown_profit_factor_returns
+FIN-RISK-001,financial,Risk,"Daily loss limit boundary (Rs 25,000)",contract 0.7.0,P0,automated,test_daily_loss_limit_boundary
+FIN-X-PAPER-001,financial,Paper Trading,Paper ledger P&L equals oracle for replayed fills,contract auto-trading,P0,specified,
+FIN-X-REPORT-001,financial,Portfolio,Paper report totals reconcile with trades.csv export,contract reports,P0,specified,
+FIN-X-BT-001,financial,Backtesting,"Backtest metrics (net P&L, drawdown, fees, slippage) equal oracle",contract backtests,P0,specified,
+FIN-X-RISK-001,financial,Risk,"Risk tiers (size/stop bps) enforced at order time, fail closed",contract 0.7.0,P0,specified,
+MD-001,market_data,Market Data,"Normalisation, timestamps (IST), instrument mapping",contract market,P1,specified,
+MD-002,market_data,Market Data,Missing/duplicate/out-of-order/stale data handling,brief s9,P1,specified,
+MD-003,market_data,Market Data,NSE holidays and session boundaries,brief s9,P1,specified,
+MD-004,market_data,Market Data,Provider outage and WebSocket reconnect,brief s9,P1,not_implemented,
+MD-005,market_data,Market Data,Data source attribution and licence restrictions,brief s9,P2,specified,
+BRK-001,broker,Universal Broker,Adapter conformance suite run against every adapter (demo today),contract brokers,P0,specified,
+BRK-002,broker,Universal Broker,"Multiple brokers and accounts, account isolation",brief s9,P0,specified,
+BRK-003,broker,Universal Broker,"Token expiry, funds/margins, holdings/positions normalisation",brief s9,P1,not_implemented,
+BRK-004,broker,Universal Broker,Unsupported capability returns a typed error,brief s9,P1,specified,
+BRK-005,broker,Universal Broker,Rate limits and connection recovery,brief s9,P1,not_implemented,
+MCP-001,mcp,MCP Gateway,"Tool discovery, schema validation, permission enforcement",brief s9,P1,not_implemented,
+MCP-002,mcp,MCP Gateway,Prompt injection / malicious tool descriptions / untrusted responses,brief s9,P0,not_implemented,
+MCP-003,mcp,MCP Gateway,"SSRF, DNS rebinding, credential leakage, unauthorised order tools",brief s9,P0,not_implemented,
+MI-001,intelligence,Market Intelligence,"Breadth, A/D, opening range, VWAP, relative volume",brief s9,P1,not_implemented,
+MI-002,intelligence,Market Intelligence,Look-ahead bias and leakage checks via historical replay,brief s9,P0,not_implemented,
+MI-003,intelligence,Market Intelligence,Directional score never presented as calibrated probability,brief s9,P0,not_implemented,
+STR-001,strategies,Strategy Research,Parameter validation and immutable versions,contract strategies,P1,specified,
+STR-002,strategies,Strategy Research,Approval lifecycle; invalid strategy rejected,contract strategies,P1,specified,
+BT-001,backtesting,Backtesting,"Entry/exit, costs, slippage, lot sizes reproduce oracle",contract backtests,P0,specified,
+BT-002,backtesting,Backtesting,"Reproducibility: same inputs, same results",brief s9,P1,specified,
+BT-003,backtesting,Backtesting,Walk-forward and look-ahead/survivorship bias checks,brief s9,P1,not_implemented,
+PT-001,paper_trading,Paper Trading,"Simulated orders, partial fills, rejections, position lifecycle",contract auto-trading,P0,specified,
+PT-002,paper_trading,Paper Trading,"Concurrent orders, duplicate prevention, worker restart recovery",brief s9,P0,specified,
+RISK-001,risk,Risk Management,"Daily loss, drawdown, exposure limits and kill switch fail closed",contract 0.7.0,P0,specified,
+RISK-002,risk,Risk Management,Concurrent risk checks and bypass attempts,brief s9,P0,specified,
+EXE-001,execution,Trade Execution,"Order lifecycle, idempotency, ambiguous outcomes (mock broker only)",brief s9,P0,not_implemented,
+PF-001,portfolio,Portfolio,"Valuation, returns, attribution, journal, CSV export",contract reports,P1,specified,
+ORC-001,orchestration,Orchestration,"Scheduling, ordering, duplicate events, crash recovery, shutdown",brief s9,P1,not_implemented,
+AGT-001,agents,AI agents,Advisory agents are read-only and deterministic,contract agents,P1,specified,
+ALR-001,alerts,Alerts,Alert dedupe per source occurrence; critical always on,contract alerts,P1,specified,
+PERF-001,performance,Platform,Auth and read endpoints latency under load (Locust),PERFORMANCE_TEST_PLAN,P2,specified,
+QA-FW-001,qa_framework,QA,TOTP oracle matches RFC 4226/6238 vectors,RFC 6238,P0,automated,test_hotp_matches_rfc4226_vectors test_otpauth_parser test_totp_oracle_matches_rfc6238_vectors
+QA-FW-002,qa_framework,QA,Contract validator detects violations,QA,P0,automated,test_contract_validator_accepts_valid_and_flags_invalid test_contract_validator_flags_undocumented_status_and_path test_validators_are_scoped_to_their_contract
+QA-FW-003,qa_framework,QA,Redaction hides secrets in evidence,QA,P0,automated,test_authorization_credentials_are_fully_redacted test_redaction_hides_secrets
+QA-FW-004,qa_framework,QA,Set-Cookie parsing,QA,P1,automated,test_set_cookie_parser_reads_attributes
+QA-FW-005,qa_framework,QA,Fault proxy keeps idle links open and never forwards after cut,review PR #48,P1,automated,test_cut_during_connect_never_registers_the_link test_proxy_keeps_idle_connections_open
+QA-POL-001,qa_framework,QA,QA code never imports product code,brief s10,P0,automated,test_qa_code_never_imports_product_code
+QA-POL-002,qa_framework,QA,No real endpoints or credentials in QA code,brief s15,P0,automated,test_database_url_query_cannot_redirect_the_target test_no_real_endpoints_or_credentials_in_qa_code test_plain_disposable_url_is_accepted
+QA-POL-003,qa_framework,QA,Synthetic contact data only,brief s8,P0,automated,test_synthetic_contact_data_only
+QA-POL-004,qa_framework,QA,AI agent has no merge/write capability,brief s13,P0,automated,test_ai_agent_has_no_merge_or_write_capability
+QA-AI-001,qa_framework,QA,JUnit ingestion incl. properties and blocked,brief s11,P1,automated,test_junit_ingestion_reads_properties_and_blocked test_nested_failure_under_a_testsuite_root_is_not_lost test_nested_suites_count_each_case_once
+QA-AI-002,qa_framework,QA,Failure grouping,brief s11,P1,automated,test_failure_grouping_normalises_volatile_values
+QA-AI-003,qa_framework,QA,Suite selection from changed files,brief s11,P2,automated,test_suite_selection_from_changed_files
+QA-AI-004,qa_framework,QA,LLM input redacted and delimited as untrusted,brief s13,P0,automated,test_guarded_llm_redacts_and_delimits_untrusted_input
+QA-AI-005,qa_framework,QA,LLM replies schema-validated; circuit breaker,brief s12,P0,automated,test_corrupt_cache_entry_is_a_miss test_guarded_llm_rejects_non_schema_replies_and_opens_breaker
+QA-AI-006,qa_framework,QA,Daily AI spending cap enforced before calling,brief s12,P0,automated,test_breaker_opening_stops_the_retry test_guarded_llm_enforces_daily_budget test_limits_are_checked_before_every_retry
+QA-AI-007,qa_framework,QA,No provider = deterministic mode,brief s12,P0,automated,test_no_provider_configured_means_deterministic_mode
+QA-AI-008,qa_framework,QA,Supervisor report end to end,brief s17,P1,automated,test_supervisor_report_end_to_end_without_ai
+QA-GATE-001,qa_framework,QA,Gate: only critical failures (and missing/stale/cancelled results) block,brief s16,P0,automated,test_e2e_result_set_is_required_only_when_e2e_ran test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha test_gate_high_failure_warns_by_default_and_blocks_when_configured test_gate_requires_tested_sha_when_expected_sha_is_given test_supervisor_report_end_to_end_without_ai
+QA-GATE-002,qa_framework,QA,"Gate: high/medium/low failures warn, do not block",RELEASE_GATES,P1,automated,test_gate_low_failure_is_a_warning_only
+QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated,test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings test_gate_counts_cancelled_job_as_not_passed
+QA-POL-005,qa_framework,QA,Traceability matrix and test catalog match the test markers,brief s7,P1,automated,test_traceability_and_catalog_are_current
+QA-GATE-004,qa_framework,QA,Nightly verdict published as qa/nightly status on each tested PR head; no report is an error,owner 2026-11-25,P0,automated,test_integration_merge_chains_two_conflict_free_heads test_merge_script_stops_at_the_first_failed_fetch test_nightly_limit_does_not_make_a_pr_untestable test_nightly_status_marks_only_tested_pr_heads_and_fails_closed test_open_pr_discovery_follows_pagination test_report_compares_against_the_current_commit_and_fails_closed

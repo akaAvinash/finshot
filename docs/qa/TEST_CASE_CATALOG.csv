@@ -1,0 +1,133 @@
+test_id,suite,requirements,severity,critical_gate,needs_services,schedule,purpose
+qa/tests/authentication/test_authenticator.py::test_enrolment_returns_valid_secret_and_qr_uri,authentication,AUTH-TOTP-001 AUTH-TOTP-002,critical,yes,yes,pr+nightly,enrolment returns valid secret and qr uri
+qa/tests/authentication/test_authenticator.py::test_confirm_with_wrong_code_does_not_activate,authentication,AUTH-TOTP-003,high,no,yes,pr+nightly,confirm with wrong code does not activate
+qa/tests/authentication/test_authenticator.py::test_second_enrolment_refused_when_active,authentication,AUTH-TOTP-004,high,no,yes,pr+nightly,second enrolment refused when active
+qa/tests/authentication/test_authenticator.py::test_phone_and_totp_sign_in,authentication,AUTH-TOTP-005,critical,yes,yes,pr+nightly,phone and totp sign in
+qa/tests/authentication/test_authenticator.py::test_totp_code_cannot_be_replayed,authentication,AUTH-TOTP-006,critical,yes,yes,pr+nightly,totp code cannot be replayed
+qa/tests/authentication/test_authenticator.py::test_clock_drift_one_step_accepted_two_steps_rejected,authentication,AUTH-TOTP-007,high,no,yes,pr+nightly,Server allows +/-1 step. Codes 2 steps away must fail; 1 step behind must work.
+qa/tests/authentication/test_authenticator.py::test_totp_login_failures_are_uniform,authentication,AUTH-TOTP-008 AUTH-ENUM-002,critical,yes,yes,pr+nightly,"Wrong code, unknown number, uninvited and no-authenticator all look identical."
+qa/tests/authentication/test_authenticator.py::test_email_code_cannot_start_session_once_authenticator_active,authentication,AUTH-TOTP-009,critical,yes,yes,pr+nightly,email code cannot start session once authenticator active
+qa/tests/authentication/test_authenticator.py::test_totp_login_rate_limited_per_phone,authentication,AUTH-TOTP-010,high,no,yes,pr+nightly,totp login rate limited per phone
+qa/tests/authentication/test_authenticator.py::test_step_up_wrong_code_does_not_open_window,authentication,AUTH-STEP-001,high,no,yes,pr+nightly,step up wrong code does not open window
+qa/tests/authentication/test_authenticator.py::test_disable_requires_valid_code_and_closes_windows,authentication,AUTH-STEP-002,high,no,yes,pr+nightly,disable requires valid code and closes windows
+qa/tests/authentication/test_authenticator.py::test_recovery_codes_generated_once_ten_unique,authentication,AUTH-REC-001,critical,yes,yes,pr+nightly,recovery codes generated once ten unique
+qa/tests/authentication/test_authenticator.py::test_recovery_code_single_use_and_resets_authenticator,authentication,AUTH-REC-002 AUTH-REC-003,critical,yes,yes,pr+nightly,recovery code single use and resets authenticator
+qa/tests/authentication/test_authenticator.py::test_regenerating_codes_invalidates_old_set,authentication,AUTH-REC-004,high,no,yes,pr+nightly,regenerating codes invalidates old set
+qa/tests/authentication/test_authenticator.py::test_recovery_code_of_one_account_does_not_work_for_another,authentication,AUTH-REC-005,high,no,yes,pr+nightly,recovery code of one account does not work for another
+qa/tests/authentication/test_authenticator.py::test_operator_totp_reset_then_reregister,authentication,AUTH-REC-006,high,no,yes,pr+nightly,operator totp reset then reregister
+qa/tests/authentication/test_authenticator.py::test_step_up_window_bounded_by_session_expiry,authentication,AUTH-STEP-003,medium,no,yes,pr+nightly,step up window bounded by session expiry
+qa/tests/authentication/test_expiry_slow.py::test_emailed_code_expires,authentication,AUTH-OTP-002,critical,no,yes,nightly,emailed code expires
+qa/tests/authentication/test_expiry_slow.py::test_idle_session_expires,authentication,AUTH-SESS-010,critical,no,yes,nightly,idle session expires
+qa/tests/authentication/test_expiry_slow.py::test_activity_extends_idle_expiry,authentication,AUTH-SESS-011,high,no,yes,nightly,activity extends idle expiry
+qa/tests/authentication/test_expiry_slow.py::test_step_up_window_closes,authentication,AUTH-STEP-004,high,no,yes,nightly,step up window closes
+qa/tests/authentication/test_registration.py::test_invited_number_registers_with_emailed_code,authentication,AUTH-REG-001 AUTH-OTP-001,critical,yes,yes,pr+nightly,invited number registers with emailed code
+qa/tests/authentication/test_registration.py::test_challenge_expiry_and_resend_window_match_contract,authentication,AUTH-OTP-001,high,no,yes,pr+nightly,challenge expiry and resend window match contract
+qa/tests/authentication/test_registration.py::test_uninvited_number_gets_identical_response_and_no_email,authentication,AUTH-REG-002 AUTH-ENUM-001,critical,yes,yes,pr+nightly,uninvited number gets identical response and no email
+qa/tests/authentication/test_registration.py::test_uninvited_challenge_cannot_be_completed_with_any_guess,authentication,AUTH-REG-002,high,no,yes,pr+nightly,uninvited challenge cannot be completed with any guess
+qa/tests/authentication/test_registration.py::test_wrong_code_is_rejected_and_right_code_still_works,authentication,AUTH-OTP-003,critical,yes,yes,pr+nightly,wrong code is rejected and right code still works
+qa/tests/authentication/test_registration.py::test_code_cannot_be_replayed,authentication,AUTH-OTP-004,critical,yes,yes,pr+nightly,code cannot be replayed
+qa/tests/authentication/test_registration.py::test_concurrent_redemption_of_one_code_succeeds_once,authentication,AUTH-OTP-004,critical,yes,yes,pr+nightly,Two clients race to redeem the same emailed code: exactly one may get a session.
+qa/tests/authentication/test_registration.py::test_challenge_dies_after_five_failed_attempts,authentication,AUTH-OTP-005,high,no,yes,pr+nightly,challenge dies after five failed attempts
+qa/tests/authentication/test_registration.py::test_resend_issues_new_code_and_old_challenge_handling,authentication,AUTH-OTP-006,high,no,yes,pr+nightly,Second request yields a second email; the newest code signs in.
+qa/tests/authentication/test_registration.py::test_code_bound_to_pre_login_context,authentication,AUTH-OTP-007,high,no,yes,pr+nightly,A challenge requested in one browser cannot be completed from another (contract: different pre-login context -> 401).
+qa/tests/authentication/test_registration.py::test_invited_without_email_gets_same_202_and_nothing_sent,authentication,AUTH-REG-003,medium,no,yes,pr+nightly,invited without email gets same 202 and nothing sent
+qa/tests/authentication/test_registration.py::test_revoked_invite_blocks_already_issued_code,authentication,AUTH-REG-004,high,no,yes,pr+nightly,revoked invite blocks already issued code
+qa/tests/authentication/test_registration.py::test_interrupted_registration_can_restart,authentication,AUTH-REG-005,high,no,yes,pr+nightly,"User asks for a code, abandons the tab, opens a new one and finishes."
+qa/tests/authentication/test_registration.py::test_malformed_phone_numbers_rejected,authentication,AUTH-VAL-001,medium,no,yes,pr+nightly,Boundary/equivalence classes for the Phone pattern ^\+91[6-9][0-9]{9}$.
+qa/tests/authentication/test_registration.py::test_malformed_codes_rejected_before_lookup,authentication,AUTH-VAL-001,medium,no,yes,pr+nightly,malformed codes rejected before lookup
+qa/tests/authentication/test_registration.py::test_unknown_fields_rejected,authentication,AUTH-VAL-002,medium,no,yes,pr+nightly,unknown fields rejected
+qa/tests/authentication/test_sessions.py::test_unauthenticated_requests_are_rejected,authentication,AUTH-SESS-001,critical,yes,yes,pr+nightly,unauthenticated requests are rejected
+qa/tests/authentication/test_sessions.py::test_logout_ends_session_server_side,authentication,AUTH-SESS-002,critical,yes,yes,pr+nightly,logout ends session server side
+qa/tests/authentication/test_sessions.py::test_logout_is_idempotent,authentication,AUTH-SESS-002,medium,no,yes,pr+nightly,logout is idempotent
+qa/tests/authentication/test_sessions.py::test_logout_all_ends_every_device,authentication,AUTH-SESS-003,critical,yes,yes,pr+nightly,logout all ends every device
+qa/tests/authentication/test_sessions.py::test_revoke_other_session_with_step_up,authentication,AUTH-SESS-004,critical,yes,yes,pr+nightly,revoke other session with step up
+qa/tests/authentication/test_sessions.py::test_cannot_revoke_own_session_or_probe_foreign_ids,authentication,AUTH-SESS-005,high,no,yes,pr+nightly,cannot revoke own session or probe foreign ids
+qa/tests/authentication/test_sessions.py::test_session_list_only_shows_own_sessions,authentication,AUTH-ISO-001,critical,yes,yes,pr+nightly,session list only shows own sessions
+qa/tests/authentication/test_sessions.py::test_profile_isolated_between_accounts,authentication,AUTH-ISO-002,high,no,yes,pr+nightly,profile isolated between accounts
+qa/tests/authentication/test_sessions.py::test_concurrent_sessions_are_independent,authentication,AUTH-SESS-006,high,no,yes,pr+nightly,concurrent sessions are independent
+qa/tests/authentication/test_sessions.py::test_session_without_authenticator_is_limited_to_setup,authentication,AUTH-SETUP-001,high,no,yes,pr+nightly,session without authenticator is limited to setup
+qa/tests/authentication/test_sessions.py::test_csrf_refresh_after_revoked_session_returns_pre_login,authentication,AUTH-SESS-007,high,no,yes,pr+nightly,Browser refresh after the session was ended elsewhere: the app recovers to signed-out.
+qa/tests/authentication/test_sessions.py::test_browser_refresh_keeps_session,authentication,AUTH-SESS-008,medium,no,yes,pr+nightly,Refresh = new CSRF fetch with existing cookie; session context is kept.
+qa/tests/authentication/test_sessions.py::test_session_writes_require_session_csrf,authentication,AUTH-CSRF-001,critical,yes,yes,pr+nightly,session writes require session csrf
+qa/tests/authentication/test_sessions.py::test_pre_login_writes_require_csrf,authentication,AUTH-CSRF-002,high,no,yes,pr+nightly,pre login writes require csrf
+qa/tests/authentication/test_sessions.py::test_csrf_header_must_match_cookie,authentication,AUTH-CSRF-003,high,no,yes,pr+nightly,csrf header must match cookie
+qa/tests/authentication/test_sessions.py::test_login_cookies_have_secure_attributes,authentication,AUTH-COOKIE-001,critical,yes,yes,pr+nightly,login cookies have secure attributes
+qa/tests/authentication/test_sessions.py::test_session_id_rotates_on_login,authentication,AUTH-COOKIE-002,critical,yes,yes,pr+nightly,Session fixation: a pre-set session cookie is not adopted.
+qa/tests/authentication/test_sessions.py::test_parallel_logins_create_distinct_sessions,authentication,AUTH-SESS-009,high,no,yes,pr+nightly,parallel logins create distinct sessions
+qa/tests/financial/test_oracles.py::test_long_round_trip_pnl,financial,FIN-PNL-001,critical,no,no,pr+nightly,long round trip pnl
+qa/tests/financial/test_oracles.py::test_short_and_reversal,financial,FIN-PNL-002,critical,no,no,pr+nightly,short and reversal
+qa/tests/financial/test_oracles.py::test_charges_with_explicit_schedule,financial,FIN-CHG-001,high,no,no,pr+nightly,charges with explicit schedule
+qa/tests/financial/test_oracles.py::test_position_sizing_examples,financial,FIN-SIZE-001,high,no,no,pr+nightly,position sizing examples
+qa/tests/financial/test_oracles.py::test_drawdown_profit_factor_returns,financial,FIN-DD-001 FIN-PF-001 FIN-RET-001,high,no,no,pr+nightly,drawdown profit factor returns
+qa/tests/financial/test_oracles.py::test_daily_loss_limit_boundary,financial,FIN-RISK-001,critical,no,no,pr+nightly,daily loss limit boundary
+qa/tests/financial/test_oracles.py::test_pnl_conservation,financial,FIN-PNL-003,critical,no,no,pr+nightly,"Realised + unrealised P&L equals cash flow + marked inventory, for any fill sequence."
+qa/tests/financial/test_oracles.py::test_position_size_never_exceeds_risk_budget,financial,FIN-SIZE-002,high,no,no,pr+nightly,position size never exceeds risk budget
+qa/tests/financial/test_oracles.py::test_drawdown_bounds,financial,FIN-DD-002,high,no,no,pr+nightly,drawdown bounds
+qa/tests/financial/test_oracles.py::test_money_rounding_half_up_to_paise,financial,FIN-CHG-002,medium,no,no,pr+nightly,money rounding half up to paise
+qa/tests/framework/test_ai_agent.py::test_junit_ingestion_reads_properties_and_blocked,framework,QA-AI-001,high,no,no,pr+nightly,junit ingestion reads properties and blocked
+qa/tests/framework/test_ai_agent.py::test_gate_blocks_critical_failures_missing_sets_unrun_gates_and_stale_sha,framework,QA-GATE-001,high,no,no,pr+nightly,gate blocks critical failures missing sets unrun gates and stale sha
+qa/tests/framework/test_ai_agent.py::test_gate_high_failure_warns_by_default_and_blocks_when_configured,framework,QA-GATE-001,high,no,no,pr+nightly,gate high failure warns by default and blocks when configured
+qa/tests/framework/test_ai_agent.py::test_gate_low_failure_is_a_warning_only,framework,QA-GATE-002,high,no,no,pr+nightly,gate low failure is a warning only
+qa/tests/framework/test_ai_agent.py::test_gate_counts_cancelled_job_as_not_passed,framework,QA-GATE-003,high,no,no,pr+nightly,gate counts cancelled job as not passed
+qa/tests/framework/test_ai_agent.py::test_failure_grouping_normalises_volatile_values,framework,QA-AI-002,high,no,no,pr+nightly,failure grouping normalises volatile values
+qa/tests/framework/test_ai_agent.py::test_suite_selection_from_changed_files,framework,QA-AI-003,high,no,no,pr+nightly,suite selection from changed files
+qa/tests/framework/test_ai_agent.py::test_guarded_llm_redacts_and_delimits_untrusted_input,framework,QA-AI-004,high,no,no,pr+nightly,guarded llm redacts and delimits untrusted input
+qa/tests/framework/test_ai_agent.py::test_guarded_llm_rejects_non_schema_replies_and_opens_breaker,framework,QA-AI-005,high,no,no,pr+nightly,guarded llm rejects non schema replies and opens breaker
+qa/tests/framework/test_ai_agent.py::test_guarded_llm_enforces_daily_budget,framework,QA-AI-006,high,no,no,pr+nightly,guarded llm enforces daily budget
+qa/tests/framework/test_ai_agent.py::test_no_provider_configured_means_deterministic_mode,framework,QA-AI-007,high,no,no,pr+nightly,no provider configured means deterministic mode
+qa/tests/framework/test_ai_agent.py::test_supervisor_report_end_to_end_without_ai,framework,QA-AI-008 QA-GATE-001,high,no,no,pr+nightly,supervisor report end to end without ai
+qa/tests/framework/test_ai_agent.py::test_nightly_status_marks_only_tested_pr_heads_and_fails_closed,framework,QA-GATE-004,high,no,no,pr+nightly,nightly status marks only tested pr heads and fails closed
+qa/tests/framework/test_framework_selfcheck.py::test_totp_oracle_matches_rfc6238_vectors,framework,QA-FW-001,high,no,no,pr+nightly,totp oracle matches rfc6238 vectors
+qa/tests/framework/test_framework_selfcheck.py::test_hotp_matches_rfc4226_vectors,framework,QA-FW-001,high,no,no,pr+nightly,hotp matches rfc4226 vectors
+qa/tests/framework/test_framework_selfcheck.py::test_otpauth_parser,framework,QA-FW-001,high,no,no,pr+nightly,otpauth parser
+qa/tests/framework/test_framework_selfcheck.py::test_contract_validator_accepts_valid_and_flags_invalid,framework,QA-FW-002,high,no,no,pr+nightly,contract validator accepts valid and flags invalid
+qa/tests/framework/test_framework_selfcheck.py::test_contract_validator_flags_undocumented_status_and_path,framework,QA-FW-002,high,no,no,pr+nightly,contract validator flags undocumented status and path
+qa/tests/framework/test_framework_selfcheck.py::test_redaction_hides_secrets,framework,QA-FW-003,high,no,no,pr+nightly,redaction hides secrets
+qa/tests/framework/test_framework_selfcheck.py::test_set_cookie_parser_reads_attributes,framework,QA-FW-004,high,no,no,pr+nightly,set cookie parser reads attributes
+qa/tests/framework/test_harness_regressions.py::test_gate_requires_tested_sha_when_expected_sha_is_given,framework,QA-GATE-001,high,no,no,pr+nightly,gate requires tested sha when expected sha is given
+qa/tests/framework/test_harness_regressions.py::test_corrupt_cache_entry_is_a_miss,framework,QA-AI-005,high,no,no,pr+nightly,corrupt cache entry is a miss
+qa/tests/framework/test_harness_regressions.py::test_limits_are_checked_before_every_retry,framework,QA-AI-006,high,no,no,pr+nightly,limits are checked before every retry
+qa/tests/framework/test_harness_regressions.py::test_breaker_opening_stops_the_retry,framework,QA-AI-006,high,no,no,pr+nightly,breaker opening stops the retry
+qa/tests/framework/test_harness_regressions.py::test_database_url_query_cannot_redirect_the_target,framework,QA-POL-002,high,no,no,pr+nightly,database url query cannot redirect the target
+qa/tests/framework/test_harness_regressions.py::test_plain_disposable_url_is_accepted,framework,QA-POL-002,high,no,no,pr+nightly,plain disposable url is accepted
+qa/tests/framework/test_harness_regressions.py::test_validators_are_scoped_to_their_contract,framework,QA-FW-002,high,no,no,pr+nightly,validators are scoped to their contract
+qa/tests/framework/test_harness_regressions.py::test_proxy_keeps_idle_connections_open,framework,QA-FW-005,high,no,no,nightly,proxy keeps idle connections open
+qa/tests/framework/test_harness_regressions.py::test_cut_during_connect_never_registers_the_link,framework,QA-FW-005,high,no,no,pr+nightly,cut during connect never registers the link
+qa/tests/framework/test_harness_regressions.py::test_authorization_credentials_are_fully_redacted,framework,QA-FW-003,high,no,no,pr+nightly,authorization credentials are fully redacted
+qa/tests/framework/test_harness_regressions.py::test_nested_suites_count_each_case_once,framework,QA-AI-001,high,no,no,pr+nightly,nested suites count each case once
+qa/tests/framework/test_harness_regressions.py::test_failed_audit_is_never_reported_clean,framework,SEC-DEP-001,high,no,no,pr+nightly,failed audit is never reported clean
+qa/tests/framework/test_harness_regressions.py::test_integration_merge_chains_two_conflict_free_heads,framework,QA-GATE-004,high,no,no,pr+nightly,integration merge chains two conflict free heads
+qa/tests/framework/test_harness_regressions.py::test_nightly_limit_does_not_make_a_pr_untestable,framework,QA-GATE-004,high,no,no,pr+nightly,nightly limit does not make a pr untestable
+qa/tests/framework/test_harness_regressions.py::test_open_pr_discovery_follows_pagination,framework,QA-GATE-004,high,no,no,pr+nightly,open pr discovery follows pagination
+qa/tests/framework/test_harness_regressions.py::test_cost_basis_is_not_rounded_before_realised_pnl,framework,FIN-PNL-001,high,no,no,pr+nightly,cost basis is not rounded before realised pnl
+qa/tests/framework/test_harness_regressions.py::test_profit_factor_accepts_one_shot_iterators,framework,FIN-PF-001,high,no,no,pr+nightly,profit factor accepts one shot iterators
+qa/tests/framework/test_harness_regressions.py::test_money_half_paise_ties_round_away_from_zero,framework,FIN-CHG-002,high,no,no,pr+nightly,money half paise ties round away from zero
+qa/tests/framework/test_harness_regressions.py::test_unrealised_pnl_uses_the_exact_cost_basis,framework,FIN-PNL-001,high,no,no,pr+nightly,unrealised pnl uses the exact cost basis
+qa/tests/framework/test_harness_regressions.py::test_uri_privacy_check_sees_a_percent_encoded_full_phone,framework,AUTH-TOTP-002,critical,yes,no,pr+nightly,uri privacy check sees a percent encoded full phone
+qa/tests/framework/test_harness_regressions.py::test_nested_failure_under_a_testsuite_root_is_not_lost,framework,QA-AI-001,high,no,no,pr+nightly,nested failure under a testsuite root is not lost
+qa/tests/framework/test_harness_regressions.py::test_incomplete_pip_audit_blocks_but_findings_only_warn,framework,SEC-DEP-001,high,no,no,pr+nightly,incomplete pip audit blocks but findings only warn
+qa/tests/framework/test_harness_regressions.py::test_npm_audit_severity_is_kept_and_only_critical_blocks,framework,SEC-DEP-001,high,no,no,pr+nightly,npm audit severity is kept and only critical blocks
+qa/tests/framework/test_harness_regressions.py::test_e2e_result_set_is_required_only_when_e2e_ran,framework,QA-GATE-001,high,no,no,pr+nightly,e2e result set is required only when e2e ran
+qa/tests/framework/test_harness_regressions.py::test_cancelled_candidate_is_not_eligible_but_plain_failures_stay_warnings,framework,QA-GATE-003,high,no,no,pr+nightly,cancelled candidate is not eligible but plain failures stay warnings
+qa/tests/framework/test_harness_regressions.py::test_report_compares_against_the_current_commit_and_fails_closed,framework,QA-GATE-004,high,no,no,pr+nightly,report compares against the current commit and fails closed
+qa/tests/framework/test_harness_regressions.py::test_merge_script_stops_at_the_first_failed_fetch,framework,QA-GATE-004,high,no,no,pr+nightly,merge script stops at the first failed fetch
+qa/tests/framework/test_harness_regressions.py::test_morning_report_entry_point_runs_as_module_from_repo_root,framework,,high,no,no,pr+nightly,"The nightly job installs only report deps, so `qa` resolves from the repo root via -m."
+qa/tests/policy/test_independence.py::test_qa_code_never_imports_product_code,policy,QA-POL-001,high,no,no,pr+nightly,Expected values must not come from the implementation under test.
+qa/tests/policy/test_independence.py::test_no_real_endpoints_or_credentials_in_qa_code,policy,QA-POL-002,high,no,no,pr+nightly,no real endpoints or credentials in qa code
+qa/tests/policy/test_independence.py::test_synthetic_contact_data_only,policy,QA-POL-003,high,no,no,pr+nightly,Emails in the framework use the reserved .invalid TLD.
+qa/tests/policy/test_independence.py::test_ai_agent_has_no_merge_or_write_capability,policy,QA-POL-004,high,no,no,pr+nightly,The AI QA agent may read results and write reports. It must not call GitHub write APIs.
+qa/tests/policy/test_independence.py::test_traceability_and_catalog_are_current,policy,QA-POL-005,high,no,no,pr+nightly,docs/qa CSVs are generated from test markers; a stale or inconsistent file fails.
+qa/tests/reliability/test_dependency_outages.py::test_redis_outage_fails_closed_for_otp_and_login,reliability,REL-AUTH-001,critical,no,yes,pr+nightly,redis outage fails closed for otp and login
+qa/tests/reliability/test_dependency_outages.py::test_database_outage_fails_closed_and_recovers,reliability,REL-AUTH-002,critical,no,yes,pr+nightly,database outage fails closed and recovers
+qa/tests/reliability/test_dependency_outages.py::test_email_delivery_failure_returns_503_without_details,reliability,REL-AUTH-003 AUTH-OTP-008,high,no,yes,pr+nightly,email delivery failure returns 503 without details
+qa/tests/reliability/test_dependency_outages.py::test_500_responses_keep_request_id_and_security_headers,reliability,REL-HTTP-001 SEC-HDR-001,low,no,yes,pr+nightly,An INTERNAL_ERROR answer should look like every other answer: the body's
+qa/tests/security/test_auth_security.py::test_no_codes_secrets_or_pii_in_server_logs,security,SEC-LEAK-001 SEC-LEAK-002,critical,yes,yes,pr+nightly,"Drive a full account lifecycle on a private backend, then scan its entire log output."
+qa/tests/security/test_auth_security.py::test_security_headers_on_auth_responses,security,SEC-HDR-002,high,no,yes,pr+nightly,security headers on auth responses
+qa/tests/security/test_auth_security.py::test_api_responses_never_echo_codes,security,SEC-LEAK-003,high,no,yes,pr+nightly,api responses never echo codes
+qa/tests/security/test_auth_security.py::test_otp_requests_throttled_per_phone,security,AUTH-RATE-001,high,no,yes,pr+nightly,Default: 5 OTP requests per phone per hour. The per-context and per-IP limits are
+qa/tests/security/test_auth_security.py::test_throttle_is_identical_for_invited_and_uninvited,security,AUTH-ENUM-003,high,no,yes,pr+nightly,throttle is identical for invited and uninvited
+qa/tests/security/test_auth_security.py::test_resend_cooldown_enforced,security,AUTH-OTP-006 AUTH-RATE-003,high,no,yes,pr+nightly,resend cooldown enforced
+qa/tests/security/test_auth_security.py::test_daily_delivery_cap_fails_uniformly,security,AUTH-CAP-001 AUTH-ENUM-004,high,no,yes,pr+nightly,daily delivery cap fails uniformly
+qa/tests/security/test_auth_security.py::test_unknown_host_header_rejected,security,SEC-HOST-001,medium,no,yes,pr+nightly,unknown host header rejected
+qa/tests/security/test_auth_security.py::test_hostile_input_rejected_cleanly,security,SEC-INPUT-001,medium,no,yes,pr+nightly,hostile input rejected cleanly
+qa/tests/security/test_auth_security.py::test_operator_invite_list_masks_numbers,security,SEC-LEAK-004,medium,no,yes,pr+nightly,AUTH.md documents `invite list` as masked output.

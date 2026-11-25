@@ -1,0 +1,277 @@
+# Reusable QA suite: one candidate (a commit, or a base commit plus a PR head
+# merged into it) through backend, frontend and independent QA checks.
+#
+# Runs untrusted code (PR heads), so it holds no secrets and only a read token.
+# The consolidated report (and any AI analysis) happens in the caller's report
+# job, which reads JUnit files only and never executes candidate code.
+name: qa-suite
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: Name for artifacts, e.g. pr-12 or main
+        type: string
+        required: true
+      checkout_sha:
+        description: Commit to test (for a PR candidate, its intended base commit)
+        type: string
+        required: true
+      merge_sha:
+        description: Optional PR head commit(s), space-separated, merged in order into checkout_sha
+        type: string
+        default: ""
+      qa_markers:
+        description: pytest -m expression for the independent QA suite
+        type: string
+        default: "not slow"
+      run_e2e:
+        description: Run frontend Playwright e2e
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  prepare:
+    name: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tested_sha: ${{ steps.merge.outputs.tested_sha }}
+      conflict: ${{ steps.merge.outputs.conflict }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_sha }}
+          fetch-depth: 0
+          # No stored credentials: the token is passed only to the fetch command below.
+          persist-credentials: false
+      - id: merge
+        name: Build candidate
+        env:
+          BASE: ${{ inputs.checkout_sha }}
+          HEAD_SHA: ${{ inputs.merge_sha }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HEAD_SHA" ]; then
+            echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"; echo "conflict=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # One PR head, or an explicitly defined integration candidate (several heads in order).
+          # Run a copy taken from the base commit, so the merged code cannot alter it mid-run.
+          cp qa/scripts/merge_heads.sh "$RUNNER_TEMP/merge_heads.sh"
+          rc=0; bash "$RUNNER_TEMP/merge_heads.sh" || rc=$?
+          if [ "$rc" -eq 3 ]; then
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Merge conflict applying $HEAD_SHA onto base $BASE; candidate not tested."
+          fi
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"; echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+  backend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tradeo
+          POSTGRES_PASSWORD: ci-only-not-secret
+          POSTGRES_DB: tradeo_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U tradeo -d tradeo_test" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_sha }}
+          fetch-depth: 0
+          # No stored credentials: the token is passed only to the fetch command below.
+          persist-credentials: false
+      - name: Merge PR head
+        if: inputs.merge_sha != ''
+        env:
+          HEAD_SHA: ${{ inputs.merge_sha }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp qa/scripts/merge_heads.sh "$RUNNER_TEMP/merge_heads.sh"
+          bash "$RUNNER_TEMP/merge_heads.sh"
+      - name: Verify no git credentials remain before candidate code runs
+        id: nocreds
+        run: |
+          set -euo pipefail
+          # Output discarded: a match could be an authorization header.
+          if git config --get-regexp '^(http\..*extraheader|includeif\.)' >/dev/null 2>&1; then echo "::error::git credentials still configured"; exit 1; fi
+          if compgen -G "$RUNNER_TEMP/git-credentials-*" >/dev/null; then echo "::error::checkout credential file present"; exit 1; fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - name: Install backend
+        working-directory: backend
+        run: python -m pip install -e '.[dev]'
+      - name: Lint
+        working-directory: backend
+        run: ruff check . && ruff format --check .
+      - name: Backend tests (unit + integration)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://tradeo:ci-only-not-secret@localhost:5432/tradeo_test
+          TEST_REDIS_URL: redis://localhost:6379/15
+        run: pytest -q -p no:cacheprovider --junitxml=../out/backend.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-${{ inputs.label }}-backend
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
+
+  qa:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tradeo
+          POSTGRES_PASSWORD: ci-only-not-secret
+          POSTGRES_DB: qa_tradeo
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U tradeo -d qa_tradeo" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_sha }}
+          fetch-depth: 0
+          # No stored credentials: the token is passed only to the fetch command below.
+          persist-credentials: false
+      - name: Merge PR head
+        if: inputs.merge_sha != ''
+        env:
+          HEAD_SHA: ${{ inputs.merge_sha }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp qa/scripts/merge_heads.sh "$RUNNER_TEMP/merge_heads.sh"
+          bash "$RUNNER_TEMP/merge_heads.sh"
+      - name: Verify no git credentials remain before candidate code runs
+        id: nocreds
+        run: |
+          set -euo pipefail
+          # Output discarded: a match could be an authorization header.
+          if git config --get-regexp '^(http\..*extraheader|includeif\.)' >/dev/null 2>&1; then echo "::error::git credentials still configured"; exit 1; fi
+          if compgen -G "$RUNNER_TEMP/git-credentials-*" >/dev/null; then echo "::error::checkout credential file present"; exit 1; fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - name: Install backend (system under test) and QA framework
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-client >/dev/null
+          python -m pip install -e 'backend[dev]' -r qa/requirements.txt
+      - name: Independent QA suite
+        env:
+          QA_DATABASE_URL: postgresql+asyncpg://tradeo:ci-only-not-secret@localhost:5432/qa_tradeo
+          QA_REDIS_URL: redis://localhost:6379/14
+          QA_REQUIRE_SERVICES: "1"
+          QA_ARTIFACTS_DIR: ${{ github.workspace }}/out/qa-artifacts
+          QA_MARKERS: ${{ inputs.qa_markers }}
+        run: python -m pytest -c qa/pytest.ini qa/tests -m "$QA_MARKERS" --junitxml=out/qa.xml
+      - name: Secret scan (tracked files)
+        if: always() && steps.nocreds.outcome == 'success'
+        run: python qa/scripts/secret_scan.py --junit out/secret-scan.xml
+      - name: Dependency audit (backend)
+        if: always() && steps.nocreds.outcome == 'success'
+        run: |
+          python -m pip install pip-audit==2.9.0 >/dev/null
+          python qa/scripts/dependency_audit.py --junit out/dependency-audit.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-${{ inputs.label }}-qa
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
+
+  frontend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_sha }}
+          fetch-depth: 0
+          # No stored credentials: the token is passed only to the fetch command below.
+          persist-credentials: false
+      - name: Merge PR head
+        if: inputs.merge_sha != ''
+        env:
+          HEAD_SHA: ${{ inputs.merge_sha }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp qa/scripts/merge_heads.sh "$RUNNER_TEMP/merge_heads.sh"
+          bash "$RUNNER_TEMP/merge_heads.sh"
+      - name: Verify no git credentials remain before candidate code runs
+        id: nocreds
+        run: |
+          set -euo pipefail
+          # Output discarded: a match could be an authorization header.
+          if git config --get-regexp '^(http\..*extraheader|includeif\.)' >/dev/null 2>&1; then echo "::error::git credentials still configured"; exit 1; fi
+          if compgen -G "$RUNNER_TEMP/git-credentials-*" >/dev/null; then echo "::error::checkout credential file present"; exit 1; fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (lockfile only, no install scripts)
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Unit and component tests
+        working-directory: frontend
+        run: npx vitest run --reporter=default --reporter=junit --outputFile.junit=../out/frontend-unit.xml
+      - name: Playwright e2e (preview mode)
+        if: inputs.run_e2e
+        working-directory: frontend
+        run: |
+          npm run build
+          npx playwright install --with-deps chromium
+          npx playwright test --reporter=junit,line --trace retain-on-failure
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_NAME: ../out/frontend-e2e.xml
+      - name: npm audit (production dependencies; severity kept per package)
+        if: always() && steps.nocreds.outcome == 'success'
+        working-directory: frontend
+        run: |
+          rc=0; npm audit --omit=dev --json > "$RUNNER_TEMP/npm-audit.json" || rc=$?
+          python3 ../qa/scripts/npm_audit_junit.py --input "$RUNNER_TEMP/npm-audit.json" --returncode "$rc" --junit ../out/npm-audit.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-${{ inputs.label }}-frontend
+          path: |
+            out/
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 14
+          if-no-files-found: warn

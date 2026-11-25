@@ -1,0 +1,158 @@
+# Nightly full regression (00:00 IST = 18:30 UTC) and manual runs. This is the only QA trigger:
+# owner policy 2026-11-25 is no per-PR QA run, and only critical findings block a merge.
+# The verdict reaches each tested PR as the commit status `qa/nightly` (pr-status job).
+# The schedule only becomes active once this file is on the default branch.
+#
+# Untrusted PR code runs only inside qa-suite.yml (read token, no secrets).
+# The morning-report job never checks out or runs candidate code; it reads
+# JUnit files, and is the only job that may receive the optional AI key.
+name: qa-nightly
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to test: nightly (open PRs + main), main, a PR number, or a 40-char commit sha"
+        default: nightly
+        type: string
+      integration:
+        description: "Optional integration candidate: PR numbers merged in order onto main, e.g. 12,14"
+        default: ""
+        type: string
+      qa_markers:
+        description: "pytest -m expression for the QA suite (empty = everything, including slow)"
+        default: ""
+        type: string
+      run_e2e:
+        description: Run Playwright e2e
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-nightly
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: pick
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target || 'nightly' }}
+          INTEGRATION: ${{ inputs.integration }}
+        run: |
+          set -euo pipefail
+          # Validate operator input before use (it reaches git and the matrix).
+          if ! [[ "$TARGET" =~ ^(nightly|main|[0-9]{1,6}|[0-9a-f]{40})$ ]]; then echo "::error::invalid target"; exit 1; fi
+          if ! [[ "$INTEGRATION" =~ ^([0-9]{1,6}(,[0-9]{1,6}){0,5})?$ ]]; then echo "::error::invalid integration list"; exit 1; fi
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          python qa/scripts/nightly_candidates.py --integration "$INTEGRATION" --out candidates.json
+          git config --global --unset url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf
+          if [ "$TARGET" != "nightly" ]; then
+            python - "$TARGET" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          t = sys.argv[1]
+          data = json.load(open("candidates.json"))
+          if t == "main":
+              m = [{"label": "main", "checkout_sha": data["main_sha"], "merge_sha": "", "pr": 0}]
+          elif len(t) == 40:
+              m = [{"label": "sha-" + t[:12], "checkout_sha": t, "merge_sha": "", "pr": 0}]
+          else:
+              pr = next((p for p in data["prs"] if p["pr"] == int(t)), None)
+              # Merge-testability only; the nightly PR limit does not apply to an explicit request.
+              if not pr or not pr.get("base_sha") or not pr.get("testable"):
+                  raise SystemExit(f"PR {t} is not testable: {pr['status'] if pr else 'not open'}")
+              m = [{"label": f"pr-{t}", "checkout_sha": pr["base_sha"], "merge_sha": pr["head_sha"], "pr": int(t)}]
+          print("matrix=" + json.dumps({"include": m}))
+          PY
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: nightly-candidates, path: candidates.json, retention-days: 30 }
+
+  candidate:
+    needs: discover
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/qa-suite.yml
+    with:
+      label: ${{ matrix.label }}
+      checkout_sha: ${{ matrix.checkout_sha }}
+      merge_sha: ${{ matrix.merge_sha }}
+      qa_markers: ${{ inputs.qa_markers || '' }}
+      run_e2e: ${{ github.event_name == 'schedule' || inputs.run_e2e }}
+
+  morning-report:
+    needs: [discover, candidate]
+    if: always() && needs.discover.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.12" }
+      - run: python -m pip install -r qa/requirements-report.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { path: results }
+      - name: Build per-candidate reports and the morning report
+        env:
+          MATRIX: ${{ needs.discover.outputs.matrix }}
+          CANDIDATE_RESULT: ${{ needs.candidate.result }}
+          RUN_E2E: ${{ github.event_name == 'schedule' || inputs.run_e2e }}
+          GITHUB_TOKEN: ${{ github.token }}  # read-only; looks up the current PR head / main tip
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Optional and off by default: AI notes only when the owner sets these.
+          QA_AI_PROVIDER: ${{ vars.QA_AI_PROVIDER }}
+          QA_AI_MODEL: ${{ vars.QA_AI_MODEL }}
+          QA_AI_DAILY_BUDGET_USD: ${{ vars.QA_AI_DAILY_BUDGET_USD }}
+          ANTHROPIC_API_KEY: ${{ vars.QA_AI_PROVIDER == 'anthropic' && secrets.QA_ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ vars.QA_AI_PROVIDER == 'openai' && secrets.QA_OPENAI_API_KEY || '' }}
+        run: |
+          if [ -n "$QA_AI_PROVIDER" ]; then python -m pip install 'anthropic>=1,<2' 'openai>=1,<3' >/dev/null || true; fi
+          python -m qa.scripts.morning_report --results results --matrix "$MATRIX" \
+            --candidates results/nightly-candidates/candidates.json --out morning --run-url "$RUN_URL" \
+            --run-e2e "$RUN_E2E" --candidate-result "$CANDIDATE_RESULT"
+          cat morning/MORNING_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with: { name: morning-report, path: morning/, retention-days: 30 }
+
+  pr-status:
+    # Separate job so the status-write token never shares a job with the optional AI key.
+    needs: [discover, morning-report]
+    if: always() && needs.discover.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.12" }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: morning-report, path: morning }
+      - name: Set qa/nightly on each tested PR head (failure only for critical findings or missing results)
+        if: always()  # with no morning report every tested PR gets "error", never a pass
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.discover.outputs.matrix }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python qa/scripts/publish_pr_status.py --morning morning/morning.json --matrix "$MATRIX" --run-url "$RUN_URL"

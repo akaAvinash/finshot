@@ -28,6 +28,35 @@ return 0
 """
 
 
+# Reserve one slot only while under the limit (a rejected call changes nothing).
+# The counter lives in a hash with the window's start time, so a later release
+# can tell whether it still belongs to the same window.
+_RESERVE_SCRIPT = """
+local n = tonumber(redis.call('HGET', KEYS[1], 'n') or '0')
+local w = redis.call('HGET', KEYS[1], 'w')
+if not w then
+  local t = redis.call('TIME')
+  w = tostring(t[1] * 1000000 + t[2])
+  redis.call('HSET', KEYS[1], 'n', 0, 'w', w)
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  n = 0
+end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]); ttl = tonumber(ARGV[1]) end
+if n >= tonumber(ARGV[2]) then return {0, ttl, w} end
+redis.call('HINCRBY', KEYS[1], 'n', 1)
+return {1, ttl, w}
+"""
+
+# Give a reservation back only if it is still the same window and above zero.
+_RESERVE_RELEASE_SCRIPT = """
+if redis.call('HGET', KEYS[1], 'w') ~= ARGV[1] then return 0 end
+local n = tonumber(redis.call('HGET', KEYS[1], 'n') or '0')
+if n > 0 then return redis.call('HINCRBY', KEYS[1], 'n', -1) end
+return 0
+"""
+
+
 def _ceil_seconds(ms: int) -> int:
     return max(1, -(-ms // 1000))
 
@@ -47,6 +76,26 @@ class RateLimiter:
         )
         count, ttl_ms = int(raw[0]), int(raw[1])
         return _ceil_seconds(ttl_ms) if count > limit else None
+
+    def _rkey(self, kind: str, subject: str) -> str:
+        return f"tradeo:rv:{kind}:{hmac_hex(self._keys.identifier, kind, subject)[:40]}"
+
+    async def reserve(
+        self, kind: str, subject: str, limit: int, window_seconds: int
+    ) -> tuple[int | None, str]:
+        """Take one slot if under `limit`; a rejected call does not count.
+
+        Returns (seconds to wait or None, window token for `release_reservation`)."""
+        raw = await self._redis.eval(
+            _RESERVE_SCRIPT, 1, self._rkey(kind, subject), str(window_seconds * 1000), str(limit)
+        )
+        ok, ttl_ms, token = int(raw[0]), int(raw[1]), raw[2]
+        token = token.decode() if isinstance(token, bytes) else str(token)
+        return (None if ok else _ceil_seconds(ttl_ms)), token
+
+    async def release_reservation(self, kind: str, subject: str, token: str) -> None:
+        """Give back a reservation, only if its window is still the current one."""
+        await self._redis.eval(_RESERVE_RELEASE_SCRIPT, 1, self._rkey(kind, subject), token)
 
     async def release(self, kind: str, subject: str) -> None:
         """Undo one earlier `hit` (for example after a successful login)."""

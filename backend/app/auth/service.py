@@ -689,8 +689,9 @@ class AuthService:
         # allowance. The phone allowance is reserved before the code is looked
         # at (so concurrent requests cannot exceed it) and given back on success.
         retry = await self._limiter.hit("totp_login_ip", ip_key, s.rate_limit_totp_per_ip, window)
+        window_token = ""
         if retry is None:
-            retry = await self._limiter.hit(
+            retry, window_token = await self._limiter.reserve(
                 "totp_login_phone", phone_key, s.rate_limit_totp_per_user, window
             )
         if retry is not None:
@@ -755,7 +756,7 @@ class AuthService:
             # Best effort: the login has committed, so a failed refund must not
             # turn it into an error (the code is spent and the old session is gone).
             try:
-                await self._limiter.release("totp_login_phone", phone_key)
+                await self._limiter.release_reservation("totp_login_phone", phone_key, window_token)
             except Exception:
                 logger.warning("totp_login_phone_refund_failed")
         else:

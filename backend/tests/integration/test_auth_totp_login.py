@@ -224,7 +224,7 @@ def test_a_failed_allowance_refund_does_not_fail_a_committed_login(
     async def broken(*args: Any, **kwargs: Any) -> None:
         raise ConnectionError("redis went away")
 
-    monkeypatch.setattr(client.app.state.auth._limiter, "release", broken)
+    monkeypatch.setattr(client.app.state.auth._limiter, "release_reservation", broken)
     browser = Browser(client)
     response = attempt(browser, PHONE, code_for(secret, clock))
     assert response.status_code == 200, response.text

@@ -18,7 +18,7 @@ Recorded 2026-11-25 by a read-only check on the staging host. Nothing was change
 | Alembic head, live DB | `0012`, from `SELECT version_num FROM alembic_version` in a read-only transaction. Equals the head in this repo (`0012_recovery_codes`). | Fact, from the host |
 | Preceding backend release | `~/tradeo-staging/repo-8c8e08a` (`8c8e08a1d88460a8481918a955bf9e03d119439a`), then `~/tradeo-staging/repo-9e5cf9b` (migration 0002). Tarballs kept. | Fact, from the host |
 | Rollback frontend image | `tradeo-staging-frontend:rollback-de9612b...` = image 0a9e423d4671, the `9675ec0` build | Fact, from the host |
-| Rollback API image | None. The API image has only the `:local` tag. | Fact, from the host |
+| Rollback API image | `tradeo-staging-api:rollback-c700c7e` (image 10570d619226, the running API), tagged 2026-11-25 19:13 UTC with owner approval. Nothing was restarted. | Fact, from the host |
 
 The demo handoff runs main `e2c7b0e`'s code: the `c700c7e` backend build and
 the `de9612b` frontend build. Nothing else needs deploying for T03.
@@ -111,11 +111,12 @@ one `0012` (`0012_recovery_codes`).
    `20261124T011242Z` (10,277 bytes).
 2. Take a fresh `pg_dump` before any new upgrade. The 14:35 dump predates any
    data created since.
-3. To roll back: stop api and workers, restore the dump, redeploy the recorded
+3. To roll back: stop api and workers, take a fresh `pg_dump` of the current
+   database (restoring replaces it, so rows written since the 14:35 dump would
+   otherwise be lost), restore the pre-upgrade dump, redeploy the recorded
    release directory, run the read-only `./ops` checks.
-4. The API image has no rollback tag. Before the next upgrade, tag the running
-   image (for example `tradeo-staging-api:rollback-c700c7e`) so a rollback has
-   something to point at.
+4. The running API image is tagged `tradeo-staging-api:rollback-c700c7e`
+   (2026-11-25), so the next upgrade has an image to roll back to.
 5. The staging README's rollback note still names `9e5cf9b` as the previous
    release. That is out of date.
 

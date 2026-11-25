@@ -105,3 +105,20 @@ def test_html_empty_and_null_responses_from_a_server_fail() -> None:
             status, body = verify.fetch(f"http://127.0.0.1:{server.server_port}", "/x", None)
         assert status == 200
         assert verify.passes(status, body, 200, None) is False
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "http://127.0.0.1.example.com",
+        "http://localhost.example.com",
+        "http://example.com",
+        "ftp://127.0.0.1",
+        "",
+    ],
+)
+def test_base_url_must_be_https_or_a_real_loopback_host(
+    monkeypatch: pytest.MonkeyPatch, base: str
+) -> None:
+    monkeypatch.setenv("STAGING_BASE_URL", base)
+    assert verify.main() == 2

@@ -145,15 +145,41 @@ test("verifies first-time email, enrols with a local QR, then signs in using a f
   await expect(page).toHaveURL(/\/dashboard$/);
 });
 
-test("recovers by phone, protects the workspace until replacement, and rejects old recovery codes", async ({ page }) => {
+test("recovers by phone, protects the workspace, and retires each previous recovery batch", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
+  const recoveryMethod = page.getByRole("button", { name: "Recovery code", exact: true });
+  const recoveryInput = page.getByLabel("Recovery code", { exact: true });
+  const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+  const codes = page.getByRole("list", { name: "Recovery codes" }).getByRole("listitem");
+
+  async function replaceAuthenticator() {
+    await page.getByRole("button", { name: "Start authenticator setup" }).click();
+    await page.getByLabel("Authenticator code").fill("615408");
+    await page.getByRole("button", { name: "Confirm authenticator" }).click();
+    await page.getByRole("button", { name: "Generate recovery codes" }).click();
+    await expect(page.getByRole("heading", { name: "Save your recovery codes" })).toBeFocused();
+    await expect(codes).toHaveCount(10);
+  }
+
+  async function signOutAndOpenRecovery() {
+    await page.getByLabel("I’ve saved my recovery codes.").check();
+    await page.getByRole("button", { name: "Continue to dashboard" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(codes).toHaveCount(0);
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    await recoveryMethod.click();
+    await page.getByLabel("Mobile number").fill("98765 43218");
+  }
+
   await page.goto("/login");
-  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
+  await recoveryMethod.click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   await page.getByLabel("Mobile number").fill("98765 43218");
-  await page.getByLabel("Recovery code", { exact: true }).fill("abcde-fghij");
+  await recoveryInput.fill("abcde-fghij");
   const request = page.waitForRequest((candidate) => candidate.url().endsWith(`${auth}/login/recovery`));
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await signIn.click();
   expect((await request).postDataJSON()).toEqual({ phone: "+919876543218", recoveryCode: "ABCDE-FGHIJ" });
   await expect(page).toHaveURL(/\/login\/authenticator$/);
   await page.goto("/alerts");
@@ -161,27 +187,40 @@ test("recovers by phone, protects the workspace until replacement, and rejects o
   const alertStatus = await page.evaluate(async () => (await fetch("/api/v1/alerts")).status);
   expect(alertStatus).toBe(403);
 
+  await replaceAuthenticator();
+  const firstBatch = await codes.allTextContents();
+  await signOutAndOpenRecovery();
+  await recoveryInput.fill(firstBatch[0]);
+  await signIn.click();
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
+  await replaceAuthenticator();
+  const secondBatch = await codes.allTextContents();
+  expect(secondBatch.filter((code) => firstBatch.includes(code))).toEqual([]);
+  await signOutAndOpenRecovery();
+  for (const oldCode of ["ABCDE-FGHIJ", "KLMNO-PQRST", ...firstBatch.slice(0, 2)]) {
+    await recoveryInput.fill(oldCode);
+    await signIn.click();
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("The phone number or code is not valid.");
+  }
+});
+
+test("reports expired step-up without reopening authenticator setup", async ({ page, request }) => {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
+  await page.getByLabel("Mobile number").fill("98765 43218");
+  await page.getByLabel("Recovery code", { exact: true }).fill("ABCDE-FGHIJ");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page).toHaveURL(/\/login\/authenticator$/);
   await page.getByRole("button", { name: "Start authenticator setup" }).click();
   await page.getByLabel("Authenticator code").fill("615408");
   await page.getByRole("button", { name: "Confirm authenticator" }).click();
+  await expect(page.getByRole("heading", { name: "Create recovery codes" })).toBeVisible();
+  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
   await page.getByRole("button", { name: "Generate recovery codes" }).click();
-  await expect(page.getByRole("heading", { name: "Save your recovery codes" })).toBeFocused();
-  await expect(page.getByRole("list", { name: "Recovery codes" })).not.toContainText("ABCDE-FGHIJ");
-  await page.getByLabel("I’ve saved my recovery codes.").check();
-  await page.getByRole("button", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("The verification window expired before recovery codes could be created.");
   await expect(page.getByRole("list", { name: "Recovery codes" })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Open navigation" }).click();
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(page).toHaveURL(/\/login$/);
-  await page.getByRole("button", { name: "Recovery code", exact: true }).click();
-  await page.getByLabel("Mobile number").fill("98765 43218");
-  for (const oldCode of ["ABCDE-FGHIJ", "KLMNO-PQRST"]) {
-    await page.getByLabel("Recovery code", { exact: true }).fill(oldCode);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page.getByRole("main").getByRole("alert")).toHaveText("The phone number or code is not valid.");
-  }
+  await page.getByRole("button", { name: "Continue without recovery codes" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
 });
 
 test("surfaces throttling and unavailable delivery without signing in", async ({ page }) => {

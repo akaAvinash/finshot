@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
 import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
@@ -18,6 +18,16 @@ const returningNumber = "+919876543218";
 const registrationNumber = "+919876543219";
 const accountRows = new Map();
 const after = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
+
+function newRecoveryCodes() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const codes = new Set();
+  while (codes.size < 10) {
+    const value = Array.from(randomBytes(10), (byte) => alphabet[byte & 31]).join("");
+    codes.add(`${value.slice(0, 5)}-${value.slice(5)}`);
+  }
+  return [...codes];
+}
 
 function resetAccounts() {
   accountRows.clear();
@@ -97,6 +107,12 @@ createServer(async (request, response) => {
   }
   if (request.method === "POST" && request.url === "/__fixture/fail-next-logout") {
     failNextLogout = true;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/expire-step-up") {
+    for (const session of sessions.values()) {
+      if (session.stepUpUntil) session.stepUpUntil = after(-1);
+    }
     return response.writeHead(204).end();
   }
 
@@ -211,11 +227,11 @@ createServer(async (request, response) => {
   if (endpoint === "totp/recovery-codes") {
     const account = accountRows.get(session.phone);
     if (!account.totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
-    if (!session.stepUpUntil) return error(response, 403, "STEP_UP_REQUIRED");
+    if (!session.stepUpUntil || Date.parse(session.stepUpUntil) <= Date.now()) return error(response, 403, "STEP_UP_REQUIRED");
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     if (chunks.length) return error(response, 400, "INVALID_REQUEST");
-    account.recoveryCodes = [..."ABCDEFGHIJ"].map((letter) => `ZZZZ${letter}-ABCDE`);
+    account.recoveryCodes = newRecoveryCodes();
     return json(response, 200, { codes: account.recoveryCodes, createdAt: after(0) });
   }
 

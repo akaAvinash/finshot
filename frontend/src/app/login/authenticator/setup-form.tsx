@@ -10,6 +10,8 @@ import { AuthError, authRetryMessage, confirmAuthenticator, enrollAuthenticator,
 export function AuthenticatorSetup() {
   const router = useRouter();
   const [setup, setSetup] = useState<AuthenticatorEnrollment | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [recoverySaved, setRecoverySaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
@@ -18,10 +20,15 @@ export function AuthenticatorSetup() {
   const [error, setError] = useState<string | null>(null);
   const [retryAt, setRetryAt] = useState(0);
   const codeField = useRef<HTMLInputElement>(null);
+  const recoveryHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     if (setup) codeField.current?.focus({ preventScroll: true });
   }, [setup]);
+
+  useEffect(() => {
+    if (recoveryCodes) recoveryHeading.current?.focus();
+  }, [recoveryCodes]);
 
   function clearSetup() {
     setSetup(null);
@@ -85,10 +92,9 @@ export function AuthenticatorSetup() {
     setError(null);
     try {
       if (confirm) {
-        await confirmAuthenticator(digits);
+        const codes = await confirmAuthenticator(digits);
         clearSetup();
-        setLeaving(true);
-        router.replace("/dashboard");
+        setRecoveryCodes(codes);
       } else {
         const enrollment = await enrollAuthenticator();
         setSetup(enrollment);
@@ -117,6 +123,23 @@ export function AuthenticatorSetup() {
     event.preventDefault();
     void perform(true);
   }
+
+  if (recoveryCodes) return <section className="mt-5 space-y-4" aria-labelledby="recovery-heading">
+    <h2 id="recovery-heading" ref={recoveryHeading} tabIndex={-1} className="text-lg font-semibold">Save your recovery codes</h2>
+    <p className="text-sm text-muted-foreground">Keep these in a private place. Each code can be used once if you lose access to your authenticator. These codes are shown only now.</p>
+    <ul aria-label="Recovery codes" className="grid grid-cols-2 gap-2 rounded-md border border-border bg-background p-3 text-center font-mono text-sm">
+      {recoveryCodes.map((recoveryCode) => <li className="select-all" key={recoveryCode}>{recoveryCode}</li>)}
+    </ul>
+    <label className="flex items-start gap-2 text-sm">
+      <input type="checkbox" className="mt-1 size-4 shrink-0 accent-primary" checked={recoverySaved}
+        onChange={({ target }) => setRecoverySaved(target.checked)} />
+      I’ve saved my recovery codes.
+    </label>
+    <Button type="button" disabled={!recoverySaved || leaving} className="h-11 w-full" onClick={() => {
+      setLeaving(true);
+      router.replace("/dashboard");
+    }}>Continue to dashboard</Button>
+  </section>;
 
   return <div className="mt-5 space-y-4">
     {setup && <div className="space-y-3">

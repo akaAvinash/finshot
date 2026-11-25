@@ -11,6 +11,7 @@ let sessionCsrfToken: string | undefined;
 
 export type EmailChallenge = { challengeId: string; expiresAt: string; resendAvailableAt: string };
 export type AuthenticatorEnrollment = { secret: string; otpauthUri: string; expiresAt: string };
+export const recoveryCodePattern = /^[A-Z2-7]{5}-?[A-Z2-7]{5}$/i;
 
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
@@ -35,7 +36,7 @@ async function readCsrf(context?: CsrfContext) {
   return data.csrfToken as string;
 }
 
-type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "totp/enroll" | "totp/confirm" | "logout";
+type AuthWrite = "otp/request" | "otp/verify" | "totp/enroll" | "totp/confirm" | "logout";
 
 async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, string>) {
   function send(token: string) {
@@ -55,10 +56,10 @@ async function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<st
   }
 }
 
-export async function requestEmailCode(phone: string): Promise<EmailChallenge> {
-  const response = await postAuth("otp/request", "pre_login", { phone: `+91${phone}`, channel: "email" });
+export async function requestSignInChallenge(email: string): Promise<EmailChallenge> {
+  const response = await postAuth("otp/request", "pre_login", { email });
   const data = await response.json();
-  if (response.status !== 202 || typeof data?.challengeId !== "string" || !data.challengeId || data.channel !== "email" ||
+  if (response.status !== 202 || typeof data?.challengeId !== "string" || !data.challengeId ||
       !isTimestamp(data.expiresAt) || !isTimestamp(data.resendAvailableAt)) throw new AuthError(502);
   return { challengeId: data.challengeId, expiresAt: data.expiresAt, resendAvailableAt: data.resendAvailableAt };
 }
@@ -70,12 +71,8 @@ async function readSignedIn(response: Response) {
   return data.user.totpEnabled as boolean;
 }
 
-export async function verifyEmailCode(challengeId: string, code: string) {
-  return readSignedIn(await postAuth("otp/verify", "pre_login", { challengeId, code }));
-}
-
-export async function signInWithAuthenticator(phone: string, code: string) {
-  return readSignedIn(await postAuth("login/totp", "pre_login", { phone: `+91${phone}`, code }));
+export async function verifySignInChallenge(challengeId: string, proof: { code: string } | { recoveryCode: string }) {
+  return readSignedIn(await postAuth("otp/verify", "pre_login", { challengeId, ...proof }));
 }
 
 export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
@@ -91,9 +88,13 @@ export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {
   return { secret: data.secret, otpauthUri: data.otpauthUri, expiresAt: data.expiresAt };
 }
 
-export async function confirmAuthenticator(code: string) {
+export async function confirmAuthenticator(code: string): Promise<string[]> {
   const data = await (await postAuth("totp/confirm", "session", { code })).json();
-  if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil)) throw new AuthError(502);
+  const codes: unknown = data?.recoveryCodes;
+  if (data?.totpEnabled !== true || !isTimestamp(data.stepUpUntil) || !Array.isArray(codes) || codes.length !== 10 ||
+      !codes.every((value) => typeof value === "string" && /^[a-z2-7]{5}-[a-z2-7]{5}$/.test(value)) ||
+      new Set(codes).size !== codes.length) throw new AuthError(502);
+  return codes;
 }
 
 export function authRetryMessage(error: AuthError) {

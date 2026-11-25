@@ -14,16 +14,18 @@ const otpRequestsByIp = new Map();
 let failNextLogout = false;
 let reportMode = "ready";
 let alerts = createAlertsFixture();
-const returningNumber = "+919876543218";
-const registrationNumber = "+919876543219";
+const returningEmail = "owner@example.com";
+const registrationEmail = "new@example.com";
 const accountRows = new Map();
 const after = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
+const recoveryCodes = (prefix) => [..."abcdefghij"].map((letter) => `${prefix}${letter}-abcde`);
 
 function resetAccounts() {
   accountRows.clear();
-  for (const number of [returningNumber, registrationNumber]) {
-    accountRows.set(number, { id: randomUUID(), phoneMasked: `+91******${number.slice(-4)}`, displayName: null,
-      createdAt: after(0), totpEnabled: number === returningNumber, pending: false, lastCode: null });
+  for (const email of [returningEmail, registrationEmail]) {
+    accountRows.set(email, { id: randomUUID(), emailMasked: `${email[0]}***@example.com`, displayName: null,
+      createdAt: after(0), totpEnabled: email === returningEmail, pending: false, lastCode: null,
+      recoveryCodes: email === returningEmail ? ["abcde-fghij"] : [] });
   }
 }
 resetAccounts();
@@ -66,18 +68,18 @@ function cookie(name, value) {
 }
 
 function sessionPayload(account, session) {
-  const { id, phoneMasked, displayName, createdAt, totpEnabled } = account;
-  return { user: { id, phoneMasked, displayName, createdAt, totpEnabled },
+  const { id, emailMasked, displayName, createdAt, totpEnabled } = account;
+  return { user: { id, emailMasked, displayName, createdAt, totpEnabled },
     session: { idleExpiresAt: after(30), expiresAt: after(180), stepUpUntil: session.stepUpUntil } };
 }
 
-function startSession(response, phone, previousId, steppedUp) {
+function startSession(response, email, previousId, steppedUp) {
   sessions.delete(previousId);
   const id = randomUUID();
-  const session = { phone, stepUpUntil: steppedUp ? after(10) : null };
+  const session = { email, stepUpUntil: steppedUp ? after(10) : null };
   sessions.set(id, session);
   const token = `ses.${id}`;
-  return json(response, 200, { ...sessionPayload(accountRows.get(phone), session), csrfToken: token }, {
+  return json(response, 200, { ...sessionPayload(accountRows.get(email), session), csrfToken: token }, {
     "Set-Cookie": [cookie(sessionName, id), cookie(csrfName, token)],
   });
 }
@@ -167,7 +169,7 @@ createServer(async (request, response) => {
   if (endpoint === "me" && request.method === "GET") {
     if (sessionId === "upstream-offline") return error(response, 503, "AUTH_UNAVAILABLE");
     if (!signedIn) return error(response, 401, "UNAUTHENTICATED");
-    return json(response, 200, sessionPayload(accountRows.get(session.phone), session));
+    return json(response, 200, sessionPayload(accountRows.get(session.email), session));
   }
   if (endpoint === "csrf" && request.method === "GET") {
     const context = signedIn ? "session" : "pre_login";
@@ -177,7 +179,7 @@ createServer(async (request, response) => {
     return json(response, 200, { csrfToken: token, context, expiresAt: after(30) }, { "Set-Cookie": setCookies });
   }
 
-  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "totp/enroll", "totp/confirm", "logout"].includes(endpoint)) {
+  if (request.method !== "POST" || !["otp/request", "otp/verify", "totp/enroll", "totp/confirm", "logout"].includes(endpoint)) {
     return error(response, 404, "NOT_FOUND");
   }
   if (request.headers.origin !== publicOrigin || !csrfToken || request.headers["x-csrf-token"] !== csrfToken) {
@@ -199,7 +201,7 @@ createServer(async (request, response) => {
     if (csrfToken !== `ses.${sessionId}`) return error(response, 403, "CSRF_FAILED");
   }
   if (endpoint === "totp/enroll") {
-    const account = accountRows.get(session.phone);
+    const account = accountRows.get(session.email);
     if (account.totpEnabled) return error(response, 409, "TOTP_ALREADY_ENROLLED");
     account.pending = true;
     const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -216,42 +218,52 @@ createServer(async (request, response) => {
   }
 
   if (endpoint === "otp/request") {
-    if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
-    if (body.phone === "+919876543212") return error(response, 503, "OTP_DELIVERY_UNAVAILABLE");
-    if (!/^\+91987654321[034589]$/.test(body.phone)) return error(response, 422, "VALIDATION_ERROR");
-    const channel = body.channel ?? "sms";
-    if (body.phone === registrationNumber && channel !== "email") return error(response, 400, "INVALID_REQUEST");
+    if (Object.keys(body).length !== 1 || !/^[a-z-]+@example\.com$/.test(body.email)) return error(response, 422, "VALIDATION_ERROR");
+    if (body.email === "limited@example.com") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+    if (body.email === "down@example.com") return error(response, 503, "OTP_DELIVERY_UNAVAILABLE");
     const requests = otpRequestsByIp.get(clientIp) ?? 0;
-    if (requests >= 2) return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+    if (clientIp === fixtureAddresses.get("limited") && requests >= 2) return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
     otpRequestsByIp.set(clientIp, requests + 1);
     const challengeId = randomUUID();
-    challenges.set(challengeId, { csrfToken, phone: body.phone });
-    return json(response, 202, { challengeId, channel, expiresAt: after(5), resendAvailableAt: after(0) });
+    const method = accountRows.get(body.email)?.totpEnabled ? "totp" : "email";
+    challenges.set(challengeId, { csrfToken, email: body.email, method });
+    return json(response, 202, { challengeId, expiresAt: after(5), resendAvailableAt: after(0) });
   }
 
   if (endpoint === "otp/verify") {
+    if (Object.keys(body).length !== 2 || (typeof body.code === "string") === (typeof body.recoveryCode === "string")) {
+      return error(response, 422, "VALIDATION_ERROR");
+    }
     const challenge = challenges.get(body.challengeId);
-    const account = challenge ? accountRows.get(challenge.phone) : undefined;
-    if (!account || account.totpEnabled || challenge.csrfToken !== csrfToken || body.code !== "842615") return error(response, 401, "INVALID_OTP");
+    if (!challenge || challenge.csrfToken !== csrfToken) return error(response, 401, "INVALID_OTP");
+    if (challenge.email === "verify-limited@example.com") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+    const account = accountRows.get(challenge.email);
+    if (!account || account.totpEnabled !== (challenge.method === "totp")) return error(response, 401, "INVALID_OTP");
+    const usingRecovery = typeof body.recoveryCode === "string";
+    if (usingRecovery) {
+      const trimmed = body.recoveryCode.toLowerCase().replace("-", "");
+      if (!account.totpEnabled || !account.recoveryCodes.some((value) => value.replace("-", "") === trimmed)) {
+        return error(response, 401, "INVALID_OTP");
+      }
+      account.totpEnabled = false;
+      account.recoveryCodes = [];
+    } else {
+      const valid = account.totpEnabled ? ["728391", "615408", "615409"].includes(body.code) : body.code === "842615";
+      if (!valid || body.code === account.lastCode) return error(response, 401, "INVALID_OTP");
+      account.lastCode = body.code;
+    }
     challenges.delete(body.challengeId);
-    return startSession(response, challenge.phone, sessionId, false);
+    return startSession(response, challenge.email, sessionId, account.totpEnabled);
   }
   if (endpoint === "totp/confirm") {
-    const account = accountRows.get(session.phone);
+    const account = accountRows.get(session.email);
     if (!account.pending) return error(response, 409, "TOTP_NOT_PENDING");
     if (body.code !== "615408") return error(response, 422, "INVALID_TOTP");
     account.pending = false;
     account.totpEnabled = true;
     account.lastCode = body.code;
+    account.recoveryCodes = recoveryCodes(session.email === returningEmail ? "zzzz" : "yyyy");
     session.stepUpUntil = after(10);
-    return json(response, 200, { totpEnabled: true, stepUpUntil: session.stepUpUntil });
+    return json(response, 200, { totpEnabled: true, stepUpUntil: session.stepUpUntil, recoveryCodes: account.recoveryCodes });
   }
-  if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
-  const account = accountRows.get(body.phone);
-  const valid = body.phone === returningNumber ? body.code === "728391" : ["615408", "615409"].includes(body.code);
-  if (!csrfToken.startsWith("pre.") || !account?.totpEnabled || !valid || body.code === account.lastCode) {
-    return error(response, 401, "INVALID_CREDENTIALS");
-  }
-  account.lastCode = body.code;
-  return startSession(response, body.phone, sessionId, true);
 }).listen(3102, "127.0.0.1");

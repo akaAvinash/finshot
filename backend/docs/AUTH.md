@@ -51,11 +51,20 @@ without host, from, username and password.
 
 ### Spend limits
 
-Per UTC day, counted in Redis only for codes that are actually sent:
-`OTP_DAILY_DELIVERY_LIMIT` (all numbers, default 100) and
-`OTP_DAILY_DELIVERY_LIMIT_PER_PHONE` (default 10). At the cap the API returns
-503 and sends nothing. If Redis is down the request fails (500); it does not
-skip the cap. Per-request limits and the resend cooldown still apply.
+Two per-UTC-day counters, both in Redis:
+
+- `OTP_DAILY_DELIVERY_LIMIT` (all numbers, default 100) counts only codes that
+  are actually sent. A request that is not sent (uninvited number, no email on
+  file) only checks it, without counting.
+- `OTP_DAILY_DELIVERY_LIMIT_PER_PHONE` (default 10) counts every OTP request
+  for that number that gets past the availability check, invited or not, and
+  whether or not a code is sent. This keeps the cap from revealing who is
+  invited (see the tradeoff below).
+
+At either cap the API returns 503 and sends nothing. A request rejected by
+either cap does not spend the global counter. If Redis is down the request
+fails (500); it does not skip the cap. Per-request limits and the resend
+cooldown still apply.
 
 ### Uniform failures
 

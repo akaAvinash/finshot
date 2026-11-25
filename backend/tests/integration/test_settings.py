@@ -16,7 +16,7 @@ PROFILE = "/api/v1/settings/profile"
 
 def other_browser(client: TestClient) -> Browser:
     other = Browser(client)
-    other.login()
+    other.login_ready()
     return other
 
 
@@ -24,7 +24,7 @@ def other_browser(client: TestClient) -> Browser:
 
 
 def test_profile_defaults_then_saves_and_shows_in_me(browser: Browser, db_url: str) -> None:
-    browser.login()
+    browser.login_ready()
     first = browser.get(PROFILE)
     assert first.status_code == 200
     assert first.json()["displayName"] is None
@@ -60,7 +60,7 @@ def test_profile_defaults_then_saves_and_shows_in_me(browser: Browser, db_url: s
 
 
 def test_profile_validation(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
 
     def put(body: dict[str, Any]) -> Any:
         return browser.send("PUT", PROFILE, json=body, headers=browser.headers())
@@ -82,7 +82,7 @@ def test_profile_needs_a_session_then_csrf(browser: Browser, client: TestClient)
     assert browser.get(PROFILE).status_code == 401
     unauthenticated = browser.send("PUT", PROFILE, json={}, headers=browser.headers())
     assert unauthenticated.status_code == 401
-    browser.login()
+    browser.login_ready()
     no_csrf = browser.send(
         "PUT",
         PROFILE,
@@ -113,16 +113,18 @@ def test_revoke_needs_step_up_and_ends_the_other_session(
 ) -> None:
     first = Browser(client)
     first.login()
-    second = other_browser(client)
+    second = Browser(client)
+    second.login()
+    secret = enroll_and_confirm(first, clock)  # both sessions are limited to this until then
     _, others = session_ids(first)
     assert len(others) == 1
+    clock.advance(1000)  # the step-up window from confirming has closed
 
     blocked = revoke(first, others[0])
     assert blocked.status_code == 403
     assert blocked.json()["code"] == "STEP_UP_REQUIRED"
     assert second.get("/api/v1/auth/me").status_code == 200  # nothing changed
 
-    secret = enroll_and_confirm(first, clock)
     clock.advance(31)
     assert (
         first.post("/api/v1/auth/step-up", json={"code": code_for(secret, clock)}).status_code
@@ -164,7 +166,7 @@ def test_revoke_rejects_current_unknown_and_foreign_sessions(
     # Another user's session id is indistinguishable from an unknown one.
     stranger_phone = "+919876500000"
     stranger = Browser(client)
-    stranger.login(phone=stranger_phone)
+    stranger.login_ready(phone=stranger_phone)
     stranger_current, _ = session_ids(stranger)
     foreign = revoke(first, stranger_current)
     assert foreign.status_code == 404
@@ -173,7 +175,7 @@ def test_revoke_rejects_current_unknown_and_foreign_sessions(
 
 def test_revoke_checks_csrf_before_step_up(client: TestClient) -> None:
     first = Browser(client)
-    first.login()
+    first.login_ready()
     response = first.send(
         "DELETE",
         "/api/v1/auth/sessions/00000000-0000-4000-8000-000000000000",

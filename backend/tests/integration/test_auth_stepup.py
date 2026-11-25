@@ -164,10 +164,10 @@ def test_step_up_window_expires_and_never_outlives_the_session(
     )
 
 
-def test_step_up_without_enrolment_is_409(browser: Browser) -> None:
+def test_step_up_without_an_authenticator_is_setup_required(browser: Browser) -> None:
     browser.login()
     response = browser.post("/api/v1/auth/step-up", json={"code": "123456"})
-    assert response.status_code == 409 and response.json()["code"] == "TOTP_NOT_ENROLLED"
+    assert response.status_code == 403 and response.json()["code"] == "TOTP_SETUP_REQUIRED"
 
 
 def test_confirm_without_pending_enrolment_is_409(browser: Browser) -> None:

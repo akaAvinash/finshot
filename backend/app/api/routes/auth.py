@@ -27,7 +27,7 @@ from app.auth.schemas import (
     TotpEnrollmentOut,
     TotpLogin,
 )
-from app.auth.service import AuthService, SessionInfo
+from app.auth.service import AuthService, SessionInfo, totp_setup_required
 from app.auth.stepup import StepUpService, step_up_required
 from app.core.errors import ApiError
 
@@ -54,15 +54,29 @@ async def optional_session(request: Request, auth: Auth) -> SessionInfo | None:
     return await auth.resolve_session(request.cookies.get(SESSION_COOKIE))
 
 
-async def required_session(
+async def setup_session(
     session: Annotated[SessionInfo | None, Depends(optional_session)],
 ) -> SessionInfo:
+    """Any valid session, including one whose account has no active
+    authenticator yet. Only the operations the contract lists as available
+    before setup use this."""
     if session is None:
         raise ApiError(401, "UNAUTHENTICATED", "Sign in to continue.")
     return session
 
 
+async def required_session(
+    session: Annotated[SessionInfo, Depends(setup_session)],
+) -> SessionInfo:
+    """A valid session whose account has an active authenticator. Checked
+    after 401 and before any CSRF check, and changes nothing."""
+    if not session.totp_enabled:
+        raise totp_setup_required()
+    return session
+
+
 OptionalSession = Annotated[SessionInfo | None, Depends(optional_session)]
+SetupSession = Annotated[SessionInfo, Depends(setup_session)]
 RequiredSession = Annotated[SessionInfo, Depends(required_session)]
 
 
@@ -181,7 +195,7 @@ async def login_with_recovery_code(
 
 
 @router.get("/me", response_model=AuthSessionOut)
-async def me(auth: Auth, session: RequiredSession) -> AuthSessionOut:
+async def me(auth: Auth, session: SetupSession) -> AuthSessionOut:
     return AuthSessionOut(user=_user_out(session), session=_session_out(auth, session))
 
 
@@ -197,8 +211,8 @@ async def logout(request: Request, auth: Auth, session: OptionalSession) -> Resp
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
-async def logout_all(request: Request, auth: Auth, session: RequiredSession) -> Response:
-    # RequiredSession runs first, so a missing or stale session is 401, not 403.
+async def logout_all(request: Request, auth: Auth, session: SetupSession) -> Response:
+    # SetupSession runs first, so a missing or stale session is 401, not 403.
     auth.enforce_csrf(request, session)
     await auth.revoke_all_sessions(session, request=request)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -244,7 +258,7 @@ async def revoke_session(
 
 @router.post("/totp/enroll", response_model=TotpEnrollmentOut)
 async def enroll_totp(
-    request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+    request: Request, auth: Auth, stepup: StepUp, session: SetupSession
 ) -> TotpEnrollmentOut:
     auth.enforce_csrf(request, session)
     secret, uri, expires_at = await stepup.enroll(
@@ -258,7 +272,7 @@ async def enroll_totp(
 
 @router.post("/totp/confirm", response_model=StepUpResultOut)
 async def confirm_totp(
-    body: TotpCodeIn, request: Request, auth: Auth, stepup: StepUp, session: RequiredSession
+    body: TotpCodeIn, request: Request, auth: Auth, stepup: StepUp, session: SetupSession
 ) -> StepUpResultOut:
     auth.enforce_csrf(request, session)
     until = await stepup.confirm(

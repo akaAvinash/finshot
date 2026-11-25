@@ -169,7 +169,7 @@ def test_requires_a_session(browser: Browser, contract: Any) -> None:
 
 
 def test_commands_require_session_csrf_token(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = send(
         browser, {"action": "halt", "confirmation": "STOP"}, headers=browser.headers(csrf="")
     )
@@ -193,7 +193,7 @@ def test_commands_require_session_csrf_token(browser: Browser, contract: Any) ->
     ],
 )
 def test_malformed_commands_are_400(browser: Browser, contract: Any, body: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = send(browser, body)
     assert response.status_code == 400
     check(contract, "PaperError", response.json())
@@ -204,7 +204,7 @@ def test_malformed_commands_are_400(browser: Browser, contract: Any, body: Any) 
 
 
 def test_new_user_workspace_is_empty(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     response = browser.get(BASE)
     assert response.status_code == 200
     assert response.json() == {"status": "empty"}
@@ -214,7 +214,7 @@ def test_new_user_workspace_is_empty(browser: Browser, contract: Any) -> None:
 def test_active_strategy_makes_a_ready_idle_workspace(
     browser: Browser, clock: FakeClock, contract: Any
 ) -> None:
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     active_strategy(browser, name="Second strategy")
     # Draft-only strategies are not listed.
@@ -257,8 +257,8 @@ def test_active_strategy_makes_a_ready_idle_workspace(
 
 def test_assign_rules(client: TestClient, contract: Any) -> None:
     owner, other = Browser(client), Browser(client)
-    owner.login()
-    other.login(phone=OTHER_PHONE)
+    owner.login_ready()
+    other.login_ready(phone=OTHER_PHONE)
     sid = active_strategy(owner)
     draft = owner.post(STRATEGY_COMMANDS, json={"action": "create", "parameters": PARAMS})
     draft_id = draft.json()["strategies"][-1]["id"]
@@ -292,7 +292,7 @@ def test_assign_rules(client: TestClient, contract: Any) -> None:
 
 
 def test_engine_state_machine(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
 
     def conflict(body: dict[str, Any]) -> None:
@@ -330,7 +330,7 @@ def test_engine_state_machine(browser: Browser, contract: Any) -> None:
 
 
 def test_halt_needs_no_assignment(browser: Browser) -> None:
-    browser.login()
+    browser.login_ready()
     data = ok(browser, {"action": "halt", "confirmation": "STOP"})
     assert data["engine"] == "halted" and data["strategyId"] is None
     # Never assigned and no active strategy: the workspace is still empty.
@@ -344,7 +344,7 @@ def test_full_replay_matches_the_engine(
     client: TestClient, clock: FakeClock, contract: Any
 ) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     assert not tick(client)  # idle: nothing to do
@@ -392,7 +392,7 @@ def test_full_replay_matches_the_engine(
 
 def test_halt_cancels_queued_orders(client: TestClient, clock: FakeClock) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -412,7 +412,7 @@ def test_halt_cancels_queued_orders(client: TestClient, clock: FakeClock) -> Non
 
 def test_paused_strategy_stops_the_engine(client: TestClient) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -430,7 +430,7 @@ def test_paused_strategy_stops_the_engine(client: TestClient) -> None:
 
 def test_assigned_strategy_keeps_its_pinned_version(client: TestClient, clock: FakeClock) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     # A new version (v2) with smaller sizing is activated after assignment.
@@ -470,7 +470,7 @@ def test_contending_workers_replay_a_session_once(
 ) -> None:
     """A worker skips an account another worker holds (SKIP LOCKED)."""
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -507,7 +507,7 @@ def test_failed_tick_leaves_no_partial_ledger(
     client: TestClient, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -556,8 +556,8 @@ def test_failed_tick_leaves_no_partial_ledger(
 
 def test_users_are_isolated(client: TestClient, clock: FakeClock) -> None:
     first, second = Browser(client), Browser(client)
-    first.login()
-    second.login(phone=OTHER_PHONE)
+    first.login_ready()
+    second.login_ready(phone=OTHER_PHONE)
     sid = active_strategy(first)
     ok(first, {"action": "assign", "strategyId": sid})
     ok(first, {"action": "start"})
@@ -571,7 +571,7 @@ def test_users_are_isolated(client: TestClient, clock: FakeClock) -> None:
 
 def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> None:
     browser = Browser(make_app(paper_enabled=False))
-    browser.login()
+    browser.login_ready()
     for response in (browser.get(BASE), send(browser, {"action": "start"})):
         assert response.status_code == 503
         check(contract, "PaperError", response.json())
@@ -583,7 +583,7 @@ def test_disabled_is_503(make_app: Callable[..., TestClient], contract: Any) -> 
 
 def test_background_worker_replays_sessions(make_app: Callable[..., TestClient]) -> None:
     browser = Browser(make_app(paper_tick_seconds=0.5, paper_worker_poll_seconds=0.1))
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -612,7 +612,7 @@ def test_every_contract_paper_operation_is_implemented(contract: Any, browser: B
 
 def test_ledger_is_append_only_and_cascades(client: TestClient, clock: FakeClock) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     ok(browser, {"action": "start"})
@@ -653,7 +653,7 @@ def test_paper_migration_rolls_back_and_forward(db_url: str) -> None:
 def test_migration_reevaluates_existing_drafts(client: TestClient, db_url: str) -> None:
     """Drafts written before 0006 (unavailable/pending) get the automatic checks."""
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
 
     def strategy(**overrides: Any) -> str:
         response = browser.post(

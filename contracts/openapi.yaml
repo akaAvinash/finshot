@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.9.0
+  version: 0.10.0
   description: >
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
@@ -282,6 +282,15 @@ tags:
       it changes anything. The window belongs to one session: signing out or
       revoking the session ends it. The first operation that requires step-up
       is `revokeSession`; more are named in the Settings tag as they land.
+
+      **Setup required.** A session whose account has no active
+      authenticator (`user.totpEnabled` is false) is limited to
+      `getCsrfToken`, `getCurrentUser`, `logout`, `logoutAll`, `enrollTotp`
+      and `confirmTotp`. Every other operation that needs a session returns
+      `403 TOTP_SETUP_REQUIRED` after the `401` check and before the CSRF
+      check, and changes nothing. Confirming the authenticator lifts the
+      limit on every session of the account at once. This applies to every
+      tag, not only Auth.
 
       **Rate limits.** Wrong codes count per user and per IP. Exceeding the
       limit returns `429 RATE_LIMITED`, as in the Auth tag.
@@ -697,7 +706,7 @@ paths:
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
-          $ref: '#/components/responses/AuthCsrfFailed'
+          $ref: '#/components/responses/AuthCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/AuthTotpNotEnrolled'
         '422':
@@ -732,7 +741,7 @@ paths:
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
-          $ref: '#/components/responses/AuthStepUpOrCsrf'
+          $ref: '#/components/responses/AuthStepUpCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/AuthTotpNotEnrolled'
         '429':
@@ -765,7 +774,7 @@ paths:
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
-          $ref: '#/components/responses/AuthCsrfFailed'
+          $ref: '#/components/responses/AuthCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/AuthTotpNotEnrolled'
         '422':
@@ -843,6 +852,8 @@ paths:
                 $ref: '#/components/schemas/SessionList'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthSetupRequired'
   /api/v1/auth/sessions/{sessionId}:
     delete:
       operationId: revokeSession
@@ -872,7 +883,7 @@ paths:
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
-          $ref: '#/components/responses/AuthStepUpOrCsrf'
+          $ref: '#/components/responses/AuthStepUpCsrfOrSetupRequired'
         '404':
           $ref: '#/components/responses/AuthSessionNotFound'
         '409':
@@ -898,6 +909,8 @@ paths:
                 $ref: '#/components/schemas/SettingsProfile'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AuthSetupRequired'
     put:
       operationId: updateSettingsProfile
       tags: [Settings]
@@ -930,7 +943,7 @@ paths:
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
-          $ref: '#/components/responses/AuthCsrfFailed'
+          $ref: '#/components/responses/AuthCsrfOrSetupRequired'
   /api/v1/brokers/preview:
     get:
       operationId: getBrokers
@@ -954,6 +967,8 @@ paths:
                 $ref: '#/components/schemas/BrokerResult'
         '401':
           $ref: '#/components/responses/BrokerUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerSetupRequired'
         '503':
           $ref: '#/components/responses/BrokerUnavailable'
   /api/v1/brokers/preview/{provider}/actions:
@@ -1001,7 +1016,7 @@ paths:
         '401':
           $ref: '#/components/responses/BrokerUnauthenticated'
         '403':
-          $ref: '#/components/responses/BrokerCsrfFailed'
+          $ref: '#/components/responses/BrokerCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/BrokerActionConflict'
         '503':
@@ -1028,6 +1043,8 @@ paths:
                 $ref: '#/components/schemas/StrategyResult'
         '401':
           $ref: '#/components/responses/StrategyUnauthenticated'
+        '403':
+          $ref: '#/components/responses/StrategySetupRequired'
         '503':
           $ref: '#/components/responses/StrategyUnavailable'
   /api/v1/strategies/preview/commands:
@@ -1105,7 +1122,7 @@ paths:
         '401':
           $ref: '#/components/responses/StrategyUnauthenticated'
         '403':
-          $ref: '#/components/responses/StrategyCsrfFailed'
+          $ref: '#/components/responses/StrategyCsrfOrSetupRequired'
         '404':
           $ref: '#/components/responses/StrategyNotFound'
         '409':
@@ -1142,6 +1159,8 @@ paths:
                 $ref: '#/components/schemas/BacktestWorkspaceResult'
         '401':
           $ref: '#/components/responses/BacktestUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BacktestSetupRequired'
         '503':
           $ref: '#/components/responses/BacktestUnavailable'
   /api/v1/backtests/preview/runs:
@@ -1227,7 +1246,7 @@ paths:
         '401':
           $ref: '#/components/responses/BacktestUnauthenticated'
         '403':
-          $ref: '#/components/responses/BacktestCsrfFailed'
+          $ref: '#/components/responses/BacktestCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/BacktestConflict'
         '503':
@@ -1261,6 +1280,8 @@ paths:
                 $ref: '#/components/schemas/BacktestRun'
         '401':
           $ref: '#/components/responses/BacktestUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BacktestSetupRequired'
         '404':
           $ref: '#/components/responses/BacktestNotFound'
         '503':
@@ -1295,6 +1316,8 @@ paths:
                 $ref: '#/components/schemas/PaperResult'
         '401':
           $ref: '#/components/responses/PaperUnauthenticated'
+        '403':
+          $ref: '#/components/responses/PaperSetupRequired'
         '503':
           $ref: '#/components/responses/PaperUnavailable'
   /api/v1/auto-trading/paper/commands:
@@ -1383,7 +1406,7 @@ paths:
         '401':
           $ref: '#/components/responses/PaperUnauthenticated'
         '403':
-          $ref: '#/components/responses/PaperCsrfFailed'
+          $ref: '#/components/responses/PaperCsrfOrSetupRequired'
         '409':
           $ref: '#/components/responses/PaperConflict'
         '503':
@@ -1447,6 +1470,8 @@ paths:
           $ref: '#/components/responses/ReportInvalidRequest'
         '401':
           $ref: '#/components/responses/ReportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/ReportSetupRequired'
         '503':
           $ref: '#/components/responses/ReportUnavailable'
   /api/v1/reports/paper/trades.csv:
@@ -1494,6 +1519,8 @@ paths:
           $ref: '#/components/responses/ReportInvalidRequest'
         '401':
           $ref: '#/components/responses/ReportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/ReportSetupRequired'
         '503':
           $ref: '#/components/responses/ReportUnavailable'
   /api/v1/agents:
@@ -1536,6 +1563,8 @@ paths:
                 $ref: '#/components/schemas/AgentRoster'
         '401':
           $ref: '#/components/responses/AgentUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
   /api/v1/agents/health:
@@ -1584,6 +1613,8 @@ paths:
                 $ref: '#/components/schemas/AgentHealthReport'
         '401':
           $ref: '#/components/responses/AgentUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
   /api/v1/agents/events:
@@ -1629,6 +1660,8 @@ paths:
           $ref: '#/components/responses/AgentInvalidRequest'
         '401':
           $ref: '#/components/responses/AgentUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
   /api/v1/alerts:
@@ -1680,6 +1713,8 @@ paths:
           $ref: '#/components/responses/AlertInvalidRequest'
         '401':
           $ref: '#/components/responses/AlertUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AlertSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
   /api/v1/alerts/{alertId}/ack:
@@ -1722,7 +1757,7 @@ paths:
         '401':
           $ref: '#/components/responses/AlertUnauthenticated'
         '403':
-          $ref: '#/components/responses/AlertCsrfFailed'
+          $ref: '#/components/responses/AlertCsrfOrSetupRequired'
         '404':
           $ref: '#/components/responses/AlertNotFound'
         '503':
@@ -1747,6 +1782,8 @@ paths:
                 $ref: '#/components/schemas/AlertPreferences'
         '401':
           $ref: '#/components/responses/AlertUnauthenticated'
+        '403':
+          $ref: '#/components/responses/AlertSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
     put:
@@ -1780,7 +1817,7 @@ paths:
         '401':
           $ref: '#/components/responses/AlertUnauthenticated'
         '403':
-          $ref: '#/components/responses/AlertCsrfFailed'
+          $ref: '#/components/responses/AlertCsrfOrSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
 components:
@@ -2210,6 +2247,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - INVALID_OTP
             - INVALID_CREDENTIALS
             - CSRF_FAILED
@@ -2362,6 +2400,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - BROKER_ACTION_CONFLICT
             - BROKER_UNAVAILABLE
@@ -2567,6 +2606,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - STRATEGY_NOT_FOUND
             - STRATEGY_CONFLICT
@@ -2819,6 +2859,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - BACKTEST_NOT_FOUND
             - BACKTEST_CONFLICT
@@ -3255,6 +3296,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - PAPER_CONFLICT
             - PAPER_UNAVAILABLE
@@ -3658,6 +3700,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - AGENTS_UNAVAILABLE
         message:
           type: string
@@ -3853,6 +3896,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - ALERT_NOT_FOUND
             - ALERTS_UNAVAILABLE
@@ -3871,6 +3915,7 @@ components:
           enum:
             - INVALID_REQUEST
             - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
             - REPORTS_UNAVAILABLE
         message:
           type: string
@@ -3897,15 +3942,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    AuthSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     AuthCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AuthError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    AuthCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     AuthRateLimited:
       description: Too many requests for this phone number, IP address or device.
       headers:
@@ -3972,15 +4049,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    BrokerSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     BrokerCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/BrokerError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    BrokerCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     BrokerActionConflict:
       description: The action does not apply to the connection's current state, for example `sync` on an expired connection.
       content:
@@ -4017,15 +4126,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    StrategySetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     StrategyCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/StrategyError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    StrategyCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StrategyError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     StrategyNotFound:
       description: No strategy with this id belongs to the caller.
       content:
@@ -4078,15 +4219,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    BacktestSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     BacktestCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/BacktestError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    BacktestCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BacktestError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     BacktestNotFound:
       description: No run with this id belongs to the caller.
       content:
@@ -4132,15 +4305,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    PaperSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     PaperCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/PaperError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    PaperCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaperError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     PaperConflict:
       description: The command does not fit the engine's state, or the strategy cannot be assigned.
       content:
@@ -4177,6 +4382,17 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    ReportSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReportError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     ReportUnavailable:
       description: Reports are disabled or temporarily unavailable.
       content:
@@ -4204,6 +4420,17 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    AgentSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AgentError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     AgentUnavailable:
       description: Agents are disabled or temporarily unavailable.
       content:
@@ -4233,15 +4460,47 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+    AlertSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AlertError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
     AlertCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/AlertError'
-          example:
-            code: CSRF_FAILED
-            message: The request could not be verified. Reload and try again.
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+    AlertCsrfOrSetupRequired:
+      description: >
+        `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
+        does not match. `TOTP_SETUP_REQUIRED`: the account has no active
+        authenticator, so this session may only set one up; this is checked
+        before CSRF and nothing changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AlertError'
+          examples:
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     AlertNotFound:
       description: No alert with this id belongs to the caller.
       content:
@@ -4278,6 +4537,29 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+    AuthStepUpCsrfOrSetupRequired:
+      description: >
+        `STEP_UP_REQUIRED`: the session did not sign in recently enough, or the
+        step-up window is closed. `CSRF_FAILED`: the CSRF token is missing or
+        wrong, or the Origin header does not match. `TOTP_SETUP_REQUIRED`: the
+        account has no active authenticator; checked before CSRF.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          examples:
+            stepUp:
+              value:
+                code: STEP_UP_REQUIRED
+                message: Confirm with your authenticator, or sign in again, to continue.
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
     AuthSessionNotFound:
       description: No active session with this id belongs to the caller.
       content:

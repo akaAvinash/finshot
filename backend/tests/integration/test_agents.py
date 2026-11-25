@@ -105,9 +105,9 @@ def all_events(browser: Browser, contract: Any, **params: Any) -> list[dict[str,
 def assigned(client: TestClient, phone: str | None = None) -> Browser:
     browser = Browser(client)
     if phone is None:
-        browser.login()
+        browser.login_ready()
     else:
-        browser.login(phone=phone)
+        browser.login_ready(phone=phone)
     sid = active_strategy(browser)
     ok(browser, {"action": "assign", "strategyId": sid})
     return browser
@@ -192,7 +192,7 @@ def test_disabled_is_503_and_starts_no_worker(
 def test_invalid_event_queries_are_400(
     browser: Browser, contract: Any, params: dict[str, str]
 ) -> None:
-    browser.login()
+    browser.login_ready()
     response = browser.get(EVENTS, params=params)
     assert response.status_code == 400, response.text
     check(contract, "AgentError", response.json())
@@ -260,7 +260,7 @@ def test_agents_never_write_paper_data(client: TestClient, clock: FakeClock) -> 
 
 
 def test_roster_matches_the_contract(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     body = get_ok(browser, ROSTER)
     check(contract, "AgentRoster", body)
     assert (body["source"], body["environment"]) == ("demo", "PAPER")
@@ -290,7 +290,7 @@ def state(body: dict[str, Any]) -> tuple[str, str, str | None]:
 
 def test_health_without_paper_activity_is_unavailable(client: TestClient, contract: Any) -> None:
     browser = Browser(client)
-    browser.login()
+    browser.login_ready()
     body = health(browser, contract)
     assert state(body) == ("unavailable", "unavailable", "NO_PAPER_ACTIVITY")
     assert body["agents"][0]["lastRunAt"] is None
@@ -510,7 +510,7 @@ def test_users_see_only_their_own_events_and_links(
     assert owner_events
 
     other = Browser(client)
-    other.login(phone=OTHER_PHONE)
+    other.login_ready(phone=OTHER_PHONE)
     assert all_events(other, contract) == []
     assert state(health(other, contract))[2] == "NO_PAPER_ACTIVITY"
     # Another user's event id is not reachable through any filter.
@@ -747,14 +747,14 @@ def test_every_contract_agent_operation_is_implemented(contract: Any, browser: B
 
 def test_strategy_commands_unaffected(browser: Browser) -> None:
     """Sanity: agents add no strategy or paper commands."""
-    browser.login()
+    browser.login_ready()
     response = browser.post(STRATEGY_COMMANDS, json={"action": "approve"})
     assert response.status_code == 400
     assert browser.post(PAPER_COMMANDS, json={"action": "agent"}).status_code == 400
 
 
 def test_cursor_sequence_is_bounded_by_bigint(browser: Browser, contract: Any) -> None:
-    browser.login()
+    browser.login_ready()
     largest = get_ok(browser, EVENTS, cursor=encode_cursor(None, 2**63 - 1))
     assert largest["items"] == [] and largest["nextCursor"] is None
     response = browser.get(EVENTS, params={"cursor": encode_cursor(None, 2**63)})

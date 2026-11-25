@@ -9,6 +9,7 @@ const ingressEnv = { TRADEO_AUTH_INGRESS_TOKEN: randomBytes(32).toString("base64
 export default defineConfig({
   testDir: "./tests/staging",
   outputDir: "./.next/staging-test-results",
+  // The local auth fixture resets its shared state before each test.
   workers: 1,
   reporter: "list",
   use: { ...devices["Desktop Chrome"], baseURL },

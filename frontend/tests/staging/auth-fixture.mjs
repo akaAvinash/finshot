@@ -9,6 +9,7 @@ const cookieAttrs = "Secure; HttpOnly; SameSite=Lax; Path=/";
 const sessionIds = new Set();
 const challenges = new Map();
 const otpRequestsByIp = new Map();
+let failNextLogout = false;
 const user = { id: randomUUID(), phoneMasked: "+91******3210", displayName: null, createdAt: "2026-11-25T00:00:00Z" };
 const sessionDates = { idleExpiresAt: "2026-11-25T01:00:00Z", expiresAt: "2026-11-25T12:00:00Z" };
 const ingressToken = process.env.TRADEO_AUTH_INGRESS_TOKEN;
@@ -51,6 +52,17 @@ function cookie(name, value) {
 
 createServer(async (request, response) => {
   if (request.url === "/health") return json(response, 200, { ok: true });
+  if (request.method === "POST" && request.url === "/__fixture/reset") {
+    sessionIds.clear();
+    challenges.clear();
+    otpRequestsByIp.clear();
+    failNextLogout = false;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/fail-next-logout") {
+    failNextLogout = true;
+    return response.writeHead(204).end();
+  }
 
   const endpoint = request.url?.replace(/^\/api\/v1\/auth\//, "");
   const cookies = Object.fromEntries((request.headers.cookie ?? "").split("; ").filter(Boolean).map((item) => item.split("=", 2)));
@@ -86,6 +98,10 @@ createServer(async (request, response) => {
   }
 
   if (endpoint === "logout") {
+    if (failNextLogout) {
+      failNextLogout = false;
+      return error(response, 503, "AUTH_UNAVAILABLE");
+    }
     sessionIds.delete(sessionId);
     response.writeHead(204, { "Set-Cookie": [sessionName, csrfName].map((name) => `${cookie(name, "")}; Max-Age=0`) });
     return response.end();

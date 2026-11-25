@@ -3,6 +3,11 @@ import { expect, test, type Page } from "@playwright/test";
 const auth = "/api/v1/auth";
 const origin = "http://127.0.0.1:3101";
 const secureCookieOrigin = "https://127.0.0.1:3101";
+const fixture = "http://127.0.0.1:3102/__fixture";
+
+test.beforeEach(async ({ request }) => {
+  expect((await request.post(`${fixture}/reset`)).status()).toBe(204);
+});
 
 async function requestCode(page: Page, phone: string) {
   return page.evaluate(async ({ auth, phone }) => {
@@ -18,7 +23,7 @@ async function requestCode(page: Page, phone: string) {
   }, { auth, phone });
 }
 
-test("requires backend sign-in, preserves rotated cookies, and revokes the session on sign-out", async ({ page, context }) => {
+test("requires backend sign-in, preserves rotated cookies, and revokes the session after a sign-out retry", async ({ page, context, request }) => {
   await context.addCookies([{ name: "tradeo-preview-session", value: "phase-1", url: origin }]);
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login$/);
@@ -48,7 +53,15 @@ test("requires backend sign-in, preserves rotated cookies, and revokes the sessi
   await page.goto("/markets");
   await expect(page).toHaveURL(/\/markets$/);
 
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  expect((await request.post(`${fixture}/fail-next-logout`)).status()).toBe(204);
+  const signOut = page.getByRole("button", { name: "Sign out", exact: true });
+  await signOut.click();
+  await expect(page.getByText("We couldn’t confirm sign-out. Try again.")).toBeVisible();
+  await expect(page).toHaveURL(/\/markets$/);
+  await expect(page.getByText("Staging session")).toBeVisible();
+  expect(await page.evaluate(async (path) => (await fetch(path)).status, `${auth}/me`)).toBe(200);
+
+  await signOut.click();
   await expect(page).toHaveURL(/\/login$/);
   expect((await context.cookies()).filter(({ name }) => name.startsWith("__Host-tradeo_"))).toHaveLength(0);
   const sessionCookie = authCookies.find(({ name }) => name === "__Host-tradeo_session")!;

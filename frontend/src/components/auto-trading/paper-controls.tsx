@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CircleStop, FlaskConical, LockKeyhole, Play, Pause, ShieldCheck, Workflow } from "lucide-react";
+import { CircleStop, FlaskConical, LockKeyhole, Play, Pause, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -9,7 +9,6 @@ import { Input, Label } from "@/components/ui/input";
 import { Status } from "@/components/ui/status";
 import { canStartPaper } from "@/lib/api/auto-trading-mock";
 import type { PaperCommand, PaperSnapshot } from "@/lib/api/auto-trading-types";
-import { formatInr } from "@/lib/format";
 
 const engineLabel = { idle: "Idle", running: "Running", halted: "Halted" } as const;
 
@@ -65,13 +64,13 @@ export function PaperControls({ snapshot, stale, pending, onRun }: {
   pending: boolean;
   onRun: (command: PaperCommand) => Promise<boolean>;
 }) {
-  const { engine, risk, strategyId, strategies, agent, orders } = snapshot;
+  const { engine, strategyId, strategies, agent, orders } = snapshot;
   const disabled = stale || pending;
   const queued = orders.filter(({ status }) => status !== "cancelled").length;
   const clearHaltButton = useRef<HTMLButtonElement>(null);
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[1.12fr_1fr_1fr]">
+    <div className="grid gap-4 sm:grid-cols-2">
       <Card aria-label="Paper engine" className="p-4 sm:p-5">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <PanelTitle icon={Workflow}>Paper engine</PanelTitle>
@@ -116,26 +115,6 @@ export function PaperControls({ snapshot, stale, pending, onRun }: {
         </div>
       </Card>
 
-      <Card aria-label="Paper risk checks" className="p-4 sm:p-5 sm:max-xl:col-span-2">
-        <header className="flex flex-wrap items-center justify-between gap-2">
-          <PanelTitle icon={ShieldCheck}>Paper risk checks</PanelTitle>
-          <Status tone={risk.status === "approved" ? "positive" : "negative"} dot>{risk.status === "approved" ? "Demo approved" : "Blocked"}</Status>
-        </header>
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-          <div>
-            <dt className="flex flex-wrap items-baseline justify-between gap-2 text-sm text-muted-foreground">
-              Daily loss <span className="font-medium tabular-nums text-foreground">{formatInr(risk.dailyLossPaise / 100)} / {formatInr(risk.lossLimitPaise / 100)}</span>
-            </dt>
-            <dd><progress className="paper-progress" aria-label="Demo daily loss cap" value={risk.dailyLossPaise} max={risk.lossLimitPaise} /></dd>
-          </div>
-          <div>
-            <dt className="flex items-baseline justify-between gap-2 text-sm text-muted-foreground">
-              Trades used <span className="font-medium tabular-nums text-foreground">{risk.tradesToday} / {risk.tradeLimit}</span>
-            </dt>
-            <dd><progress className="paper-progress" aria-label="Demo trade limit" value={risk.tradesToday} max={risk.tradeLimit} /></dd>
-          </div>
-        </dl>
-      </Card>
     </div>
   );
 }

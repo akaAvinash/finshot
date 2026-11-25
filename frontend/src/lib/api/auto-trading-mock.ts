@@ -1,3 +1,4 @@
+import { getPaperTradeControls, validatePaperLimits } from "../paper-trade-controls";
 import type { PaperCommand, PaperSnapshot, PaperTradingClient } from "./auto-trading-types";
 import { waitForMock } from "./mock-delay";
 
@@ -13,7 +14,13 @@ const fixture: PaperSnapshot = {
     { id: "bank-range", name: "Bank Nifty Range", instrument: "BANKNIFTY" },
     { id: "equity-reversion", name: "Equity Mean Reversion", instrument: "RELIANCE" },
   ],
-  risk: { status: "approved", dailyLossPaise: 42_500, lossLimitPaise: 250_000, tradesToday: 3, tradeLimit: 10 },
+  sampleEntry: { pricePaise: 18_240, equityPaise: 10_000_000, confidencePercent: 75 },
+  risk: {
+    status: "approved", dailyLossPaise: 42_500, tradesToday: 3,
+    profitLimitPaise: 500_000, lossLimitPaise: 250_000, tradeLimit: 10,
+    postCapConfidencePercent: 70, maxConsecutiveLosses: 3,
+    stopLossBps: 100, takeProfitBps: 200, maxRiskPerTradePaise: 50_000, maxPositionSizeBps: 1_000,
+  },
   orders: [
     { id: "P-104", instrument: "NIFTY 50 24500 CE", side: "Buy", quantity: 75, limitPaise: 18_240, approval: "approved", status: "queued" },
     { id: "P-105", instrument: "BANKNIFTY 52300 PE", side: "Sell", quantity: 30, limitPaise: 47_825, approval: "pending", status: "held" },
@@ -31,9 +38,7 @@ const fixture: PaperSnapshot = {
 
 export function canStartPaper(snapshot: PaperSnapshot) {
   return snapshot.engine === "idle" && snapshot.strategyId !== null && snapshot.agent.ready
-    && snapshot.risk.status === "approved"
-    && snapshot.risk.dailyLossPaise < snapshot.risk.lossLimitPaise
-    && snapshot.risk.tradesToday < snapshot.risk.tradeLimit;
+    && !getPaperTradeControls(snapshot).limitReached;
 }
 
 export function applyPaperCommand(snapshot: PaperSnapshot, command: PaperCommand): PaperSnapshot {
@@ -41,6 +46,15 @@ export function applyPaperCommand(snapshot: PaperSnapshot, command: PaperCommand
   let message: string;
 
   switch (command.action) {
+    case "set-limits": {
+      if (snapshot.engine !== "idle") throw new Error("Pause the paper engine before changing trade limits.");
+      const error = validatePaperLimits(command.limits);
+      if (error) throw new Error(error);
+      const { status, dailyLossPaise, tradesToday } = snapshot.risk;
+      change = { risk: { ...command.limits, status, dailyLossPaise, tradesToday } };
+      message = "Demo trade limits updated.";
+      break;
+    }
     case "assign": {
       const strategy = snapshot.strategies.find(({ id }) => id === command.strategyId);
       if (!strategy || snapshot.engine !== "idle") throw new Error("Strategy assignment requires an idle paper engine.");

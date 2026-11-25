@@ -13,6 +13,7 @@ import type { PaperCommand, PaperResult, PaperScenario } from "@/lib/api/auto-tr
 import { formatSnapshotDate } from "@/lib/format";
 import { PaperActivity, paperTime } from "./paper-activity";
 import { PaperControls } from "./paper-controls";
+import { TradeControls } from "./trade-controls";
 
 const scenarios = [
   { value: "ready", label: "Sample data" },
@@ -115,6 +116,7 @@ export function AutoTrading() {
           {commandError && <p role="alert" className="text-sm text-negative">{commandError}</p>}
           {pending && <p role="status" className="sr-only">Updating paper controls</p>}
           <PaperControls snapshot={result.data} stale={result.status === "stale"} pending={pending} onRun={run} />
+          <TradeControls snapshot={result.data} stale={result.status === "stale"} pending={pending} onRun={run} />
           <PaperActivity snapshot={result.data} />
         </>
       )}

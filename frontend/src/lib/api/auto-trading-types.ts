@@ -19,6 +19,17 @@ export type PaperTrade = {
   filledAt: string;
 };
 export type PaperEvent = Readonly<{ id: string; at: string; message: string }>;
+export type PaperLimits = {
+  profitLimitPaise: number | null;
+  lossLimitPaise: number;
+  tradeLimit: number;
+  postCapConfidencePercent: number;
+  maxConsecutiveLosses: number;
+  stopLossBps: number;
+  takeProfitBps: number;
+  maxRiskPerTradePaise: number;
+  maxPositionSizeBps: number;
+};
 
 export type PaperSnapshot = Readonly<{
   source: "demo";
@@ -28,12 +39,11 @@ export type PaperSnapshot = Readonly<{
   strategies: readonly PaperStrategy[];
   strategyId: string | null;
   agent: { name: string; ready: boolean };
-  risk: {
+  sampleEntry: { pricePaise: number; equityPaise: number; confidencePercent: number | null };
+  risk: PaperLimits & {
     status: "approved" | "blocked";
     dailyLossPaise: number;
-    lossLimitPaise: number;
     tradesToday: number;
-    tradeLimit: number;
   };
   orders: readonly PaperOrder[];
   trades: readonly PaperTrade[];
@@ -42,6 +52,7 @@ export type PaperSnapshot = Readonly<{
 
 export type PaperCommand =
   | { action: "assign"; strategyId: string }
+  | { action: "set-limits"; limits: PaperLimits }
   | { action: "start" | "pause" | "reset" }
   | { action: "halt"; confirmation: "STOP" };
 

@@ -1,6 +1,6 @@
 # Tradeo frontend
 
-Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Backtesting previews a replay queue, holdout results and CSV exports. Upcoming modules have labeled placeholder pages.
+Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Backtesting previews a replay queue, holdout results and CSV exports. Agents previews observer health and advisory review. Upcoming modules have labeled placeholder pages.
 
 ## Local development
 
@@ -30,6 +30,34 @@ In **Strategies**, search by name or instrument, filter by status or risk, and s
 
 In **Backtesting**, select a fixture strategy revision, instrument, date range and out-of-sample period. Set starting capital, per-fill fees and slippage, then queue a demo replay. The shared three-session trend rule uses completed daily candles, the selected revision's position size, and subsequent session opens for fills. Review equity, drawdown, performance metrics and closed trades, or export the trades as CSV. Runs reset on reload and cannot approve strategy revisions. The [proposed backtesting preview contract](../contracts/backtesting.openapi.yaml) documents the demo workspace and run states. Production backtests require a separate engine, durable jobs, approved market history and a reviewed fill model.
 
+In **Agents**, inspect four simulated observers, their latest decisions, reason codes, latency, and failures. Filter the timeline by observer, severity, or review status. Pause or resume an observer, or acknowledge or dismiss an advisory item. Demo actions reset on reload and never authorize orders or change risk rules. The [proposed Agents preview contract](../contracts/agents-preview.openapi.yaml) describes the fixture adapter. A backend advisory service and durable review records are separate work.
+
+## Verification
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
+
+Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies, Backtesting and Agents screenshots in the ignored `screenshots/` directory.
+
+Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
+
+## Source layout
+
+- `src/app/` holds Next.js App Router routes, the preview sign-in action and protected workspace layout.
+- `src/components/ui/` holds locally owned shadcn/ui-style primitives built on Radix where needed. Theme and typography tokens live in `src/app/globals.css`.
+- `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
+- `public/brand/` contains the provided approved Tradeo raster logo. The UI presents the supplied image in a CSS viewport to trim surrounding padding.
+
+The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
+
+The portfolio and Markets charts use [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the attribution.
+
 ## Private staging sign-in
 
 The local default is `TRADEO_AUTH_MODE=preview`. To use the [backend auth contract](../contracts/openapi.yaml) from a private staging deployment, configure these variables in the Next.js server environment:
@@ -44,29 +72,4 @@ Replace the example origins with the private API origin reachable by Next.js and
 
 In staging mode, preview sign-in is disabled. Next.js validates the backend session before serving workspace pages. The browser uses the same-origin auth routes for CSRF, OTP and sign-out. The proxy forwards the backend's Secure, HttpOnly cookies and sends no client-supplied forwarded IP headers, so the backend's per-IP limits treat those requests as coming from the proxy. Workspace data is still labeled as a preview. A backend-approved staging OTP delivery setup is required for successful sign-in.
 
-## Verification
-
-```sh
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npx playwright install chromium
-npm run test:e2e
-npm run test:e2e:staging
-```
-
-Playwright runs the production build at `127.0.0.1:3100`. Run the build before the smoke tests. The staging sign-in suite runs that same build at `127.0.0.1:3101` with a local auth fixture at `127.0.0.1:3102`. It tests the actual Next.js proxy, browser cookies and workspace gate without contacting staging or sending SMS. Set `TRADEO_CAPTURE_SCREENSHOTS=1` for the preview Playwright command to save sign-in, dashboard, Markets, Auto Trading, Brokers, Strategies and Backtesting screenshots in the ignored `screenshots/` directory.
-
-Vitest covers preview validation, API responses, search ranking, candle aggregation and watchlist storage. React Testing Library covers dashboard and Markets interactions. Playwright covers sign-in, sign-out, protected routes, themes, navigation, instrument search, all six chart timeframes, watchlist persistence, demo state recovery and responsive layouts.
-
-## Source layout
-
-- `src/app/` holds Next.js App Router routes, the preview sign-in action and protected workspace layout.
-- `src/components/ui/` holds locally owned shadcn/ui-style primitives built on Radix where needed. Theme and typography tokens live in `src/app/globals.css`.
-- `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
-- `public/brand/` contains the provided approved Tradeo raster logo. The UI presents the supplied image in a CSS viewport to trim surrounding padding.
-
-The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
-
-The portfolio and Markets charts use [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the attribution.
+After building the frontend, run `npm run test:e2e:staging`. The suite runs the production build at `127.0.0.1:3101` with a local auth fixture at `127.0.0.1:3102` and tests the Next.js proxy, browser cookies and workspace gate without contacting staging or sending SMS.

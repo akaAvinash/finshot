@@ -4,6 +4,7 @@ import { createPaperTradingMock } from "./auto-trading-mock";
 import { createBrokerMock } from "./broker-mock";
 import { createStrategyMock } from "./strategy-mock";
 import { createBacktestMock } from "./backtest-mock";
+import { createAgentsMock } from "./agent-mock";
 import type { TradeoClient } from "./types";
 
 export function createTradeoClient(options: {
@@ -17,5 +18,6 @@ export function createTradeoClient(options: {
     ...createBrokerMock(),
     ...createStrategyMock(),
     ...createBacktestMock(),
+    ...createAgentsMock(),
   };
 }

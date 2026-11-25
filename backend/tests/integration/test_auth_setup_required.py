@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from tests.integration.test_auth_stepup import enroll_and_confirm
-from tests.support import OTHER_PHONE, Browser, FakeClock
+from tests.support import OTHER_PHONE, PHONE, Browser, FakeClock, db_rows
 
 CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "openapi.yaml"
 EXEMPT = {
@@ -78,6 +78,22 @@ def test_restricted_operation_without_a_session_is_401(
 ) -> None:
     response = browser.send(method, url, headers={}, json={})
     assert response.status_code == 401, (operation, response.text)
+
+
+def test_a_valid_write_is_rejected_and_changes_nothing(browser: Browser, db_url: str) -> None:
+    browser.login()
+    sql_user = "SELECT display_name, timezone FROM users WHERE phone_e164 = :p"
+    before_user = db_rows(db_url, sql_user, p=PHONE)
+    before_audit = db_rows(db_url, "SELECT count(*) AS n FROM audit_events")
+    response = browser.send(
+        "PUT",
+        "/api/v1/settings/profile",
+        json={"displayName": "Changed Name", "timezone": "UTC"},
+        headers=browser.headers(),  # valid CSRF and Origin
+    )
+    assert response.status_code == 403 and response.json()["code"] == "TOTP_SETUP_REQUIRED"
+    assert db_rows(db_url, sql_user, p=PHONE) == before_user
+    assert db_rows(db_url, "SELECT count(*) AS n FROM audit_events") == before_audit
 
 
 def test_exempt_operations_work_before_setup(browser: Browser, clock: FakeClock) -> None:

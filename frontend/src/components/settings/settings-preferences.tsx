@@ -70,9 +70,10 @@ const notificationOptions = [
   { key: "criticalSms", label: "Critical SMS", description: "Record a sample preference for critical notices only." },
 ] as const;
 
-export function NotificationSettings({ values, disabled, onSave }: {
+export function NotificationSettings({ values, disabled, saveButtonRef, onSave }: {
   values: NotificationPreferences;
   disabled: boolean;
+  saveButtonRef: Ref<HTMLButtonElement>;
   onSave: (command: Extract<SettingsCommand, { kind: "set-notifications" }>) => void;
 }) {
   function save(event: FormEvent<HTMLFormElement>) {
@@ -90,7 +91,7 @@ export function NotificationSettings({ values, disabled, onSave }: {
           <input type="checkbox" name={key} defaultChecked={values[key]} className="size-4 shrink-0 accent-primary" aria-label={label} />
           <span className="min-w-0"><span className="block text-sm font-medium">{label}</span><span className="mt-1 block text-xs text-muted-foreground">{description}</span></span>
         </label>)}
-        <Button type="submit" variant="outline" className="h-11">Save notifications</Button>
+        <Button ref={saveButtonRef} type="submit" variant="outline" className="h-11">Save notifications</Button>
       </fieldset>
     </form>
   </SettingsCard>;

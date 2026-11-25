@@ -28,8 +28,9 @@ export function Settings() {
   const client = useWorkspaceControls();
   const preview = useWorkspacePreview(client.getSettings, client.updateSettings);
   const [confirmation, setConfirmation] = useState<SensitiveSettingsChange | null>(null);
-  const [profileSaveCompletions, setProfileSaveCompletions] = useState(0);
+  const [focusAfterSave, setFocusAfterSave] = useState<{ kind: "set-profile" | "set-notifications" } | null>(null);
   const displayNameInput = useRef<HTMLInputElement>(null);
+  const notificationSaveButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const fallback = useRef<string | null>(null);
   const notify = useNotification();
@@ -45,8 +46,9 @@ export function Settings() {
   }, [hasSnapshot]);
 
   useEffect(() => {
-    if (profileSaveCompletions > 0) displayNameInput.current?.focus();
-  }, [profileSaveCompletions]);
+    if (focusAfterSave?.kind === "set-profile") displayNameInput.current?.focus();
+    if (focusAfterSave?.kind === "set-notifications") notificationSaveButton.current?.focus();
+  }, [focusAfterSave]);
 
   function open(change: SensitiveSettingsChange, opener: HTMLElement) {
     returnFocus.current = opener;
@@ -57,7 +59,9 @@ export function Settings() {
 
   async function save(command: SettingsCommand) {
     const saved = await preview.run(command);
-    if (command.kind === "set-profile") setProfileSaveCompletions((count) => count + 1);
+    if (command.kind === "set-profile" || command.kind === "set-notifications") {
+      setFocusAfterSave({ kind: command.kind });
+    }
     if (saved) {
       setConfirmation(null);
       notify(settingsActions[command.kind]);
@@ -97,7 +101,12 @@ export function Settings() {
       <div className="grid items-start gap-4 min-[760px]:grid-cols-2">
         <div className="min-w-0 space-y-4">
           <ProfilePreferences key={`${snapshot.displayName}:${snapshot.timezone}`} snapshot={snapshot} disabled={disabled} displayNameRef={displayNameInput} onSave={(command) => void save(command)} />
-          <NotificationSettings values={snapshot.notifications} disabled={disabled} onSave={(command) => void save(command)} />
+          <NotificationSettings
+            values={snapshot.notifications}
+            disabled={disabled}
+            saveButtonRef={notificationSaveButton}
+            onSave={(command) => void save(command)}
+          />
           <BrokerSettingsLink />
         </div>
         <div className="min-w-0 space-y-4">

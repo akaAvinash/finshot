@@ -32,8 +32,10 @@ test("protects both routes and shares demo preferences and acknowledgements acro
   await page.evaluate(() => window.scrollTo(0, 0));
   await capture(page, "settings-desktop");
   await page.getByRole("checkbox", { name: "Email digest" }).check();
-  await page.getByRole("button", { name: "Save notifications" }).click();
+  const saveNotifications = page.getByRole("button", { name: "Save notifications" });
+  await saveNotifications.press("Enter");
   await expect(page.getByRole("list", { name: "Demo settings audit trail" })).toContainText("Notification preferences updated");
+  await expect(saveNotifications).toBeFocused();
   await page.getByRole("combobox", { name: "Timezone" }).selectOption("UTC");
   const displayName = page.getByRole("textbox", { name: "Demo display name" });
   await displayName.press("Enter");

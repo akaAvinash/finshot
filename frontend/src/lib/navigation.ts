@@ -6,12 +6,11 @@ export const autoTradingRoute = { slug: "auto-trading", title: "Auto Trading", i
 export const brokersRoute = { slug: "brokers", title: "Brokers", icon: Plug };
 export const strategiesRoute = { slug: "strategies", title: "Strategies", icon: Layers };
 export const backtestingRoute = { slug: "backtesting", title: "Backtesting", icon: FlaskConical };
+export const agentsRoute = { slug: "agents", title: "Agents", icon: Network };
 export const alertsRoute = { slug: "alerts", title: "Alerts", icon: Bell };
 export const settingsRoute = { slug: "settings", title: "Settings", icon: Settings };
 
-export const sections = [
-  { slug: "reports", title: "Reports", icon: ClipboardList, description: "Profit and loss, trade history and performance reports.", empty: "There are no reports to export in this preview." },
-  { slug: "agents", title: "Agents", icon: Network, description: "Activity and status for trading agents.", empty: "There are no running agents in this preview." },
-] as const;
+const reportsSection = { slug: "reports", title: "Reports", icon: ClipboardList, description: "Profit and loss, trade history and performance reports.", empty: "There are no reports to export in this preview." } as const;
 
-export const workspaceRoutes = [dashboardRoute, marketRoute, autoTradingRoute, brokersRoute, strategiesRoute, backtestingRoute, ...sections, alertsRoute, settingsRoute];
+export const sections = [reportsSection];
+export const workspaceRoutes = [dashboardRoute, marketRoute, autoTradingRoute, brokersRoute, strategiesRoute, backtestingRoute, reportsSection, agentsRoute, alertsRoute, settingsRoute];

@@ -9,6 +9,7 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.agents.models
 import app.auth.models
 import app.backtests.models
 import app.brokers.models

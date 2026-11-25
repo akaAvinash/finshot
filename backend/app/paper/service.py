@@ -24,7 +24,14 @@ from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.market.demo import DemoMarketDataProvider
 from app.paper import engine as rules
-from app.paper.models import PaperAccount, PaperEvent, PaperOrder, PaperReplay, PaperTrade
+from app.paper.models import (
+    PaperAccount,
+    PaperEvent,
+    PaperOrder,
+    PaperReplay,
+    PaperReplayFinish,
+    PaperTrade,
+)
 from app.paper.schemas import (
     RECENT_EVENTS,
     RECENT_ORDERS,
@@ -444,6 +451,7 @@ class PaperService:
         if account.sessions_done >= len(sessions):
             account.finished = True
             account.engine = "idle"
+            await _record_finish(db, account, now)
             return
         queued_row = await db.scalar(
             select(PaperOrder)
@@ -527,6 +535,7 @@ class PaperService:
             account.finished = True
             account.engine = "idle"
             await _cancel_queued(db, account, now)
+            await _record_finish(db, account, now)
 
     async def run_worker(self, poll_seconds: float) -> None:
         """Tick running accounts until cancelled. `start` wakes the worker at
@@ -580,6 +589,16 @@ async def _cancel_queued(db: AsyncSession, account: PaperAccount, now: datetime)
         .returning(PaperOrder.id)
     )
     return len(result.all())
+
+
+async def _record_finish(db: AsyncSession, account: PaperAccount, now: datetime) -> None:
+    await db.execute(
+        insert(PaperReplayFinish)
+        .values(user_id=account.user_id, replay=account.replay, finished_at=now)
+        .on_conflict_do_nothing(
+            index_elements=[PaperReplayFinish.user_id, PaperReplayFinish.replay]
+        )
+    )
 
 
 def _clear_position(account: PaperAccount) -> None:

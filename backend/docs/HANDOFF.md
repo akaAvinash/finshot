@@ -1,6 +1,6 @@
 # Backend handoff
 
-Updated 2026-11-24 (UTC), with phase D (reports). The repository on `main` is the source of truth;
+Updated 2026-11-24 (UTC), with phase E1 (advisory agents). The repository on `main` is the source of truth;
 the development kit is the roadmap.
 
 ## Ownership
@@ -21,12 +21,19 @@ the development kit is the roadmap.
 | C1: strategy drafts and immutable versions | #15 contract, #16 |
 | C2: demo backtest jobs | #18 contract, #19 |
 | C3: paper trading and automatic checks | #20 contract, #21 |
+| D: paper reports and reconciliation | #22 contract, #24 |
+| E1: advisory agents | #25 contract, #27 |
 
 ## Open
 
-| Phase | PRs |
-|---|---|
-| D: paper reports and reconciliation | #22 contract, implementation PR on `feat/reports` (merge after #22) |
+None. (#27 is listed as done because it merges with this file.)
+
+## Review notes
+
+CodeRabbit leaves a "changes requested" review that stays in force until it
+approves a later commit. Once every thread is resolved, a new commit or
+`@coderabbitai full review` makes it review again and approve. A change of
+base (another PR merging first) dismisses its approval, so ask again then.
 
 ## Merge policy
 
@@ -45,10 +52,47 @@ and live trading.
 
 ## Next backend task
 
-Agents (kit order after reconciliation and reports: agents, alerts,
-hardening). Needs its own contract PR first. Agents may summarise and
-recommend only; no order tools, no secret access (kit
-`backend/03_TRADING_RISK_AGENTS.md`).
+Alerts (kit order: agents, alerts, hardening). Needs its own contract PR
+first, opened against main; open the implementation PR against main only
+after the contract merges (CodeRabbit skips PRs based on other branches).
+
+## Advisory agents (E1) notes
+
+- Four deterministic, rule-based agents in `app/agents/rules.py` (pure
+  functions, unit tested): market scanner, strategy analyst, risk explainer,
+  execution monitor. No language model, network call, broker or credential.
+- Advisory only: the worker reads paper tables and writes only
+  `agent_events`, `agent_runs` and `agent_worker` (migration `0008`). It
+  never locks or writes paper rows, and nothing in `app/paper` reads agent
+  tables. The halt and risk engine do not depend on agents.
+- The in-process worker (`AGENT_WORKER_ENABLED`, poll
+  `AGENT_WORKER_POLL_SECONDS`) claims one user whose `paper_accounts.updated_at`
+  differs from `agent_runs.data_as_of`, with FOR UPDATE SKIP LOCKED on the
+  `agent_runs` row. Events insert with ON CONFLICT DO NOTHING on
+  (user, agent, dedupe key), so re-evaluation never duplicates. When nothing
+  is pending it records the pass end in `agent_worker` (one row), which
+  health uses to report a stopped worker as `stale`.
+- `paper_replay_finishes` (also migration `0008`, append-only) is written by
+  the paper engine in the tick that finishes a replay, so the strategy
+  analyst summarises every finished replay even if the user reassigns before
+  the agents run. Backfill covers only each account's current finished
+  replay. The market scanner also uses it: finished replays it has not
+  fully scanned are scanned before the current one. A replay abandoned
+  part-way (reassigned while unfinished) records no progress, so sessions it
+  replayed after the last agent pass are not scanned (known gap).
+- An empty claim (SKIP LOCKED) does not end a pass: the worker records the
+  pass end only when a non-locking check finds no pending user.
+- `agent_events` is append-only (the `paper_ledger_append_only()` trigger).
+  Event links are re-verified against the reader's own paper rows on every
+  read; links to records that no longer exist or belong to someone else are
+  returned as null.
+- The scanner threshold is relative (twice the average of the previous five
+  close-to-close moves) because the demo candles rarely move over 1% a day.
+  With the demo data the stop-loss and session-limit rules rarely fire; the
+  integration tests exercise them with inserted ledger rows.
+- `AGENTS_ENABLED=false` returns 503 on every agent endpoint and does not
+  start the worker. `AGENT_STALE_AFTER_SECONDS` (default 30) sets health's
+  deadline.
 
 ## Reports (D) notes
 

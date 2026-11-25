@@ -86,10 +86,13 @@ flowchart LR
   OR -.->|Portfolio.Mismatch| PP
 ```
 
-Dotted lines are event consumption, solid lines are interface calls. The diagram
-shows every consumer listed in the section 4 event table, except consumption by
-Alerts (a platform module, not an engine). Both kinds of line count as
-dependencies (rule 3). Nothing points back at an engine that reaches it, so the
+Dotted lines are event consumption, solid lines are interface calls. A solid line
+between two engines also covers any events the section 4 table lists between that
+same pair (Orchestration to Paper Trading carries `Paper.EngineHalted` and
+`Paper.ReplayFinished`; Paper Trading to Strategy Research carries
+`Strategy.VersionCreated` and `Strategy.VersionValidated`). Those events add no new edge. Every other consumer
+in the table appears as a dotted line, except Alerts (a platform module, not an
+engine). Both kinds of line count as dependencies (rule 3). Nothing points back at an engine that reaches it, so the
 graph is acyclic. Two choices keep it that way:
 
 - **Backtesting does not call Strategy Research.** The caller (Orchestration, or
@@ -146,7 +149,8 @@ Event list (names are the proposal; the "today" column is Fact):
 | Backtesting | `Backtest.Completed` | Strategy Research | `backtest_runs` status |
 | Risk Management | `Risk.Approved`, `Risk.Denied`, `Risk.LimitReached`, `Risk.KillSwitchSet` | Execution, Paper, Alerts | alert kind `PAPER_RISK_LIMIT_REACHED` |
 | Trade Execution | `Execution.OrderQueued`, `Execution.OrderFilled`, `Execution.OrderCancelled` | Paper, Portfolio, Alerts | alert kind `PAPER_ORDER_CANCELLED` |
-| Paper Trading | `Paper.FillRecorded`, `Paper.EngineHalted`, `Paper.ReplayFinished` | Portfolio, Alerts, Orchestration | `paper_events`; alert kinds `PAPER_ENGINE_HALTED`, `PAPER_STOP_LOSS_EXIT`, `PAPER_STRATEGY_INACTIVE`, `PAPER_REPLAY_FINISHED` |
+| Paper Trading | `Paper.FillRecorded` | Portfolio, Alerts, Orchestration | `paper_events`; alert kind `PAPER_STOP_LOSS_EXIT` |
+| Paper Trading | `Paper.EngineHalted`, `Paper.ReplayFinished` | Alerts, Orchestration | `paper_events`; alert kinds `PAPER_ENGINE_HALTED`, `PAPER_STRATEGY_INACTIVE`, `PAPER_REPLAY_FINISHED` |
 | Portfolio | `Portfolio.Reconciled`, `Portfolio.Mismatch` | Alerts, Orchestration | alert kind `RECONCILIATION_MISMATCH` |
 | Orchestration | `Job.Started`, `Job.Failed`, `Job.Retried` | Alerts | none |
 

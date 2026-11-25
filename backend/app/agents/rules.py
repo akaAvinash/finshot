@@ -107,6 +107,13 @@ class ReplaySummary:
 
 
 @dataclass(frozen=True)
+class ReplayScan:
+    replay: int
+    symbol: str | None
+    closes: Sequence[Close]  # every session of a finished replay was replayed
+
+
+@dataclass(frozen=True)
 class Observation:
     replay: int
     engine: str
@@ -118,6 +125,9 @@ class Observation:
     cancelled: Sequence[CancelledOrder]
     reconciled: bool | None  # None before the first assignment
     summaries: Sequence[ReplaySummary]  # finished replays not yet summarised
+    # Finished earlier replays the scanner has not finished, oldest first.
+    # A reassignment can replace the account's replay before a pass sees it.
+    backlog: Sequence[ReplayScan] = ()
 
 
 @dataclass(frozen=True)
@@ -192,19 +202,29 @@ def _move(closes: Sequence[Close], index: int) -> Fraction:
 
 def _scan(obs: Observation, out: Result) -> None:
     mem = out.memory
-    start = mem.scan_done if mem.scan_replay == obs.replay else 0
-    done = min(obs.sessions_done, len(obs.closes))
-    if any(c.close_paise <= 0 for c in obs.closes[:done]):
+    for earlier in obs.backlog:
+        if mem.scan_replay <= earlier.replay < obs.replay:
+            _scan_replay(earlier.replay, earlier.symbol, earlier.closes, len(earlier.closes), out)
+    _scan_replay(obs.replay, obs.symbol, obs.closes, obs.sessions_done, out)
+
+
+def _scan_replay(
+    replay: int, symbol: str | None, closes: Sequence[Close], sessions_done: int, out: Result
+) -> None:
+    mem = out.memory
+    start = mem.scan_done if mem.scan_replay == replay else 0
+    done = min(sessions_done, len(closes))
+    if any(c.close_paise <= 0 for c in closes[:done]):
         done = 0  # pragma: no cover - demo closes are positive
     for index in range(max(start, MOVE_WINDOW + 1), done):
-        move = _move(obs.closes, index)
+        move = _move(closes, index)
         average = (
-            sum((_move(obs.closes, i) for i in range(index - MOVE_WINDOW, index)), Fraction(0))
+            sum((_move(closes, i) for i in range(index - MOVE_WINDOW, index)), Fraction(0))
             / MOVE_WINDOW
         )
         if move == 0 or move < MOVE_MULTIPLE * average:
             continue
-        previous, current = obs.closes[index - 1], obs.closes[index]
+        previous, current = closes[index - 1], closes[index]
         direction = "higher" if current.close_paise > previous.close_paise else "lower"
         ratio = (
             ""
@@ -215,21 +235,21 @@ def _scan(obs: Observation, out: Result) -> None:
         out.events.append(
             NewEvent(
                 agent_id="market-scanner",
-                dedupe_key=f"move:{obs.replay}:{index}",
+                dedupe_key=f"move:{replay}:{index}",
                 reason_code="LARGE_MOVE",
                 severity="info",
                 message=(
-                    f"{obs.symbol} closed {float(move) * 100:.2f}% {direction} than the previous"
+                    f"{symbol} closed {float(move) * 100:.2f}% {direction} than the previous"
                     f" demo session ({paper.rupees(previous.close_paise)} to"
                     f" {paper.rupees(current.close_paise)}){ratio}."
                 ),
                 recommendation=None,
                 link_kind="paper-replay",
-                link_id=str(obs.replay),
+                link_id=str(replay),
                 data_as_of=current.at,
             )
         )
-    mem.scan_replay = obs.replay
+    mem.scan_replay = replay
     mem.scan_done = max(start, done)
 
 

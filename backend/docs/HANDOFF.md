@@ -76,7 +76,10 @@ after the contract merges (CodeRabbit skips PRs based on other branches).
   the paper engine in the tick that finishes a replay, so the strategy
   analyst summarises every finished replay even if the user reassigns before
   the agents run. Backfill covers only each account's current finished
-  replay.
+  replay. The market scanner also uses it: finished replays it has not
+  fully scanned are scanned before the current one. A replay abandoned
+  part-way (reassigned while unfinished) records no progress, so sessions it
+  replayed after the last agent pass are not scanned (known gap).
 - An empty claim (SKIP LOCKED) does not end a pass: the worker records the
   pass end only when a non-locking check finds no pending user.
 - `agent_events` is append-only (the `paper_ledger_append_only()` trigger).

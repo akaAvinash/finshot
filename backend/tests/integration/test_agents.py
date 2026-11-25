@@ -18,8 +18,9 @@ import pytest
 from alembic import command
 from fastapi.testclient import TestClient
 
+from app.agents import rules
 from app.agents import service as agent_service
-from app.agents.rules import MOVE_MULTIPLE, MOVE_WINDOW
+from app.agents.rules import MOVE_MULTIPLE, MOVE_WINDOW, Close
 from app.agents.service import AgentService, encode_cursor
 from app.paper import engine
 from tests.integration.test_paper import (
@@ -783,8 +784,35 @@ def test_a_replay_reassigned_before_evaluation_is_still_summarised(
     assert [e["link"] for e in summaries] == [{"kind": "paper-replay", "id": "1"}]
     trades = db_rows(_db(), "SELECT 1 FROM paper_trades WHERE replay = 1")
     assert f"{len(trades)} fill(s)" in summaries[0]["message"]
-    # Evaluating again does not repeat it.
+    # Replay 1's sessions are still scanned, as if each had been evaluated.
+    assert client.portal is not None
+    history = client.portal.call(agents(client)._market.get_candles, "NSE:SBIN", "1D")
+    assert history is not None
+    closes = [Close(c.time, engine.paise(c.close)) for c in history.candles]
+    expected = rules.evaluate(
+        rules.Observation(
+            replay=1,
+            engine="idle",
+            changed_at=closes[-1].at,
+            symbol="SBIN",
+            sessions_done=len(closes),
+            closes=closes,
+            trades=[],
+            cancelled=[],
+            reconciled=None,
+            summaries=[],
+        ),
+        rules.Memory(),
+    )
+    want = sorted(e.dedupe_key for e in expected.events if e.reason_code == "LARGE_MOVE")
+    assert want, "the demo series has large moves"
+    moves = db_rows(_db(), "SELECT dedupe_key FROM agent_events WHERE reason_code = 'LARGE_MOVE'")
+    assert sorted(r["dedupe_key"] for r in moves) == want
+    # Evaluating again repeats neither.
     db_rows(_db(), "UPDATE agent_runs SET data_as_of = NULL")
     evaluate(client)
     again = [e for e in all_events(browser, contract) if e["reasonCode"] == "REPLAY_SUMMARY"]
     assert len(again) == 1
+    assert len(
+        db_rows(_db(), "SELECT 1 FROM agent_events WHERE reason_code = 'LARGE_MOVE'")
+    ) == len(want)

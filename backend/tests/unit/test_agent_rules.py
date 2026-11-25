@@ -103,6 +103,25 @@ def test_scanner_threshold_is_inclusive(last: int, flagged: bool) -> None:
     assert codes(result) == (["LARGE_MOVE"] if flagged else [])
 
 
+def test_scanner_finishes_an_earlier_replay_replaced_before_it_was_scanned() -> None:
+    from app.agents.rules import ReplayScan
+
+    big = closes([*CALM, 100_400])
+    # Replay 1 was half scanned; it finished and replay 2 replaced it at once.
+    memory = Memory(scan_replay=1, scan_done=3)
+    result = rules.evaluate(
+        obs(replay=2, sessions_done=0, backlog=[ReplayScan(1, "SBIN", big)]), memory
+    )
+    assert codes(result) == ["LARGE_MOVE"]
+    assert result.events[0].link_id == "1"
+    assert result.events[0].dedupe_key == "move:1:6"
+    assert (result.memory.scan_replay, result.memory.scan_done) == (2, 0)
+    # A replay already fully scanned is not scanned again.
+    done = Memory(scan_replay=2, scan_done=0)
+    again = rules.evaluate(obs(replay=2, backlog=[ReplayScan(1, "SBIN", big)]), done)
+    assert codes(again) == []
+
+
 def test_scanner_ignores_ordinary_moves_and_unreplayed_sessions() -> None:
     calm = rules.evaluate(obs(closes=closes([*CALM, 100_150]), sessions_done=7), Memory())
     assert codes(calm) == []

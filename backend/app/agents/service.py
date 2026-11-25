@@ -52,6 +52,7 @@ from app.paper.models import (
     PaperReplayFinish,
     PaperTrade,
 )
+from app.strategies.models import StrategyVersion
 
 logger = structlog.get_logger(__name__)
 
@@ -419,6 +420,43 @@ class AgentService:
             candles = await self._market.get_candles(account.instrument_id, "1D")
             if candles is not None:
                 closes = [rules.Close(c.time, paper.paise(c.close)) for c in candles.candles]
+        backlog: list[rules.ReplayScan] = []
+        unscanned = (
+            await db.execute(
+                select(PaperReplay.replay, PaperReplay.instrument_id, StrategyVersion.parameters)
+                .join(
+                    PaperReplayFinish,
+                    and_(
+                        PaperReplayFinish.user_id == PaperReplay.user_id,
+                        PaperReplayFinish.replay == PaperReplay.replay,
+                    ),
+                )
+                .outerjoin(
+                    StrategyVersion,
+                    and_(
+                        StrategyVersion.strategy_id == PaperReplay.strategy_id,
+                        StrategyVersion.number == PaperReplay.version_number,
+                    ),
+                )
+                .where(
+                    PaperReplay.user_id == user_id,
+                    PaperReplay.replay >= memory.scan_replay,
+                    PaperReplay.replay < account.replay,
+                )
+                .order_by(PaperReplay.replay)
+            )
+        ).all()
+        for replay_no, instrument_id, parameters in unscanned:
+            history = await self._market.get_candles(instrument_id, "1D")
+            backlog.append(
+                rules.ReplayScan(
+                    replay=int(replay_no),
+                    symbol=str((parameters or {}).get("instrument") or instrument_id),
+                    closes=[]
+                    if history is None
+                    else [rules.Close(c.time, paper.paise(c.close)) for c in history.candles],
+                )
+            )
         symbol = None
         if account.version_parameters is not None:
             symbol = str(account.version_parameters.get("instrument") or account.instrument_id)
@@ -457,6 +495,7 @@ class AgentService:
             ],
             reconciled=reconciled if account.replay >= 1 else None,
             summaries=summaries,
+            backlog=backlog,
         )
 
     async def run_worker(self, poll_seconds: float) -> None:

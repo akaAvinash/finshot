@@ -371,7 +371,10 @@ paths:
         or a staging provider (server-side file, read by the operator over
         SSH) can stand in for real delivery; production never falls back to
         either. A code lives at most 5 minutes, and a number can ask for a new
-        one after `resendAvailableAt` (60 seconds).
+        one after `resendAvailableAt` (60 seconds). If delivery is unavailable
+        (no provider configured, or a daily delivery limit reached), every
+        well-formed number gets the same `503`, decided before the invite is
+        looked at, so the failure cannot reveal who is invited.
       security:
         - csrfHeader: []
       requestBody:
@@ -3576,7 +3579,9 @@ components:
       description: >
         Delivery is unavailable: the provider is down or misconfigured, or the
         daily delivery limit is reached. No code was sent and the client may
-        retry.
+        retry. Availability is decided before invitation, so a missing
+        provider or a reached limit answers every well-formed number with
+        this same response; it never depends on whether the number is invited.
       content:
         application/json:
           schema:

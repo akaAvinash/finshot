@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Request, Response, status
 
 from app.auth.cookies import CSRF_COOKIE, SESSION_COOKIE, clear_cookie, set_cookie
 from app.auth.otp import mask_phone
@@ -62,13 +63,19 @@ OptionalSession = Annotated[SessionInfo | None, Depends(optional_session)]
 RequiredSession = Annotated[SessionInfo, Depends(required_session)]
 
 
-async def stepped_up_session(session: RequiredSession, auth: Auth) -> SessionInfo:
-    """For sensitive operations: a session whose step-up window is open.
+def ensure_stepped_up(auth: AuthService, session: SessionInfo) -> None:
+    """Raise 403 STEP_UP_REQUIRED unless the session's step-up window is open.
 
-    Order matches the other writes: 401 first, then CSRF (the operation checks
-    it), then this. Raises 403 STEP_UP_REQUIRED before anything is changed."""
+    Call it after the CSRF check and before changing anything, so the order is
+    401, CSRF, step-up."""
     if session.step_up_until is None or session.step_up_until <= auth.clock():
         raise step_up_required()
+
+
+async def stepped_up_session(session: RequiredSession, auth: Auth) -> SessionInfo:
+    """Dependency form of `ensure_stepped_up`, for operations that check CSRF
+    in a dependency of their own."""
+    ensure_stepped_up(auth, session)
     return session
 
 
@@ -183,6 +190,23 @@ async def list_sessions(auth: Auth, session: RequiredSession) -> SessionListOut:
             for row, current in rows
         ]
     )
+
+
+@router.delete("/sessions/{sessionId}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    session_id: Annotated[str, Path(alias="sessionId")],
+    request: Request,
+    auth: Auth,
+    session: RequiredSession,
+) -> Response:
+    auth.enforce_csrf(request, session)
+    ensure_stepped_up(auth, session)
+    try:
+        target = uuid.UUID(session_id)
+    except ValueError:
+        raise ApiError(404, "SESSION_NOT_FOUND", "This session was not found.") from None
+    await auth.revoke_other_session(session, target)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/totp/enroll", response_model=TotpEnrollmentOut)

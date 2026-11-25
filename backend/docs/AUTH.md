@@ -135,15 +135,22 @@ operator's to read; it never appears in logs or API responses.
   bound to the user id. Each time step is accepted once (replay protection);
   ±1 step of drift is allowed. Wrong codes return 422 `INVALID_TOTP`,
   throttled per user and per IP (429).
-- Operations that need a recent step-up should use the `SteppedUpSession`
-  dependency (403 `STEP_UP_REQUIRED` when closed). Settings (next PR) will be
-  the first user.
+- Operations that need a recent step-up call `ensure_stepped_up` after the
+  CSRF check (order: 401, CSRF, step-up; 403 `STEP_UP_REQUIRED` when closed).
+  `DELETE /auth/sessions/{sessionId}` (ending another session) is the first.
+  It answers 409 `CURRENT_SESSION` for the caller's own session and 404
+  `SESSION_NOT_FOUND` for an unknown, foreign or already-ended one, so another
+  user's session ids cannot be probed.
+- Profile (`GET`/`PUT /settings/profile`): display name and timezone; no
+  step-up. The display name is trimmed (1 to 48 characters, no control
+  characters). Phone number changes are not supported.
 
 ## Audit
 
 Events record the action and user id only: `otp_requested`, `otp_verify_failed`,
 `login_succeeded`, `logout` plus `totp.enrollment_started`, `totp.enabled`, `totp.step_up`,
-`totp.step_up_failed`, `totp.disabled`, `invite.revoked`, `auth.totp_reset`.
+`totp.step_up_failed`, `totp.disabled`, `invite.revoked`, `auth.totp_reset`,
+`settings.profile_updated`, `session.revoked` (no values, no device details).
 OTP requests record channel and whether a delivery happened. No codes, secrets,
 phone numbers, emails or raw IPs.
 

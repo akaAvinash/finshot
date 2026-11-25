@@ -45,7 +45,7 @@ def test_every_contract_auth_operation_is_implemented(
 ) -> None:
     served = browser.get("/openapi.json").json()["paths"]
     for path, operations in contract["paths"].items():
-        if not path.startswith("/api/v1/auth/"):
+        if not path.startswith(("/api/v1/auth/", "/api/v1/settings/")):
             continue
         assert path in served, f"{path} missing from the API"
         for method in operations:
@@ -114,3 +114,50 @@ def test_status_codes_used_are_documented_in_the_contract(
     assert str(browser.get("/api/v1/auth/me").status_code) in documented[("/api/v1/auth/me", "get")]
     assert "204" in documented[("/api/v1/auth/logout", "post")]
     assert "204" in documented[("/api/v1/auth/logout-all", "post")]
+
+
+def test_settings_bodies_match_contract_schemas(contract: dict[str, Any], browser: Browser) -> None:
+    browser.login()
+    profile = browser.get("/api/v1/settings/profile")
+    check(contract, "SettingsProfile", profile.json())
+    saved = browser.send(
+        "PUT",
+        "/api/v1/settings/profile",
+        json={"displayName": "Asha", "timezone": "UTC"},
+        headers=browser.headers(),
+    )
+    check(contract, "SettingsProfile", saved.json())
+    bad = browser.send(
+        "PUT",
+        "/api/v1/settings/profile",
+        json={"displayName": " ", "timezone": "UTC"},
+        headers=browser.headers(),
+    )
+    check(contract, "AuthError", bad.json())
+    gone = browser.send(
+        "DELETE",
+        "/api/v1/auth/sessions/00000000-0000-4000-8000-000000000000",
+        headers=browser.headers(),
+    )
+    check(contract, "AuthError", gone.json())  # STEP_UP_REQUIRED before 404
+
+
+def test_display_name_contract_pattern_agrees_with_the_server(
+    contract: dict[str, Any], browser: Browser
+) -> None:
+    """Names the schema accepts are saved; names it rejects get 400."""
+    browser.login()
+    for name in ("A", "  Avi nash  ", "a" * 48 + " ", "a" * 49, " ", "", "A\x00B", "A\tB"):
+        body = {"displayName": name, "timezone": "UTC"}
+        errors = list(
+            Draft202012Validator(
+                {
+                    "$ref": "#/components/schemas/SettingsProfileUpdate",
+                    "components": contract["components"],
+                }
+            ).iter_errors(body)
+        )
+        status = browser.send(
+            "PUT", "/api/v1/settings/profile", json=body, headers=browser.headers()
+        ).status_code
+        assert (not errors) == (status == 200), (name, errors, status)

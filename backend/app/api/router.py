@@ -12,11 +12,13 @@ from app.api.routes import (
     market,
     paper,
     reports,
+    settings,
     strategies,
 )
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(settings.router)
 api_router.include_router(market.router)
 api_router.include_router(brokers.router)
 api_router.include_router(strategies.router)

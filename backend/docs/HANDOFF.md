@@ -23,11 +23,13 @@ the development kit is the roadmap.
 | C3: paper trading and automatic checks | #20 contract, #21 |
 | D: paper reports and reconciliation | #22 contract, #24 |
 | E1: advisory agents | #25 contract, #27 |
-| E2: alerts | #30 contract, this PR (migration `0009`) |
+| E2: alerts | #30 contract, #31 (migration `0009`) |
+| Auth: invite-only sign-in, OTP providers, spend caps, TOTP step-up | #33 contract, #34 (migration `0010`) |
+| Settings: profile (display name, timezone) and ending another session | #35 contract, this PR (migration `0011`) |
 
 ## Open
 
-None. (E2 is listed as done because it merges with this file.)
+None. (Settings is listed as done because it merges with this file.)
 
 ## Review notes
 
@@ -53,14 +55,13 @@ and live trading.
 
 ## Next backend task
 
-1. Auth/OTP PR (this phase, see `docs/AUTH.md`): invite-only access, SMTP
-   and staging-file providers, spend caps, TOTP step-up, operator CLI
-   (`python -m app.auth.admin`). Blocked on MSG91: official API pages, DLT
-   sender and template, account, and approval to spend. Not built until then.
-   Migration `0010` (invites backfilled from users, `totp_credentials`,
-   `sessions.step_up_until`); downgrade drops all three.
-2. Settings contract PR (profile, timezone; notification preferences are
-   already `/api/v1/alerts/preferences`).
+1. MSG91 provider, blocked on: official Send OTP and Verify OTP API pages, a
+   DLT-registered sender ID and template, an MSG91 account, and approval to
+   spend. Not built until then (see `docs/AUTH.md`). SMTP credentials are
+   also needed before email delivery can be used outside tests.
+2. Further Settings contracts (each its own PR, using step-up): phone change,
+   data retention, risk limits. They stay preview-only in the frontend until
+   then, and the demo confirmation code is never accepted by the API.
 3. Staging upgrade, waiting on owner approval and Codex #29: pg_dump, deploy
    main, migrate `0002` to head, real `PUBLIC_ORIGIN`,
    `TRUSTED_PROXY_HOPS=1`, workers on. Rollback: restore the dump and redeploy

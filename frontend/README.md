@@ -56,6 +56,27 @@ Vitest covers preview validation, API responses, search ranking, candle aggregat
 - `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
 - `public/brand/` contains the provided approved Tradeo raster logo. The UI presents the supplied image in a CSS viewport to trim surrounding padding.
 
-The preview contains only fixture records. Real authentication, broker connections, order execution, live market feeds and AI trading are outside the preview scope.
+The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
 
 The portfolio and Markets charts use [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the attribution.
+
+## Private staging sign-in
+
+The local default is `TRADEO_AUTH_MODE=preview`. To use the [backend auth contract](../contracts/openapi.yaml) from a private staging deployment, configure these variables in the Next.js server environment:
+
+```dotenv
+TRADEO_AUTH_MODE=staging
+TRADEO_API_ORIGIN=https://tradeo-api.example.internal
+TRADEO_PUBLIC_ORIGIN=https://tradeo-staging.example.internal
+```
+
+Use a private HTTPS API origin with a certificate trusted by Next.js. Use the staging visitor URL for `TRADEO_PUBLIC_ORIGIN` and configure the backend `PUBLIC_ORIGIN` to match it exactly. Add the API origin's host to the backend host allowlist. Plain HTTP is accepted only on loopback for local development and testing.
+
+Place Next.js behind a trusted ingress and restrict direct network access to Next.js and FastAPI. Provision the same server-only `TRADEO_AUTH_INGRESS_TOKEN` for the ingress and Next.js from a secret store. Use at least 32 random bytes encoded as base64url. Apply both headers to `/api/v1/auth/*` at the ingress:
+
+- `X-Tradeo-Client-IP` carries one IP address derived from the connection peer or a trusted load balancer. Overwrite any inbound value.
+- `X-Tradeo-Ingress-Token` carries the configured token. Overwrite any inbound value and keep it out of responses and logs.
+
+Next.js verifies those headers and sends the verified address as a single `X-Forwarded-For` value without the ingress token. Set `TRUSTED_PROXY_HOPS=1` in the backend and preserve that single value through any private API TLS terminator. This keeps the backend's per-client rate limits separate. The browser uses the same-origin auth routes and receives the backend's Secure, HttpOnly cookies. Next.js validates the backend session before serving workspace pages. Staging sign-in requires an approved OTP delivery setup. Workspace data remains a labeled preview.
+
+After building the frontend, run `npm run test:e2e:staging`. The local ingress fixture listens on `127.0.0.1:3101`, the auth API fixture on `127.0.0.1:3102`, and the production frontend build on `127.0.0.1:3103`. The suite exercises auth, browser cookies, and rate-limit isolation without contacting staging or sending SMS.

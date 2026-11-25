@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { Strategies } from "@/components/strategies/strategies";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 export const metadata: Metadata = { title: "Strategies" };
 
 export default async function StrategiesPage() {
-  await requirePreviewSession();
+  await requireWorkspaceSession();
   return <Strategies />;
 }

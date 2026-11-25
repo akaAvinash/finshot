@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { Backtesting } from "@/components/backtesting/backtesting";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 export const metadata: Metadata = { title: "Backtesting" };
 
 export default async function BacktestingPage() {
-  await requirePreviewSession();
+  await requireWorkspaceSession();
   return <Backtesting />;
 }

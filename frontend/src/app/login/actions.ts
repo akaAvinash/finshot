@@ -1,14 +1,13 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { endPreviewSession, startPreviewSession } from "@/lib/preview-auth/session";
+import { readAuthConfig } from "@/lib/auth/config";
+import type { LoginState } from "@/lib/auth/browser-client";
+import { endPreviewSession, startPreviewSession } from "@/lib/auth/preview-session";
 import { normalizeIndianMobile } from "@/lib/preview-auth/validation";
 
-export type LoginState =
-  | { step: "phone"; error?: string }
-  | { step: "code"; phone: string; error?: string };
-
 export async function previewLogin(state: LoginState, formData: FormData): Promise<LoginState> {
+  if (readAuthConfig().mode !== "preview") return { step: "phone", error: "Preview sign-in is disabled." };
   if (formData.get("intent") === "change-phone") return { step: "phone" };
 
   if (state.step === "phone") {
@@ -27,7 +26,7 @@ export async function previewLogin(state: LoginState, formData: FormData): Promi
   redirect("/dashboard");
 }
 
-export async function signOut() {
-  await endPreviewSession();
+export async function signOut(): Promise<never> {
+  if (readAuthConfig().mode === "preview") await endPreviewSession();
   redirect("/login");
 }

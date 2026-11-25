@@ -4,7 +4,7 @@ import { DataState } from "@/components/data-state";
 import { PageHeading } from "@/components/page-heading";
 import { Status } from "@/components/ui/status";
 import { sections } from "@/lib/navigation";
-import { requirePreviewSession } from "@/lib/preview-auth/session";
+import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 
 type SectionProps = { params: Promise<{ section: string }> };
 
@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: SectionProps): Promise<Metada
 }
 
 export default async function SectionPage({ params }: SectionProps) {
-  await requirePreviewSession();
+  await requireWorkspaceSession();
   const section = getSection((await params).section);
   if (!section) notFound();
 

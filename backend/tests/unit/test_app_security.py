@@ -143,6 +143,7 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auth/csrf",
         "/api/v1/auth/otp/request",
         "/api/v1/auth/otp/verify",
+        "/api/v1/auth/login/totp",
         "/api/v1/auth/me",
         "/api/v1/auth/logout",
         "/api/v1/auth/logout-all",

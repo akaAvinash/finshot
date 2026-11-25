@@ -23,6 +23,7 @@ from app.auth.schemas import (
     StepUpResultOut,
     TotpCodeIn,
     TotpEnrollmentOut,
+    TotpLogin,
 )
 from app.auth.service import AuthService, SessionInfo
 from app.auth.stepup import StepUpService, step_up_required
@@ -139,6 +140,21 @@ async def verify_otp(
         code=body.code,
         context_id=claims.context_id,
         current_session=session,
+    )
+    set_cookie(response, SESSION_COOKIE, token)
+    set_cookie(response, CSRF_COOKIE, csrf)
+    return OtpVerifyResponse(
+        user=_user_out(info), session=_session_out(auth, info), csrf_token=csrf
+    )
+
+
+@router.post("/login/totp", response_model=OtpVerifyResponse)
+async def login_with_totp(
+    body: TotpLogin, request: Request, response: Response, auth: Auth, session: OptionalSession
+) -> OtpVerifyResponse:
+    auth.enforce_csrf(request, session)
+    info, token, csrf = await auth.login_with_totp(
+        request=request, phone=body.phone, code=body.code, current_session=session
     )
     set_cookie(response, SESSION_COOKIE, token)
     set_cookie(response, CSRF_COOKIE, csrf)

@@ -76,6 +76,13 @@ def create_app(
         app.state.session_factory = create_session_factory(app.state.db_engine)
         app.state.redis = create_redis(settings)
         keys = Keys.from_secret(settings.auth_secret_key.get_secret_value())
+        app.state.stepup = StepUpService(
+            settings=settings,
+            session_factory=app.state.session_factory,
+            limiter=RateLimiter(app.state.redis, keys),
+            keys=keys,
+            clock=clock,
+        )
         app.state.auth = AuthService(
             settings=settings,
             session_factory=app.state.session_factory,
@@ -84,13 +91,7 @@ def create_app(
             email_provider=email,
             keys=keys,
             clock=clock,
-        )
-        app.state.stepup = StepUpService(
-            settings=settings,
-            session_factory=app.state.session_factory,
-            limiter=RateLimiter(app.state.redis, keys),
-            keys=keys,
-            clock=clock,
+            stepup=app.state.stepup,
         )
         app.state.brokers = BrokerService(
             session_factory=app.state.session_factory,

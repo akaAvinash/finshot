@@ -315,9 +315,14 @@ def test_login_reports_an_existing_authenticator(make_app: MakeApp, clock: FakeC
     app = make_app()
     first = Browser(app)
     first.login()
-    enroll_and_confirm(first, clock)
+    secret = enroll_and_confirm(first, clock)
+    clock.advance(31)
     second = Browser(app)
-    response = second.login()
+    second.get_csrf()
+    response = second.post(
+        "/api/v1/auth/login/totp", json={"phone": PHONE, "code": code_for(secret, clock)}
+    )
+    assert response.status_code == 200, response.text
     assert response.json()["user"]["totpEnabled"] is True
     assert second.get("/api/v1/auth/me").json()["user"]["totpEnabled"] is True
 

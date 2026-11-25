@@ -68,7 +68,7 @@ createServer(async (request, response) => {
   }
 
   const url = new URL(request.url, publicOrigin);
-  if (request.method === "POST" && /^\/__fixture\/report\/(ready|empty|unavailable|mismatch)$/.test(url.pathname)) {
+  if (request.method === "POST" && /^\/__fixture\/report\/(ready|empty|unavailable|mismatch|large)$/.test(url.pathname)) {
     reportMode = url.pathname.split("/").at(-1);
     return response.writeHead(204).end();
   }
@@ -87,7 +87,7 @@ createServer(async (request, response) => {
     const period = { from: url.searchParams.get("from"), to: url.searchParams.get("to") };
     if (url.pathname.endsWith(".csv")) {
       response.writeHead(200, { "Content-Type": "text/csv; charset=utf-8" });
-      return response.end(stagingReportCsv(period));
+      return response.end(stagingReportCsv(period, reportMode));
     }
     return json(response, 200, reportMode === "empty" ? { status: "empty" } : stagingReport(period, reportMode));
   }

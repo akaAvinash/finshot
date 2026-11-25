@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 const fixture = "http://127.0.0.1:3102/__fixture";
@@ -55,6 +56,14 @@ test("handles an empty ledger, reconciliation mismatch, and report or CSV outage
   await mode("empty");
   await page.goto("/reports");
   await expect(page.getByRole("heading", { name: "No paper report yet" })).toBeVisible();
+  const emptyCsv = await page.evaluate(async (path) => {
+    const response = await fetch(path);
+    return { status: response.status, body: await response.text() };
+  }, csvPath);
+  expect(emptyCsv).toEqual({
+    status: 200,
+    body: "date,filled_at,replay,strategy,version,instrument,side,quantity,fill_inr,fees_inr,pnl_inr,reason,trade_id\r\n",
+  });
 
   await mode("mismatch");
   await page.reload();
@@ -69,4 +78,24 @@ test("handles an empty ledger, reconciliation mismatch, and report or CSV outage
   await mode("ready");
   await page.getByRole("button", { name: "Retry report" }).click();
   await expect(page.getByRole("heading", { name: "Trade journal" })).toBeVisible();
+});
+
+test("downloads all 501 selected fills when the visible journal is capped", async ({ page, request }) => {
+  await signIn(page);
+  expect((await request.post(`${fixture}/report/large`)).status()).toBe(204);
+  await page.goto("/reports?from=2024-01-01&to=2025-05-15");
+  const journal = page.getByRole("region", { name: "Trade journal", exact: true });
+  await expect(journal).toContainText("500 fills · Selected period");
+  await expect(journal).toContainText("The journal lists the latest 500 fills for the period.");
+
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export period CSV" }).click();
+  const file = await downloaded;
+  expect(file.suggestedFilename()).toBe("tradeo-paper-trades.csv");
+  const csv = await readFile(await file.path(), "utf8");
+  const [, ...rows] = csv.trimEnd().split("\r\n");
+  expect(rows).toHaveLength(501);
+  expect(rows.map((row) => row.split(",").at(-1))).toEqual(
+    Array.from({ length: 501 }, (_, index) => `historical-fill-${index + 1}`),
+  );
 });

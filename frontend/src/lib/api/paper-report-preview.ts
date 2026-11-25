@@ -77,7 +77,7 @@ export function samplePaperReport(period: ReportPeriod): PaperReportResult {
 }
 
 export function samplePaperCsv(period: ReportPeriod) {
-  const rows = periodFills(period).map((trade) => [trade.date, trade.filledAt, trade.replay, trade.strategy?.name ?? "",
+  const rows = periodFills(period).reverse().map((trade) => [trade.date, trade.filledAt, trade.replay, trade.strategy?.name ?? "",
     trade.strategy?.version ?? "", trade.instrument, trade.side, trade.quantity, (trade.fillPaise / 100).toFixed(2),
     (trade.feesPaise / 100).toFixed(2), (trade.pnlPaise / 100).toFixed(2), trade.reason, trade.id]);
   return ["date,filled_at,replay,strategy,version,instrument,side,quantity,fill_inr,fees_inr,pnl_inr,reason,trade_id",

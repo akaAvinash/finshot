@@ -19,9 +19,10 @@ describe("paper report periods", () => {
     const report = samplePaperReport(period);
     expect(report).toMatchObject({ status: "ready", data: { summary: {
       fills: 2, feesPaise: 1746, realisedPaise: -61746, unrealisedPaise: 24556, netPaise: -37190, closedTrades: 1,
-    } } });
+    }, journal: [{ date: "2026-11-12" }, { date: "2026-11-11" }] } });
     const csv = samplePaperCsv(period);
-    expect(csv.trimEnd().split("\r\n")).toHaveLength(3);
+    const [, ...rows] = csv.trimEnd().split("\r\n");
+    expect(rows.map((row) => row.split(",")[0])).toEqual(["2026-11-11", "2026-11-12"]);
     expect(csv).toContain("-617.46,stop-loss");
     expect(csv).not.toContain("INFY");
   });

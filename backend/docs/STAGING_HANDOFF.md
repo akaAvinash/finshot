@@ -162,6 +162,28 @@ PASS  /api/v1/alerts  http=200  keys=['asOf', 'items', 'nextCursor', 'unread'] i
 not assigned a strategy yet; the `ready` shapes (summary, daily, journal,
 account) are not exercised until it does.
 
+Through the tailnet origin, after the PR #50 frontend (`de9612b`) went live:
+the owner ran the same script from a tailnet PC with
+`STAGING_BASE_URL=https://homelab.tail14603a.ts.net:8446` and their session
+cookie, 2026-11-25 18:44 UTC. Every API route passed through the frontend
+proxy; the two health checks fail by design because `/health/*` is not
+exposed on the public origin (they pass inside the container, above):
+
+```
+FAIL  /health/live  http=404  no JSON object
+FAIL  /health/ready  http=404  no JSON object
+PASS  /api/v1/market/overview  http=200  keys=['asOf', 'quotes', 'session', 'source'] source=demo quotes[]=12
+PASS  /api/v1/market/instruments  http=200  keys=['instruments'] instruments[]=12
+PASS  /api/v1/auth/me  http=200  keys=['session', 'user']
+PASS  /api/v1/brokers/preview  http=200  keys=['data', 'status'] status=ready connections[]=2 events[]=0
+PASS  /api/v1/strategies/preview  http=200  keys=['data', 'status'] status=ready strategies[]=0
+PASS  /api/v1/auto-trading/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/reports/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/alerts  http=200  keys=['asOf', 'items', 'nextCursor', 'unread'] items[]=3
+
+2 failed
+```
+
 To repeat the signed-in checks, the session cookie never goes into chat,
 Jira, Git or a command line. The owner runs them like this:
 

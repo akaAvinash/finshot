@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+import { samplePaperCsv, samplePaperReport } from "@/lib/api/paper-report-preview";
+import { isReportDate, parseReportPeriod, reportQuery } from "@/lib/paper-reporting";
+
+describe("paper report periods", () => {
+  it("accepts inclusive or open IST dates and rejects invalid, reversed or repeated values", () => {
+    expect(isReportDate("2024-02-29")).toBe(true);
+    expect(isReportDate("2026-02-29")).toBe(false);
+    expect(isReportDate("0000-01-01")).toBe(false);
+    expect(parseReportPeriod("2026-11-22", "2026-11-21").error).toContain("start date");
+    expect(parseReportPeriod(["2026-11-22", "2026-11-23"], undefined).error).toContain("valid dates");
+    const { period, error } = parseReportPeriod("", "2026-11-12");
+    expect(error).toBeNull();
+    expect(reportQuery(period)).toBe("?to=2026-11-12");
+  });
+
+  it("shares the inclusive period between preview metrics and CSV without re-deducting fees", () => {
+    const period = { from: "2026-11-11", to: "2026-11-12" };
+    const report = samplePaperReport(period);
+    expect(report).toMatchObject({ status: "ready", data: { summary: {
+      fills: 2, feesPaise: 1746, realisedPaise: -61746, unrealisedPaise: 24556, netPaise: -37190, closedTrades: 1,
+    } } });
+    const csv = samplePaperCsv(period);
+    expect(csv.trimEnd().split("\r\n")).toHaveLength(3);
+    expect(csv).toContain("-617.46,stop-loss");
+    expect(csv).not.toContain("INFY");
+  });
+});

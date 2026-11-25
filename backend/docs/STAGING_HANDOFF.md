@@ -139,9 +139,30 @@ on the account routes; finish setup first.
 | Strategies | `GET /api/v1/strategies/preview` | session | `200`, `ready`, empty `strategies` list, `metrics: null` |
 | Paper reports | `GET /api/v1/reports/paper` | session | `200`, `status: empty` until a strategy is assigned, then `ready` |
 
-Evidence status: the signed-in checks have **not run**. They need the owner's
-own session cookie, which never goes into chat, Jira, Git or a command line.
-The owner runs them like this:
+Evidence status: **verified.** The owner ran the full script with their own
+signed-in session inside the API container on 2026-11-25. Every check passed:
+
+```
+PASS  /health/live  http=200  keys=['status'] status=ok
+PASS  /health/ready  http=200  keys=['checks', 'status'] status=ok
+PASS  /api/v1/market/overview  http=200  keys=['asOf', 'quotes', 'session', 'source'] source=demo quotes[]=12
+PASS  /api/v1/market/instruments  http=200  keys=['instruments'] instruments[]=12
+PASS  /api/v1/auth/me  http=200  keys=['session', 'user']
+PASS  /api/v1/brokers/preview  http=200  keys=['data', 'status'] status=ready connections[]=2 events[]=0
+PASS  /api/v1/strategies/preview  http=200  keys=['data', 'status'] status=ready strategies[]=0
+PASS  /api/v1/auto-trading/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/reports/paper  http=200  keys=['status'] status=empty
+PASS  /api/v1/alerts  http=200  keys=['asOf', 'items', 'nextCursor', 'unread'] items[]=3
+
+0 failed
+```
+
+`auto-trading/paper` and `reports/paper` are `empty` because the account has
+not assigned a strategy yet; the `ready` shapes (summary, daily, journal,
+account) are not exercised until it does.
+
+To repeat the signed-in checks, the session cookie never goes into chat,
+Jira, Git or a command line. The owner runs them like this:
 
 1. Sign in at `https://homelab.tail14603a.ts.net:8446` (email code, then
    authenticator) and copy the value of the `__Host-tradeo_session` cookie

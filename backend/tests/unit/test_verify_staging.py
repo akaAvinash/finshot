@@ -122,3 +122,18 @@ def test_base_url_must_be_https_or_a_real_loopback_host(
 ) -> None:
     monkeypatch.setenv("STAGING_BASE_URL", base)
     assert verify.main() == 2
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://[::1]:8000",
+        "https://staging.example.test",
+    ],
+)
+def test_documented_origins_are_accepted(monkeypatch: pytest.MonkeyPatch, base: str) -> None:
+    monkeypatch.setenv("STAGING_BASE_URL", base)
+    monkeypatch.setattr(verify, "CHECKS", [])
+    assert verify.main() == 0

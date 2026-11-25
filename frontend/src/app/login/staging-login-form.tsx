@@ -30,7 +30,7 @@ export function StagingLoginForm() {
   const [challenge, setChallenge] = useState<EmailVerification | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryAt, setRetryAt] = useState(0);
+  const [retryAt, setRetryAt] = useState<Record<Method, number>>({ authenticator: 0, email: 0 });
   const codeField = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -47,7 +47,6 @@ export function StagingLoginForm() {
   function changeMethod(next: Method) {
     if (pending || next === method) return;
     resetEmail();
-    setRetryAt(0);
     setMethod(next);
   }
 
@@ -59,7 +58,7 @@ export function StagingLoginForm() {
       return;
     }
     const requesting = method === "email" && (!challenge || resend);
-    const delay = Math.ceil((retryAt - Date.now()) / 1000);
+    const delay = Math.ceil((retryAt[method] - Date.now()) / 1000);
     const resendDelay = resend && challenge ? Math.ceil((Date.parse(challenge.resendAvailableAt) - Date.now()) / 1000) : 0;
     if (delay > 0 || resendDelay > 0) {
       setError(`Try again in ${Math.max(delay, resendDelay)} seconds.`);
@@ -87,7 +86,10 @@ export function StagingLoginForm() {
         router.replace(enrolled ? "/dashboard" : "/login/authenticator");
       }
     } catch (error) {
-      if (error instanceof AuthError && error.status === 429 && error.retryAfter) setRetryAt(Date.now() + error.retryAfter * 1000);
+      if (error instanceof AuthError && error.status === 429 && error.retryAfter) {
+        const deadline = Date.now() + error.retryAfter * 1000;
+        setRetryAt((previous) => ({ ...previous, [method]: deadline }));
+      }
       setError(errorMessage(error));
     } finally {
       setPending(false);

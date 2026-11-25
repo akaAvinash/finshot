@@ -155,6 +155,13 @@ test("surfaces throttling and unavailable delivery without signing in", async ({
   await phone.fill("98765 43212");
   await page.getByRole("button", { name: "Request code", exact: true }).click();
   await expect(loginError).toHaveText("Email code delivery is unavailable. Try again later.");
+
+  await page.getByRole("button", { name: "Authenticator", exact: true }).click();
+  await phone.fill("98765 43211");
+  await page.getByLabel("Authenticator code").fill("728391");
+  await signIn.click();
+  await expect(loginError).toHaveText(/^Try again in \d+ seconds\.$/);
+  expect(attempts).toHaveLength(1);
   await expect(page).toHaveURL(/\/login$/);
 });
 

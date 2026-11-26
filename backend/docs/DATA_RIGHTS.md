@@ -35,8 +35,10 @@ decision that depends on it. Labels used below:
    market data "as part of automated calculations or algorithms to support trading decision
    making", with fees paid to NSE Data & Analytics (from ₹23.9 lakh a year for Capital Market
    L1, enterprise, effective 1 April 2026). (Fact.) Whether an individual client receiving data
-   through a broker API is a "Subscriber" under that policy is **Unknown**; ask NSE Data
-   (`marketdata@nse.co.in`) or the broker in writing before any automated use beyond paper.
+   through a broker API is a "Subscriber" under that policy is **Unknown**. The owner chose not
+   to ask for the owner-only pilot, including the owner's own algo trading (section 8). Ask NSE
+   Data (`marketdata@nse.co.in`) or the broker in writing before any second user, public display
+   or commercial use.
 5. **Storing provider data is restricted.** Kite terms 4(b) and Fyers terms section 12 restrict
    building databases or permanent copies of API content without the provider's permission.
    (Fact.) This affects backtest candle storage and the E12 historical dataset gate. (Inference.)
@@ -47,7 +49,7 @@ Costs exclude GST unless noted. "Live" means streamed during market hours.
 
 | Provider | Type | Cost (Fact) | Live data (Fact) | Intraday history (Fact) | Permitted use (Fact) | Fit for owner-only pilot (Opinion) |
 |---|---|---|---|---|---|---|
-| **Zerodha Kite Connect** | Broker API | Personal: free, no market data. Connect: ₹500 per month per API key, includes WebSocket and historical candles. Cut from ₹2,000 in May 2025. | WebSocket: 3,000 instruments per connection, 3 connections per key; modes ltp, quote, full (5-level depth). | Minute to 60-minute candles "spanning back several years"; continuous daily data for expired NFO/MCX futures; no expired option tokens unless cached. | Personal use only; credentials for the account holder only; no display "to the public at large"; no virtual/mock trading apps; not for fully automated trades; no databases or permanent copies of API content without permission; India only. | **Recommended**, subject to the written confirmation in section 5. |
+| **Zerodha Kite Connect** | Broker API | Personal: free, no market data. Connect: ₹500 per month per API key, includes WebSocket and historical candles. Cut from ₹2,000 in May 2025. | WebSocket: 3,000 instruments per connection, 3 connections per key; modes ltp, quote, full (5-level depth). | Minute to 60-minute candles "spanning back several years"; continuous daily data for expired NFO/MCX futures; no expired option tokens unless cached. | Personal use only; credentials for the account holder only; no display "to the public at large"; no virtual/mock trading apps; not for fully automated trades; no databases or permanent copies of API content without permission; India only. | **Approved** for the owner-only pilot (section 8). |
 | **Fyers API v3** | Broker API | Standard: free. Prime: price not published on the plans page. | Data socket: 100 symbols (Standard), 5,000 (Prime), per user across connections; tick-by-tick: 1 symbol (Standard). | Standard: intraday 1 year, daily 5 years, no seconds data. Prime: intraday 5+ years. | Personal use; credentials for the client only; no third-party use; exchange data not for charting tools, paper trading or virtual trading; copies and public display need written consent. | Fallback. Free, but 100 symbols and 1 year intraday on Standard, and the same paper-trading restriction. |
 | **Dhan DhanHQ Data API** | Broker API | ₹499 + taxes per month; free-with-trades offer discontinued. | 5,000 instruments per connection, 5 connections; **not tick-by-tick**, second-by-second snapshots. | Intraday 1/5/15/25(sic)/60-minute for last 5 years; daily from inception. | **Unknown**: no permitted-use terms found on the pages read. | Not recommended until terms are read. Not in Tradeo's broker set. |
 | **Upstox API** | Broker API | Base API described as free (community reply, 2024, stale). Upstox Plus price not published. | V3 feed: 2 connections per user; Full mode 2,000 instruments, LTPC 5,000. Plus: 5 connections. | Not stated on pages read. Expired-instrument history is Upstox Plus only. | **Unknown**: no terms found on the pages read. | Not recommended until terms and pricing are read. Not in Tradeo's broker set. |
@@ -71,7 +73,7 @@ the terms above.
 | Research notes, ad-hoc exploration by the owner | none | NSE MCP, broker API | Not stored in Tradeo tables; not shown to other users. |
 | Owner-only live quote display | 1 Market Data | Kite Connect (or Fyers) on the owner's own account | Owner is the only user; no other account sees the data. |
 | Paper trading on live data (T38) | 6 Paper Trading | Kite Connect | Owner-only, under the owner's accepted-risk decision (section 8). |
-| Stored candles for backtests | 5 Backtesting | Kite Connect | Owner-only, never shared or shown to others; under the same decision. |
+| Stored candles for backtests | 5 Backtesting | Kite Connect (restricted: Kite terms 4(b) bar permanent copies without permission) | Owner-only, never shared or shown to others. Owner accepts this residual risk (section 1, item 5; section 8). |
 | Historical training data (E12, E13) | 3 Market Intelligence | Kite Connect | Owner-only models for the owner's own trading, under the same decision. NSE MCP stays excluded (NSE bars AI training). E12 still checks coverage and gaps. |
 | Risk freshness checks | 7 Risk | Same feed as the caller's snapshot | Risk only reads `asOf` stamps; it never calls Market Data. |
 | Live orders | 8 Execution | Out of scope | Gate G9, E21 and separate owner approval. Kite and Fyers terms also say the APIs are not for fully automated trades. |
@@ -104,8 +106,9 @@ Not decided here: signing up, paying, or creating an API key. Those are owner ac
 
 ## 5. Optional questions for the provider
 
-**Not required.** The owner decided on 2026-11-26 not to send these (section 8). They are kept
-for reference if Tradeo ever gains a second user. Send to the chosen provider (Kite: `kiteconnect@zerodha.com`, which Zerodha staff named on the Kite forum
+**Not required for the owner-only pilot**, which includes the owner's own paper and algo
+trading (owner decision, 2026-11-26, section 8). A written answer **is required** before any use
+beyond the pilot: a second user, public display, or commercial use. Send to the chosen provider (Kite: `kiteconnect@zerodha.com`, which Zerodha staff named on the Kite forum
 for compliance questions) and keep the reply as the approval record for TRAD-10.
 
 1. May live data from my own account be used in a private, single-user paper trading simulator

@@ -142,8 +142,11 @@ Labels per (instrument, session, decision point, horizon):
   `DOWN`.
 - `m_h` = median of `|r_h|` for the same instrument, decision point and horizon
   over the **20 prior sessions** (strictly before the labelled session, rule L4).
-  Sessions whose label is `INVALID` are skipped, not replaced. `m_h` needs at
-  least **15 valid returns** out of the 20 (proposal). With fewer, `theta_h` is
+  `m_h` uses the raw returns `r_h`, not the direction labels: a prior session
+  counts whenever its `P0` and `Ph` bars both exist, even if its own direction
+  label was `INVALID` for lack of a dead zone (so history can bootstrap for a new
+  instrument). Only sessions with a missing price bar are skipped, not replaced.
+  `m_h` needs at least **15 valid returns** out of the 20 (proposal). With fewer, `theta_h` is
   undefined and the current label is final as `INVALID` with reason
   `NO_DEAD_ZONE`; it is never labelled `UP`, `DOWN` or `FLAT`.
 

@@ -20,9 +20,11 @@ function Change({ value, compact = false }: { value: number; compact?: boolean }
   );
 }
 
-export function MarketStrip({ indices }: { indices: MarketQuote[] }) {
+export function MarketStrip({ indices, label = "Sample market indices" }: { indices: MarketQuote[]; label?: string }) {
   return (
-    <Card aria-label="Sample market indices" className="grid divide-y divide-border min-[520px]:grid-cols-3 min-[520px]:divide-x min-[520px]:divide-y-0">
+    <Card aria-label={label} className={cn("grid divide-border", indices.length > 3
+      ? "grid-cols-2 [&>div]:border-b [&>div:nth-child(odd)]:border-r [&>div]:border-border min-[800px]:grid-cols-4 min-[800px]:divide-x min-[800px]:[&>div]:border-b-0 min-[800px]:[&>div:nth-child(odd)]:border-r-0"
+      : "divide-y min-[520px]:grid-cols-3 min-[520px]:divide-x min-[520px]:divide-y-0")}>
       {indices.map((quote) => (
         <div key={quote.symbol} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-1 px-4 py-3 sm:py-3.5">
           <span className="text-xs font-semibold tracking-wide text-muted-foreground">{quote.symbol}</span>
@@ -46,6 +48,12 @@ export function Metrics({ data }: { data: DashboardSnapshot }) {
     { label: "Win rate", value: `${winRate}%`, detail: `${data.winningTrades} of ${data.totalTrades} sample trades`, icon: Crosshair },
   ];
 
+  return <MetricGrid metrics={metrics} />;
+}
+
+type DashboardMetric = { label: string; value: string; detail: string; icon: typeof Wallet; change?: number; pnl?: number | null };
+
+export function MetricGrid({ metrics }: { metrics: DashboardMetric[] }) {
   return (
     <section aria-label="Portfolio metrics" className="grid grid-cols-2 gap-3 sm:gap-4 min-[800px]:grid-cols-4">
       {metrics.map(({ label, value, detail, change, pnl, icon: Icon }) => (
@@ -58,7 +66,7 @@ export function Metrics({ data }: { data: DashboardSnapshot }) {
           </div>
           <p className={cn(
             "mt-2 text-lg font-semibold tracking-[-0.05em] tabular-nums min-[380px]:text-xl sm:text-[1.6rem]",
-            pnl !== undefined && (pnl > 0 ? "text-positive" : pnl < 0 ? "text-negative" : undefined),
+            pnl != null && (pnl > 0 ? "text-positive" : pnl < 0 ? "text-negative" : undefined),
           )}>{value}</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
             {change !== undefined && <Change value={change} compact />}
@@ -70,7 +78,9 @@ export function Metrics({ data }: { data: DashboardSnapshot }) {
   );
 }
 
-export function Watchlist({ quotes }: { quotes: MarketQuote[] }) {
+export function Watchlist({ quotes, description = "Sample NSE equity quotes", empty = "No sample quotes available." }: {
+  quotes: MarketQuote[]; description?: string; empty?: string;
+}) {
   return (
     <Card aria-labelledby="watchlist-heading" className="overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
@@ -78,7 +88,7 @@ export function Watchlist({ quotes }: { quotes: MarketQuote[] }) {
           <h2 id="watchlist-heading" className="flex items-center gap-2 text-base font-semibold tracking-tight">
             <Activity aria-hidden className="size-4 text-accent-foreground" /> Watchlist
           </h2>
-          <p className="mt-1 text-xs text-muted-foreground">Sample NSE equity quotes</p>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
         </div>
         <Status>NSE</Status>
       </div>
@@ -98,21 +108,21 @@ export function Watchlist({ quotes }: { quotes: MarketQuote[] }) {
           ))}
         </ul>
       ) : (
-        <p className="p-5 text-sm text-muted-foreground">No sample quotes available.</p>
+        <p className="p-5 text-sm text-muted-foreground">{empty}</p>
       )}
     </Card>
   );
 }
 
-export function RecentActivity({ trades }: { trades: Trade[] }) {
+export function RecentActivity({ trades, paper = false }: { trades: Trade[]; paper?: boolean }) {
   return (
     <Card aria-labelledby="activity-heading" className="overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-border p-4 sm:px-5">
         <div>
           <h2 id="activity-heading" className="text-base font-semibold tracking-tight">Recent trades</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Trades from the sample session</p>
+          <p className="mt-1 text-xs text-muted-foreground">{paper ? "Latest fills from the paper ledger" : "Trades from the sample session"}</p>
         </div>
-        <Status>Simulated</Status>
+        <Status>{paper ? "Paper fills" : "Simulated"}</Status>
       </div>
       {trades.length > 0 ? (
         <div tabIndex={0} role="region" aria-label="Recent trades table" className="overflow-x-auto focus-visible:outline-offset-[-3px]">
@@ -144,7 +154,7 @@ export function RecentActivity({ trades }: { trades: Trade[] }) {
           </Table>
         </div>
       ) : (
-        <p className="px-5 py-7 text-sm text-muted-foreground">No trades are available in this sample snapshot.</p>
+        <p className="px-5 py-7 text-sm text-muted-foreground">{paper ? "No paper fills are available." : "No trades are available in this sample snapshot."}</p>
       )}
     </Card>
   );

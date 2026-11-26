@@ -34,7 +34,7 @@ export function MarketSession({ overview }: { overview: MarketOverview }) {
         <Clock3 className="size-3.5" aria-hidden />
         {session.exchange} session {formatSessionTime(session.opensAt)}–{formatSessionTime(session.closesAt)} IST
       </span>
-      <time dateTime={asOf} className="sm:ml-auto">Demo snapshot · {formatMarketTime(asOf)}</time>
+      <time dateTime={asOf} className="sm:ml-auto">{overview.source === "demo" ? "Demo snapshot" : "Market snapshot"} · {formatMarketTime(asOf)}</time>
     </div>
   );
 }

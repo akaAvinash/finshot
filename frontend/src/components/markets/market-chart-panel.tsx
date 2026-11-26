@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Status } from "@/components/ui/status";
 import { marketTimeframes, type Instrument, type InstrumentQuote, type MarketTimeframe } from "@/lib/api/market-types";
+import type { MarketMode } from "@/lib/api/market-client";
 import { formatInr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { CandlestickChart } from "./candlestick-chart";
@@ -13,16 +14,17 @@ import { formatMarketTime } from "./market-format";
 import { QuoteChange } from "./market-summary";
 import { useMarketCandles, type ChartRequest } from "./use-market-data";
 
-export function MarketChartPanel({ instrument, quote, request, watched, onTimeframe, onToggle, onRestore }: {
+export function MarketChartPanel({ instrument, quote, request, mode, watched, onTimeframe, onToggle, onRestore }: {
   instrument: Instrument;
   quote: InstrumentQuote;
   request: ChartRequest;
+  mode: MarketMode;
   watched: boolean;
   onTimeframe: (timeframe: MarketTimeframe) => void;
   onToggle: (instrument: Instrument, add: boolean) => void;
   onRestore: () => void;
 }) {
-  const result = useMarketCandles(request);
+  const result = useMarketCandles(request, mode, instrument.id);
   const { timeframe } = request;
   const empty = result.status === "ready" && !result.data.candles.length;
 
@@ -67,10 +69,12 @@ export function MarketChartPanel({ instrument, quote, request, watched, onTimefr
           {result.status === "error" ? <CircleAlert aria-hidden className="size-6 text-negative" /> : <DatabaseZap aria-hidden className="size-6 text-accent-foreground" />}
           <p className="mt-3 font-semibold">{result.status === "error" ? "Chart could not load" : "No candles available"}</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            {result.status === "error" ? "The simulated chart request failed." : "This demo response has no candles for the selected timeframe."}
+            {result.status === "error"
+              ? (mode === "preview" ? "The simulated chart request failed." : "The market API did not return available candle data.")
+              : "There are no candles for the selected timeframe."}
           </p>
           <Button variant="outline" size="sm" className="mt-4" onClick={onRestore}>
-            {result.status === "error" ? "Retry chart" : "Load demo candles"}
+            {result.status === "error" || mode === "staging" ? "Retry chart" : "Load demo candles"}
           </Button>
         </div>
       )}
@@ -79,13 +83,13 @@ export function MarketChartPanel({ instrument, quote, request, watched, onTimefr
         <>
           {result.data.freshness === "stale" && (
             <div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/35 bg-primary/8 p-2.5 text-xs sm:mx-5">
-              <p className="flex items-center gap-2"><Clock3 aria-hidden className="size-4 shrink-0 text-accent-foreground" /> Showing stale demo candles.</p>
+              <p className="flex items-center gap-2"><Clock3 aria-hidden className="size-4 shrink-0 text-accent-foreground" /> {result.data.source === "demo" ? "Showing stale demo candles." : "Showing stale market candles."}</p>
               <Button variant="outline" size="sm" onClick={onRestore}>Load latest candles</Button>
             </div>
           )}
-          <CandlestickChart candles={result.data.candles} timeframe={timeframe} />
+          <CandlestickChart candles={result.data.candles} timeframe={timeframe} source={result.data.source} />
           <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
-            Demo candles · <time dateTime={result.data.asOf}>{formatMarketTime(result.data.asOf)}</time>
+            {result.data.source === "demo" ? "Demo candles" : "Market candles"} · {mode === "staging" && "Backend snapshot · "}<time dateTime={result.data.asOf}>{formatMarketTime(result.data.asOf)}</time>
           </p>
         </>
       )}

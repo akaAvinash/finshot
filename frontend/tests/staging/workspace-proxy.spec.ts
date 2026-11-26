@@ -13,7 +13,9 @@ test.beforeEach(async ({ request }) => {
 test("forwards public market data through ingress without sharing account credentials", async ({ context, page, request }) => {
   const overview = await request.get(`${api}/market/overview`, { headers: { "X-Forwarded-For": "192.0.2.9" } });
   expect(overview.status()).toBe(200);
-  expect(await overview.json()).toEqual({ source: "demo", quotes: [] });
+  expect(await overview.json()).toMatchObject({ source: "demo", quotes: expect.arrayContaining([
+    expect.objectContaining({ instrumentId: "NSE:NIFTY50", price: 23123.45 }),
+  ]) });
   expect(overview.headers()["cache-control"]).toContain("no-store");
   expect(overview.headers()["set-cookie"]).toBeUndefined();
 
@@ -25,7 +27,7 @@ test("forwards public market data through ingress without sharing account creden
   expect(await instruments.json()).toMatchObject({ instruments: [{ id: "NSE:M&M" }] });
   const candles = await context.request.get(`${api}/market/instruments/NSE%3AM%26M/candles?timeframe=15m`);
   expect(candles.status()).toBe(200);
-  expect(await candles.json()).toMatchObject({ instrumentId: "NSE:M&M", timeframe: "15m", candles: [] });
+  expect(await candles.json()).toMatchObject({ instrumentId: "NSE:M&M", timeframe: "15m", freshness: "fresh" });
 
   const direct = await request.get(`http://127.0.0.1:3103${api}/market/overview`, {
     headers: { "X-Tradeo-Client-IP": "192.0.2.1", "X-Tradeo-Ingress-Token": "forged-proof" },
@@ -45,7 +47,7 @@ test("requires a staging account for workspace reads and keeps the CSV download 
   for (const endpoint of reads.slice(0, 3)) {
     const result = await context.request.get(`${api}/${endpoint}`);
     expect(result.status()).toBe(200);
-    expect(await result.json()).toMatchObject({ status: "empty" });
+    expect(await result.json()).toMatchObject({ status: endpoint === "auto-trading/paper" ? "ready" : "empty" });
     expect(result.headers()["cache-control"]).toContain("no-store");
   }
 

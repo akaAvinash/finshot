@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { samplePaperCsv, samplePaperReport } from "@/lib/api/paper-report-preview";
+import { dashboardDate, dashboardLedger } from "@/lib/dashboard-ledger";
 import { isReportDate, parseReportPeriod, reportQuery } from "@/lib/paper-reporting";
 
 describe("paper report periods", () => {
@@ -37,5 +38,22 @@ describe("paper report periods", () => {
     expect(rows.map((row) => row.split(",")[0])).toEqual(["2026-11-11", "2026-11-12"]);
     expect(csv).toContain("-617.46,stop-loss");
     expect(csv).not.toContain("INFY");
+  });
+
+  it("uses the IST date and keeps missing dashboard P&L distinct from a recorded zero", () => {
+    const report = samplePaperReport({ from: "2026-11-11", to: "2026-11-12" });
+    if (report.status !== "ready") throw new Error("Expected paper fills");
+    const previous = dashboardDate(new Date("2026-11-11T18:29:00Z"));
+    const today = dashboardDate(new Date("2026-11-11T18:30:00Z"));
+    expect(previous).toBe("2026-11-11");
+    expect(today).toBe("2026-11-12");
+    expect(dashboardLedger(report.data, previous, new Map())).toMatchObject({ dayPnl: 0, monthPnl: 0 });
+    expect(dashboardLedger(report.data, today, new Map())).toMatchObject({
+      dayPnl: -617.46, monthPnl: -617.46,
+      points: [{ date: previous, value: 0 }, { date: today, value: -617.46 }],
+      recentTrades: [{ symbol: "RELIANCE", timeIst: "2026-11-12 · 15:00" },
+        { symbol: "RELIANCE", timeIst: "2026-11-11 · 09:30" }],
+    });
+    expect(dashboardLedger(report.data, "2026-12-01", new Map())).toMatchObject({ dayPnl: null, monthPnl: null });
   });
 });

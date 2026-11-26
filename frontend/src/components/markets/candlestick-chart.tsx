@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CandlestickSeries, ColorType, createChart, CrosshairMode, HistogramSeries, TickMarkType, TrackingModeExitMode, type Time, type UTCTimestamp } from "lightweight-charts";
-import type { MarketCandle, MarketTimeframe } from "@/lib/api/market-types";
+import type { MarketCandle, MarketSource, MarketTimeframe } from "@/lib/api/market-types";
 import { formatInr, formatPrice } from "@/lib/format";
 import { formatMarketTime, formatVolume } from "./market-format";
 
@@ -20,7 +20,9 @@ function tickLabel(seconds: number, type: TickMarkType) {
   return tickTime.format(date);
 }
 
-export function CandlestickChart({ candles, timeframe }: { candles: MarketCandle[]; timeframe: MarketTimeframe }) {
+export function CandlestickChart({ candles, timeframe, source = "demo" }: {
+  candles: MarketCandle[]; timeframe: MarketTimeframe; source?: MarketSource;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<MarketCandle>();
   const shown = hovered ?? candles.at(-1);
@@ -131,7 +133,7 @@ export function CandlestickChart({ candles, timeframe }: { candles: MarketCandle
         </dl>
       )}
       <div className="relative mx-2.5 my-3 h-66 sm:mx-4 sm:h-76">
-        <div role="group" aria-label={`Demo ${timeframe} candlestick chart`} ref={host} className="absolute inset-0" />
+        <div role="group" aria-label={`${source === "demo" ? "Demo" : "Market"} ${timeframe} candlestick chart`} ref={host} className="absolute inset-0" />
       </div>
     </>
   );

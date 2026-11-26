@@ -62,8 +62,8 @@ is chosen). The cutoff test always uses `availableAt`, never the bar `time`.
 
 **Proposal, input grace.** The last feature bar (stamped `D - 1 min`) ends exactly
 at `D`, so any real arrival is a little after `D`. The engine therefore computes
-at `T = D + 10 s` and accepts inputs with `availableAt <= T`, but only bars
-stamped before `D` (rule L2). The 10 seconds covers the 5 second backfill lag and
+at `T = D + 10 s` and accepts inputs with `availableAt <= T`, but only minute-aligned bars
+that end at or before `D` (rule L2). The 10 seconds covers the 5 second backfill lag and
 normal live delivery; a bar that arrives later is treated as missing. Nothing in
 the grace window can carry information from after `D`, because no input observed
 after `D` (a bar stamped `D` or later, or a snapshot with `asOf > D`) is ever a
@@ -116,6 +116,13 @@ that time: the last exit bar's end for a live feed that delivered on time, or th
 end plus 5 seconds for a backfill (so 10:32:05 and 10:47:05 IST for the 60m
 labels above). A label is never read before it is final.
 
+If a needed bar has not arrived by `W` after the last exit bar's end, the label
+becomes final as `INVALID` (proposal: `W` = 15 minutes; the value is an open
+policy choice for E07). A bar that arrives after that is stored as a late record
+with its own `receivedAt` (rule L7) and does not change the final label. It is
+counted in the data-quality report, and only an explicit, versioned relabel run
+may use it.
+
 All windows end well before 15:30, so no label crosses a session.
 
 Labels per (instrument, session, decision point, horizon):
@@ -146,7 +153,7 @@ report.
 so it is known when the prediction is made and can be used by E06 as a filter.
 It is never computed from the label window.
 
-Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars stamped before `D`):
+Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars that end at or before `D`, rule L2):
 
 | Name | Definition |
 |---|---|
@@ -160,7 +167,7 @@ Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars stampe
 | `eff` | `abs(C_D - O) / (H_D - L_D)`, 0 when the range is 0 |
 | `M` | median `range` at the same `D` over the 20 prior sessions |
 | `rangeRatio` | `range / M` when `M > 0`; undefined when `M = 0` (abstain `FLAT_HISTORY`, section 6), whatever the current `range` |
-| `vix` | last INDIAVIX observation made at or before `D` (a 1m bar stamped before `D`, or a snapshot with `asOf <= D`) and with `availableAt <= T` (feature only) |
+| `vix` | last INDIAVIX observation made at or before `D` (a 1m bar whose end, `time + 1 min`, is at or before `D`; or a snapshot with `asOf <= D`) and with `availableAt <= T` (feature only) |
 
 Two axes, each with fixed rules evaluated in order:
 
@@ -210,7 +217,7 @@ forces `ABSTAIN`:
 | `SOURCE_MISMATCH` | inputs come from more than one `source`, or the source does not match the environment (`demo` data may only feed `DEMO` records) |
 | `STALE_INPUT` | `freshness` is `stale`; or the newest 1m bar's `availableAt` is earlier than `D - 2 min`; or the INDIAVIX value is older than 5 min at `D` |
 | `MISSING_BARS` | any 1m bar stamped 09:15 to `D - 1 min` is missing at `T` (v1 requires all 15 or 30) |
-| `INVALID_BAR` | a bar fails the `MarketCandle` invariants (OHLC bounds, UTC, ascending) |
+| `INVALID_BAR` | a bar fails the `MarketCandle` invariants (OHLC bounds, UTC, ascending), or a 1m bar's `time` is not on a whole minute (seconds and fractions must be 0; the schema does not enforce this today, so the engine checks it on input) |
 | `NO_HISTORY` | fewer than 20 prior sessions exist for the trailing medians, or `PC` is missing |
 | `FLAT_HISTORY` | the 20 sessions exist but their median opening range `M` is 0, so `rangeRatio` is undefined (a frozen or bad feed, not a real market) |
 | `EXTREME_REGIME` | volatility state is `EXTREME` |
@@ -233,7 +240,7 @@ a model that abstains on everything scores zero coverage, not perfect accuracy.
 | Id | Rule | How E16 can test it |
 |---|---|---|
 | L1 | A feature at `D` uses only records with `availableAt <= T` (`T = D + 10 s`). The bar `time` alone is never the cutoff. | Inject a bar stamped `D - 1 min` with `receivedAt = D + 3 s`: used. Same bar with `receivedAt = D + 15 s`: excluded (`MISSING_BARS`), never used. |
-| L2 | No input observed after `D` is a feature, even if it arrives before `T`: no bar stamped `D` or later (forming or future at `D`), and no snapshot with `asOf > D`. Such bars are only label inputs. | Change the `D` and `D + 1 min` bars' values; features and regime must not change. |
+| L2 | No input observed after `D` is a feature, even if it arrives before `T`. A bar is a feature only if its end (`time + 1 min`) is at or before `D`, so the bar stamped `D` and later bars are only label inputs; a snapshot is a feature only if `asOf <= D`. 1m bars must be minute-aligned (`INVALID_BAR` otherwise). | Change the `D` and `D + 1 min` bars' values: features and regime must not change. Inject a bar stamped `D - 55 s`: it is rejected (`INVALID_BAR`), never used. |
 | L3 | Today's daily bar is forming during the session and is never a feature. Only completed prior-session daily bars are. | Drop today's 1D bar; features must not change. |
 | L4 | Every trailing statistic (medians, percentiles, scaler means, the `theta_h` dead zone) uses sessions strictly before the decision session. No full-sample normalization. | Change any value on or after the decision session; past statistics must not change. |
 | L5 | Feature and label code live in separate modules; feature code may not import label code. | Import-graph check. |

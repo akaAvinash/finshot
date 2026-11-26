@@ -75,7 +75,9 @@ the terms above.
 | Live orders | 8 Execution | Out of scope | Gate G9, E21 and separate owner approval. Kite and Fyers terms also say the APIs are not for fully automated trades. |
 | Any second user, public page or commercial product | all | **None** | Exchange-authorised vendor agreement and, for NSE, a licence. |
 
-## 4. Recommendation for the owner-only pilot feed (Opinion)
+## 4. Pilot feed decision (approved 2026-11-26)
+
+The owner approved the recommendation below (section 8). The reasoning stays as written.
 
 **Zerodha Kite Connect, ₹500 per month, on the owner's own account, read-only data use.**
 
@@ -165,13 +167,14 @@ NSE
 - Not read: Dhan and Upstox API terms, Upstox historical depth, TrueData API price list, NSE
   website Terms of Use. Parts of the NSE policy page and Dhan pages were read via summary of a
   truncated page; the PDF clauses quoted above were read directly.
-- Owner approval of costs (TRAD-10 acceptance check) is pending.
+- Owner approved the Kite Connect feed and its cost on 2026-11-26 (section 8). The section 5
+  questions are still unsent, so T38 and data storage stay blocked.
 
 ## 8. Approval record
 
 | Item | Status |
 |---|---|
-| Pilot feed choice | Pending owner decision |
-| Cost approval | Pending owner decision |
+| Pilot feed choice | **Approved**: Zerodha Kite Connect. Owner (Avinash), 2026-11-26 16:38 UTC, project thread decision card |
+| Cost approval | **Approved**: ₹500 per month per API key (plus GST). Same record. Sign-up and payment are owner actions |
 | Provider written answers (section 5) | Not sent |
 | Tested revision | Docs only; read against main `17a409d` |

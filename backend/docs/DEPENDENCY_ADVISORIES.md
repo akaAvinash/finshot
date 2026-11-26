@@ -1,7 +1,8 @@
 # Dependency advisory triage
 
 Record of audit findings against backend dependencies and what was done.
-`python qa/scripts/dependency_audit.py` (pip-audit) runs in the nightly QA.
+`python qa/scripts/dependency_audit.py --junit out/dependency-audit.xml` (pip-audit)
+runs in the nightly QA (`.github/workflows/qa-suite.yml`).
 
 ## 2026-11-26: cryptography 46.0.7 (QA DEF-002)
 

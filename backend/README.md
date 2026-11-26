@@ -204,7 +204,8 @@ Redis URL has no password, or `PUBLIC_ORIGIN` is not https. Validation errors ne
   and orchestrator probes can call the raw IP.
 - Headers: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
   `Cache-Control: no-store`, strict CSP on API responses, HSTS in production.
-- Unhandled errors return a generic 500 (`INTERNAL_ERROR`) with the request ID; tracebacks only
+- Unhandled errors return a generic 500 (`INTERNAL_ERROR`) with the request ID, the `X-Request-ID`
+  and security headers, and the keep-alive connection stays open; tracebacks only
   go to the logs. Log keys like `password`, `token`, `authorization` are redacted.
 - Docker image: multi-stage, runs as UID 10001, no server header, app files
   owned by root (read-only to the app). Compose runs the API with a read-only

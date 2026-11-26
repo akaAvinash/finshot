@@ -37,6 +37,7 @@ from app.core.middleware import (
     HostAllowlistMiddleware,
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
+    UnhandledErrorMiddleware,
 )
 from app.db.session import create_engine, create_session_factory
 from app.market.demo import DemoMarketDataProvider
@@ -204,18 +205,22 @@ def create_app(
             request, 400, "INVALID_REQUEST", "The request parameters are invalid."
         )
 
-    @app.exception_handler(Exception)
     async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         # Log the traceback; never return it to the client.
         logger.exception("unhandled_exception", error_type=type(exc).__name__)
         return error_response(request, 500, "INTERNAL_ERROR", "Internal server error")
+
+    # Last resort for errors raised by the middleware itself. Route errors are
+    # answered by UnhandledErrorMiddleware below, inside the middleware stack.
+    app.add_exception_handler(Exception, unhandled_exception)
 
     app.include_router(health.router)
     app.include_router(api_router)
     _drop_generated_422(app)
 
     # Middleware runs outermost-last-added. Order (outer -> inner):
-    # RequestContext -> SecurityHeaders -> HostAllowlist -> CORS -> app
+    # RequestContext -> SecurityHeaders -> HostAllowlist -> CORS -> UnhandledError -> app
+    app.add_middleware(UnhandledErrorMiddleware, handler=unhandled_exception)
     if settings.cors_allowed_origins:
         app.add_middleware(
             CORSMiddleware,

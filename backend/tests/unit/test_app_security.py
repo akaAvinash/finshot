@@ -110,6 +110,52 @@ def test_unhandled_errors_return_generic_500(make_settings: SettingsFactory) -> 
     assert "hunter2" not in response.text
 
 
+def test_unhandled_errors_keep_request_id_and_security_headers(
+    make_settings: SettingsFactory,
+) -> None:
+    """DEF-001: a 500 must pass back through the middleware stack like any other
+    answer, and the app must not re-raise to the server (which drops keep-alive)."""
+    app = create_app(make_settings())
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("redis is down")
+
+    # raise_server_exceptions=True (default): the test fails if the exception
+    # still escapes the app after the 500 is sent.
+    with TestClient(app) as client:
+        response = client.get("/boom")
+        follow_up = client.get("/health/live")
+    assert response.status_code == 500
+    body = response.json()
+    assert body["code"] == "INTERNAL_ERROR"
+    assert response.headers["X-Request-ID"] == body["requestId"]
+    for header in ("X-Content-Type-Options", "Cache-Control", "Content-Security-Policy"):
+        assert header in response.headers, header
+    assert follow_up.status_code == 200
+
+
+def test_unhandled_error_after_response_started_is_not_swallowed(
+    make_settings: SettingsFactory,
+) -> None:
+    """Once headers are sent a second response cannot be written; the error
+    must still reach the server so the broken response is aborted."""
+    from fastapi.responses import StreamingResponse
+
+    app = create_app(make_settings())
+
+    async def chunks():  # type: ignore[no-untyped-def]
+        yield b"partial"
+        raise RuntimeError("mid-stream")
+
+    @app.get("/stream-boom")
+    async def stream_boom() -> StreamingResponse:
+        return StreamingResponse(chunks(), media_type="text/plain")
+
+    with TestClient(app) as client, pytest.raises(RuntimeError, match="mid-stream"):
+        client.get("/stream-boom")
+
+
 def test_openapi_documents_400_not_422(client: TestClient) -> None:
     """Invalid requests return 400 INVALID_REQUEST, so no operation lists a 422."""
     document = client.get("/openapi.json").json()

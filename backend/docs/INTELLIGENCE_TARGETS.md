@@ -111,8 +111,8 @@ Price references, from 1m bars of the target instrument:
 | DP0930 | 09:31 | 09:46 | 10:01 | 10:31 | 10:32 IST |
 | DP0945 | 09:46 | 10:01 | 10:16 | 10:46 | 10:47 IST |
 
-A label is **final** only when every bar it needs has `availableAt` at or before
-that time: the last exit bar's end for a live feed that delivered on time, or that
+A complete label is **final** only when every bar it needs has `availableAt` at
+or before that time (the one exception, an `INVALID` label, is below): the last exit bar's end for a live feed that delivered on time, or that
 end plus 5 seconds for a backfill (so 10:32:05 and 10:47:05 IST for the 60m
 labels above). A label is never read before it is final.
 

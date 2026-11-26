@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { isIP } from "node:net";
 import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
+import { stagingCandles, stagingInstruments, stagingOverview } from "./market-fixture.mjs";
 import { createAlertsFixture, isAlertsFixtureRequest } from "./alerts-fixture.mjs";
 
 const publicOrigin = "http://127.0.0.1:3101";
@@ -15,6 +16,7 @@ let failNextLogout = false;
 let failNextProfileRead = false;
 let rejectNextProfileCsrf = false;
 let reportMode = "ready";
+let marketMode = "ready";
 let alerts = createAlertsFixture();
 const returningNumber = "+919876543218";
 const registrationNumber = "+919876543219";
@@ -112,6 +114,7 @@ createServer(async (request, response) => {
     failNextProfileRead = false;
     rejectNextProfileCsrf = false;
     reportMode = "ready";
+    marketMode = "ready";
     alerts = createAlertsFixture();
     return response.writeHead(204).end();
   }
@@ -143,6 +146,10 @@ createServer(async (request, response) => {
     reportMode = url.pathname.split("/").at(-1);
     return response.writeHead(204).end();
   }
+  if (request.method === "POST" && /^\/__fixture\/market\/(ready|empty|stale|unavailable|bad-candles|no-quotes)$/.test(url.pathname)) {
+    marketMode = url.pathname.split("/").at(-1);
+    return response.writeHead(204).end();
+  }
 
   const endpoint = request.url?.replace(/^\/api\/v1\/auth\//, "");
   const cookies = Object.fromEntries((request.headers.cookie ?? "").split("; ").filter(Boolean).map((item) => item.split("=", 2)));
@@ -165,8 +172,9 @@ createServer(async (request, response) => {
       if (request.headers.authorization || request.headers.origin || request.headers["x-csrf-token"]) {
         return error(response, 400, "UNEXPECTED_HEADERS");
       }
+      if (marketMode === "unavailable") return error(response, 503, "MARKET_DATA_UNAVAILABLE");
       if (url.pathname === "/api/v1/market/overview") {
-        return json(response, 200, { source: "demo", quotes: [] }, { "Set-Cookie": "fixture-unrelated=ignored; Path=/" });
+        return json(response, 200, stagingOverview(marketMode), { "Set-Cookie": "fixture-unrelated=ignored; Path=/" });
       }
       if (url.pathname === "/api/v1/market/instruments") {
         const query = url.searchParams.get("query");
@@ -176,19 +184,26 @@ createServer(async (request, response) => {
         if (query === "fixture-provider-offline") {
           return error(response, 503, "MARKET_DATA_UNAVAILABLE", { "Retry-After": "5", "X-Request-Id": "market-fixture" });
         }
-        const instruments = query === "M&M" ? [{ id: "NSE:M&M", symbol: "M&M", name: "Mahindra & Mahindra",
-          exchange: "NSE", kind: "equity", currency: "INR", aliases: [] }] : [];
-        return json(response, 200, { instruments });
+        return json(response, 200, stagingInstruments(query));
       }
       const candleId = /^\/api\/v1\/market\/instruments\/([^/]+)\/candles$/.exec(url.pathname)?.[1];
       if (candleId) {
-        return json(response, 200, { instrumentId: decodeURIComponent(candleId), timeframe: url.searchParams.get("timeframe"), source: "demo", candles: [] });
+        const result = stagingCandles(decodeURIComponent(candleId), url.searchParams.get("timeframe"), marketMode);
+        if (!result) return error(response, 404, "UNKNOWN_INSTRUMENT");
+        return json(response, 200, marketMode === "bad-candles" ? { ...result, timeframe: "unknown" } : result);
       }
       return error(response, 404, "NOT_FOUND");
     }
     if (!session) return error(response, 401, "UNAUTHENTICATED");
     if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
-    if (workspaceRead) return json(response, 200, { status: "empty" });
+    if (workspaceRead) {
+      if (url.pathname === "/api/v1/auto-trading/paper" && reportMode !== "empty") {
+        return json(response, 200, { status: "ready", data: {
+          source: "demo", environment: "PAPER", asOf: "2026-11-25T10:00:00Z", account: { equityPaise: 2506400 },
+        } });
+      }
+      return json(response, 200, { status: "empty" });
+    }
     if (request.headers.origin !== publicOrigin || csrfToken !== `ses.${sessionId}` || request.headers["x-csrf-token"] !== csrfToken) {
       return error(response, 403, "CSRF_FAILED");
     }

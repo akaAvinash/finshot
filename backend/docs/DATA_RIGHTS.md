@@ -23,8 +23,10 @@ decision that depends on it. Labels used below:
    2(a) bar use of "the APIs and/or live market data for virtual/mock trading apps"; Fyers terms
    section 11 bar exchange data for "paper trading" and "virtual trading purposes". TrueData
    lists virtual and simulated trading as prohibited too. (Fact.) Tradeo's T38 feeds a live feed
-   into the paper engine, so **T38 is blocked until the chosen provider confirms in writing**
-   that owner-only paper evaluation is permitted. (Inference.)
+   into the paper engine. **Owner decision (2026-11-26):** Tradeo is a personal tool for the
+   owner's own algo trading, which the Kite terms allow ("personal use ... customising personal
+   trading"). The owner accepts the residual risk of these clauses and does not need written
+   confirmation from the provider. T38 is not blocked on data rights.
 3. **NSE MCP is research-only.** NSE states the data is "for information and learning. It is not
    meant for real-time trading, investment advice or commercial products", and that access grants
    no right to "train or fine-tune any AI systems". (Fact.) It is delayed 1 to 3 minutes and
@@ -68,9 +70,9 @@ the terms above.
 | Demo screens and tests | 1 Market Data (demo provider) | Synthetic fixtures only | None. Every response stays `source: demo`. |
 | Research notes, ad-hoc exploration by the owner | none | NSE MCP, broker API | Not stored in Tradeo tables; not shown to other users. |
 | Owner-only live quote display | 1 Market Data | Kite Connect (or Fyers) on the owner's own account | Owner is the only user; no other account sees the data. |
-| Paper trading on live data (T38) | 6 Paper Trading | **None confirmed** | Written permission from the provider (section 5, Q1). |
-| Stored candles for backtests | 5 Backtesting | **None confirmed** | Written permission to store (Q2), or a licensed vendor whose terms allow it. |
-| Historical training data (E12, E13) | 3 Market Intelligence | **None confirmed** | Licensed point-in-time intraday data with storage and modelling rights (Q2, Q3). E12 stays blocked until then. NSE MCP is excluded. |
+| Paper trading on live data (T38) | 6 Paper Trading | Kite Connect | Owner-only, under the owner's accepted-risk decision (section 8). |
+| Stored candles for backtests | 5 Backtesting | Kite Connect | Owner-only, never shared or shown to others; under the same decision. |
+| Historical training data (E12, E13) | 3 Market Intelligence | Kite Connect | Owner-only models for the owner's own trading, under the same decision. NSE MCP stays excluded (NSE bars AI training). E12 still checks coverage and gaps. |
 | Risk freshness checks | 7 Risk | Same feed as the caller's snapshot | Risk only reads `asOf` stamps; it never calls Market Data. |
 | Live orders | 8 Execution | Out of scope | Gate G9, E21 and separate owner approval. Kite and Fyers terms also say the APIs are not for fully automated trades. |
 | Any second user, public page or commercial product | all | **None** | Exchange-authorised vendor agreement and, for NSE, a licence. |
@@ -100,9 +102,10 @@ Criteria and trade-offs:
 
 Not decided here: signing up, paying, or creating an API key. Those are owner actions.
 
-## 5. Open questions to send in writing before T34 and T38
+## 5. Optional questions for the provider
 
-Send to the chosen provider (Kite: `kiteconnect@zerodha.com`, which Zerodha staff named on the Kite forum
+**Not required.** The owner decided on 2026-11-26 not to send these (section 8). They are kept
+for reference if Tradeo ever gains a second user. Send to the chosen provider (Kite: `kiteconnect@zerodha.com`, which Zerodha staff named on the Kite forum
 for compliance questions) and keep the reply as the approval record for TRAD-10.
 
 1. May live data from my own account be used in a private, single-user paper trading simulator
@@ -167,8 +170,11 @@ NSE
 - Not read: Dhan and Upstox API terms, Upstox historical depth, TrueData API price list, NSE
   website Terms of Use. Parts of the NSE policy page and Dhan pages were read via summary of a
   truncated page; the PDF clauses quoted above were read directly.
-- Owner approved the Kite Connect feed and its cost on 2026-11-26 (section 8). The section 5
-  questions are still unsent, so T38 and data storage stay blocked.
+- Owner approved the Kite Connect feed and its cost on 2026-11-26 and chose not to seek written
+  answers to section 5 (section 8).
+- Still relevant at any live-order step (gate G9, E21): Kite terms 2(e) say the APIs are "not
+  meant for placing fully automated trades (without manual intervention)", and Zerodha's FAQ says
+  client algos above 10 orders per second need exchange registration.
 
 ## 8. Approval record
 
@@ -176,5 +182,5 @@ NSE
 |---|---|
 | Pilot feed choice | **Approved**: Zerodha Kite Connect. Owner (Avinash), 2026-11-26 16:38 UTC, project thread decision card |
 | Cost approval | **Approved**: ₹500 per month per API key (plus GST). Same record. Sign-up and payment are owner actions |
-| Provider written answers (section 5) | Not sent |
+| Provider written answers (section 5) | **Not required.** Owner decision, 2026-11-26 16:45 UTC, project thread: personal tool for the owner's own algo trading; owner accepts the residual risk. Re-open if any second user is added |
 | Tested revision | Docs only; read against main `17a409d` |

@@ -65,8 +65,9 @@ at `D`, so any real arrival is a little after `D`. The engine therefore computes
 at `T = D + 10 s` and accepts inputs with `availableAt <= T`, but only bars
 stamped before `D` (rule L2). The 10 seconds covers the 5 second backfill lag and
 normal live delivery; a bar that arrives later is treated as missing. Nothing in
-the grace window can carry information from after `D`, because the bar stamped
-`D` and later bars are never features.
+the grace window can carry information from after `D`, because no input observed
+after `D` (a bar stamped `D` or later, or a snapshot with `asOf > D`) is ever a
+feature (rule L2).
 
 ## 3. Decision points
 

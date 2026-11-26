@@ -60,14 +60,22 @@ Historical backfills have no true arrival time, so they use the bar's end plus a
 fixed **publication lag of 5 seconds** (Estimate; tune from the E02 feed once it
 is chosen). The cutoff test always uses `availableAt`, never the bar `time`.
 
+**Proposal, input grace.** The last feature bar (stamped `D - 1 min`) ends exactly
+at `D`, so any real arrival is a little after `D`. The engine therefore computes
+at `T = D + 10 s` and accepts inputs with `availableAt <= T`, but only bars
+stamped before `D` (rule L2). The 10 seconds covers the 5 second backfill lag and
+normal live delivery; a bar that arrives later is treated as missing. Nothing in
+the grace window can carry information from after `D`, because the bar stamped
+`D` and later bars are never features.
+
 ## 3. Decision points
 
 **Proposal.** Two decision points per regular session, fixed in IST:
 
-| Id | Decision time `D` (IST) | UTC | Feature cutoff | Bars available (1m) | Publish deadline |
+| Id | Decision time `D` (IST) | UTC | Input cutoff `T` | Feature bars (1m) | Publish deadline |
 |---|---|---|---|---|---|
-| `DP0930` | 09:30:00 | 04:00:00 | `availableAt <= 09:30:00` | 09:15 to 09:29 (15 bars) | 09:31:00 |
-| `DP0945` | 09:45:00 | 04:15:00 | `availableAt <= 09:45:00` | 09:15 to 09:44 (30 bars) | 09:46:00 |
+| `DP0930` | 09:30:00 | 04:00:00 | `availableAt <= 09:30:10` | stamped 09:15 to 09:29 (15 bars) | 09:31:00 |
+| `DP0945` | 09:45:00 | 04:15:00 | `availableAt <= 09:45:10` | stamped 09:15 to 09:44 (30 bars) | 09:46:00 |
 
 Why these two: the first 15 minutes form the opening range, and 09:45 gives a
 second look after the opening auction noise settles. Each decision point is
@@ -75,8 +83,8 @@ evaluated independently; DP0945 may use DP0930's published output as a feature
 because that output's `availableAt` (its publish time) is before 09:45.
 
 A prediction published after its deadline is not used (abstain `LATE`, section
-6). The one-minute budget is also why the label starts at the close of the bar
-stamped `D`, not at `D` itself (section 4).
+6). The label starts one further minute after the deadline, so a consumer has
+time to act on a published prediction (section 4).
 
 ## 4. Prediction targets and labels
 
@@ -85,16 +93,22 @@ giving six targets per instrument per session.
 
 Price references, from 1m bars of the target instrument:
 
-- **Entry reference** `P0` = close of the 1m bar stamped `D` (it ends at
-  `D + 1 min`, after the publish deadline, so a decision could act on it).
-- **Exit reference** `Ph` = close of the 1m bar stamped `D + h`.
-- The return window is therefore exactly `h` minutes, from `D + 1 min` to
-  `D + h + 1 min`.
+- **Entry reference** `P0` = close of the 1m bar stamped `D + 1 min`. That bar
+  ends at `D + 2 min`, one full minute after the publish deadline (`D + 1 min`).
+  The minute is the execution latency budget: a consumer that receives the
+  prediction by the deadline can act at `P0`.
+- **Exit reference** `Ph` = close of the 1m bar stamped `D + 1 min + h`.
+- The return window is therefore exactly `h` minutes, from `D + 2 min` to
+  `D + h + 2 min`.
+- **Replays (E07) fill at `P0` or later, never earlier.** A replay that models
+  slower execution moves both `P0` and `Ph` later by the same whole minutes; it
+  never fills at a price whose bar ends before `D + 2 min`. The label itself does
+  not change with the replay's choice.
 
 | Decision | `P0` bar | 15m `Ph` bar | 30m `Ph` bar | 60m `Ph` bar | Label final at |
 |---|---|---|---|---|---|
-| DP0930 | 09:30 | 09:45 | 10:00 | 10:30 | 10:31 IST |
-| DP0945 | 09:45 | 10:00 | 10:15 | 10:45 | 10:46 IST |
+| DP0930 | 09:31 | 09:46 | 10:01 | 10:31 | 10:32 IST |
+| DP0945 | 09:46 | 10:01 | 10:16 | 10:46 | 10:47 IST |
 
 All windows end well before 15:30, so no label crosses a session.
 
@@ -105,7 +119,7 @@ Labels per (instrument, session, decision point, horizon):
    `UP` if `r_h > theta_h`, `DOWN` if `r_h < -theta_h`, else `FLAT`.
 3. **Excursions** (for E07 stop and target studies, not trained on in v1):
    `mfe_h` and `mae_h` = max and min of `10,000 * ln(high / P0)` and
-   `10,000 * ln(low / P0)` over bars stamped `D + 1` to `D + h`.
+   `10,000 * ln(low / P0)` over bars stamped `D + 2 min` to `D + 1 min + h`.
 
 **Dead zone.** `theta_h = max(C, 0.5 * m_h)`, where
 
@@ -126,7 +140,7 @@ report.
 so it is known when the prediction is made and can be used by E06 as a filter.
 It is never computed from the label window.
 
-Inputs at decision `D` (all from bars with `availableAt <= D`):
+Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars stamped before `D`):
 
 | Name | Definition |
 |---|---|
@@ -138,8 +152,9 @@ Inputs at decision `D` (all from bars with `availableAt <= D`):
 | `drive` | `10,000 * ln(C_D / O)` bps |
 | `range` | `10,000 * ln(H_D / L_D)` bps |
 | `eff` | `abs(C_D - O) / (H_D - L_D)`, 0 when the range is 0 |
-| `rangeRatio` | `range` / median `range` at the same `D` over the 20 prior sessions |
-| `vix` | last INDIAVIX value with `availableAt <= D` (feature only) |
+| `M` | median `range` at the same `D` over the 20 prior sessions |
+| `rangeRatio` | `range / M` when `M > 0`; undefined when `M = 0` (abstain `FLAT_HISTORY`, section 6), whatever the current `range` |
+| `vix` | last INDIAVIX value with `availableAt <= T` (feature only) |
 
 Two axes, each with fixed rules evaluated in order:
 
@@ -188,13 +203,14 @@ forces `ABSTAIN`:
 | `SESSION_NOT_STANDARD` | the session did not open at 09:15, is a special or shortened session, or a market-wide halt is in force or occurred before `D` |
 | `SOURCE_MISMATCH` | inputs come from more than one `source`, or the source does not match the environment (`demo` data may only feed `DEMO` records) |
 | `STALE_INPUT` | `freshness` is `stale`; or the newest 1m bar's `availableAt` is earlier than `D - 2 min`; or the INDIAVIX value is older than 5 min at `D` |
-| `MISSING_BARS` | any 1m bar from 09:15 to `D - 1 min` is missing (v1 requires all 15 or 30) |
+| `MISSING_BARS` | any 1m bar stamped 09:15 to `D - 1 min` is missing at `T` (v1 requires all 15 or 30) |
 | `INVALID_BAR` | a bar fails the `MarketCandle` invariants (OHLC bounds, UTC, ascending) |
 | `NO_HISTORY` | fewer than 20 prior sessions exist for the trailing medians, or `PC` is missing |
+| `FLAT_HISTORY` | the 20 sessions exist but their median opening range `M` is 0, so `rangeRatio` is undefined (a frozen or bad feed, not a real market) |
 | `EXTREME_REGIME` | volatility state is `EXTREME` |
 | `MODEL_NOT_VALIDATED` | no validated model version exists for this decision point and horizon (E06 rule: no automatic promotion) |
 | `LOW_CONFIDENCE` | the model's top class probability is below `0.55` (Estimate, to be calibrated in E05) |
-| `LOOKAHEAD_GUARD` | any input has `availableAt > D` (rule L1); this also raises an error event, because it means a bug, not a market condition |
+| `LOOKAHEAD_GUARD` | any input used has `availableAt > T`, or any bar used is stamped `D` or later (rules L1, L2); this also raises an error event, because it means a bug, not a market condition |
 | `LATE` | the record would be published after `D + 1 min` |
 
 Abstention is per horizon where the cause is horizon-specific (`MODEL_NOT_VALIDATED`,
@@ -210,15 +226,15 @@ a model that abstains on everything scores zero coverage, not perfect accuracy.
 
 | Id | Rule | How E16 can test it |
 |---|---|---|
-| L1 | A feature at `D` uses only records with `availableAt <= D`. The bar `time` alone is never the cutoff. | Inject a bar stamped `D - 1 min` with `receivedAt = D + 3 s`; expect `LOOKAHEAD_GUARD` or exclusion, never use. |
-| L2 | The bar stamped `D` (still forming at `D`) is never a feature. It is only the label's `P0`. | Change the `D` bar's values; features and regime must not change. |
+| L1 | A feature at `D` uses only records with `availableAt <= T` (`T = D + 10 s`). The bar `time` alone is never the cutoff. | Inject a bar stamped `D - 1 min` with `receivedAt = D + 3 s`: used. Same bar with `receivedAt = D + 15 s`: excluded (`MISSING_BARS`), never used. |
+| L2 | Bars stamped `D` or later (forming or future at `D`) are never features, even if they arrive before `T`. They are only label inputs. | Change the `D` and `D + 1 min` bars' values; features and regime must not change. |
 | L3 | Today's daily bar is forming during the session and is never a feature. Only completed prior-session daily bars are. | Drop today's 1D bar; features must not change. |
 | L4 | Every trailing statistic (medians, percentiles, scaler means, the `theta_h` dead zone) uses sessions strictly before the decision session. No full-sample normalization. | Change any value on or after the decision session; past statistics must not change. |
 | L5 | Feature and label code live in separate modules; feature code may not import label code. | Import-graph check. |
-| L6 | Model evaluation is walk-forward by session: train on sessions before `S`, test on `S`. Labels end inside their session (max 10:46 IST), so no purge gap is needed between sessions; a random row-level split is not allowed. | Assert every training session precedes every test session. |
+| L6 | Model evaluation is walk-forward by session: train on sessions before `S`, test on `S`. Labels end inside their session (max 10:47 IST), so no purge gap is needed between sessions; a random row-level split is not allowed. | Assert every training session precedes every test session. |
 | L7 | Inputs are stored as first received. A later correction is a new record with its own `receivedAt`; replays use what was available at `D`. | Correct a stored bar after `D`; a replay at `D` must use the original. |
 | L8 | Adjusted history (splits, dividends) is used only with point-in-time adjustment factors. v1 has indices only, so this applies from the first equity target. | Out of v1; tracked for later. |
-| L9 | Each record stores `featureCutoff = D`, the max `availableAt` it used, and a hash of its inputs, so any record can be re-derived and audited. | Recompute from stored inputs; hash must match. |
+| L9 | Each record stores `decisionTime = D`, `featureCutoff = T`, the max `availableAt` it used, and a hash of its inputs, so any record can be re-derived and audited. | Recompute from stored inputs; hash must match. |
 
 ## 8. Output record
 
@@ -232,9 +248,10 @@ it, through a separate contract PR.
   "instrumentId": "NSE:NIFTY50",
   "sessionDate": "2026-11-23",
   "decisionPoint": "DP0930",
-  "featureCutoff": "2026-11-23T04:00:00Z",
-  "maxInputAvailableAt": "2026-11-23T04:00:00Z",
-  "publishedAt": "2026-11-23T04:00:02Z",
+  "decisionTime": "2026-11-23T04:00:00Z",
+  "featureCutoff": "2026-11-23T04:00:10Z",
+  "maxInputAvailableAt": "2026-11-23T04:00:05Z",
+  "publishedAt": "2026-11-23T04:00:12Z",
   "source": "demo",
   "regimeVersion": 1,
   "regime": "RANGE/NORMAL",
@@ -261,15 +278,17 @@ Reproducible from the demo provider on main `17a409d`
 2026-11-23; the previous session in the demo calendar is 2026-11-20). Script in
 section 9.4.
 
-Inputs at DP0930. Every input is available at or before the cutoff 04:00:00 UTC:
+Inputs at DP0930, treated as a backfill (bar end plus the 5 second lag). Every
+feature input is available at or before the input cutoff `T` = 04:00:10 UTC:
 
 | Input | Bar `time` (IST) | `availableAt` (UTC) | Used as |
 |---|---|---|---|
-| Daily bar 2026-11-20, close 24349.61 | 2026-11-20 09:15 | 2026-11-20 10:00:00 | `PC` |
-| 1m bar, open 24318.73 | 09:15 | 03:46:00 | `O` |
-| ... 13 more 1m bars ... | 09:16 to 09:28 | 03:47:00 to 03:59:00 | `H_D`, `L_D` |
-| 1m bar, close 24327.62 | 09:29 | 04:00:00 | `C_D` (last feature bar) |
-| 1m bar 09:30, close 24328.33 | 09:30 | **04:01:00** | label `P0` only, not a feature |
+| Daily bar 2026-11-20, close 24349.61 | 2026-11-20 09:15 | 2026-11-20 10:00:05 | `PC` |
+| 1m bar, open 24318.73 | 09:15 | 03:46:05 | `O` |
+| ... 13 more 1m bars ... | 09:16 to 09:28 | 03:47:05 to 03:59:05 | `H_D`, `L_D` |
+| 1m bar, close 24327.62 | 09:29 | 04:00:05 | `C_D` (last feature bar) |
+| 1m bar 09:30 | 09:30 | 04:01:05 | not used (stamped `D`, rule L2) |
+| 1m bar 09:31, close 24329.21 | 09:31 | **04:02:05** | label `P0` only, not a feature |
 
 Computed features and regime:
 
@@ -288,16 +307,17 @@ Labels. Every exit bar is available after the publish deadline:
 
 | Decision | h | `P0` (bar, close) | `Ph` (bar, close) | `r_h` | Label final at (IST) | Direction at `theta = 16` |
 |---|---|---|---|---|---|---|
-| DP0930 | 15 | 09:30, 24328.33 | 09:45, 24333.88 | +2.3 bps | 09:46 | `FLAT` |
-| DP0930 | 30 | 09:30, 24328.33 | 10:00, 24343.54 | +6.3 bps | 10:01 | `FLAT` |
-| DP0930 | 60 | 09:30, 24328.33 | 10:30, 24335.79 | +3.1 bps | 10:31 | `FLAT` |
-| DP0945 | 15 | 09:45, 24333.88 | 10:00, 24343.54 | +4.0 bps | 10:01 | `FLAT` |
-| DP0945 | 30 | 09:45, 24333.88 | 10:15, 24348.42 | +6.0 bps | 10:16 | `FLAT` |
-| DP0945 | 60 | 09:45, 24333.88 | 10:45, 24321.15 | -5.2 bps | 10:46 | `FLAT` |
+| DP0930 | 15 | 09:31, 24329.21 | 09:46, 24335.17 | +2.4 bps | 09:47 | `FLAT` |
+| DP0930 | 30 | 09:31, 24329.21 | 10:01, 24343.09 | +5.7 bps | 10:02 | `FLAT` |
+| DP0930 | 60 | 09:31, 24329.21 | 10:31, 24338.70 | +3.9 bps | 10:32 | `FLAT` |
+| DP0945 | 15 | 09:46, 24335.17 | 10:01, 24343.09 | +3.3 bps | 10:02 | `FLAT` |
+| DP0945 | 30 | 09:46, 24335.17 | 10:16, 24348.58 | +5.5 bps | 10:17 | `FLAT` |
+| DP0945 | 60 | 09:46, 24335.17 | 10:46, 24317.68 | -7.2 bps | 10:47 | `FLAT` |
 
 `theta = 16` is the cost floor `C`; with 20 prior sessions it would be
-`max(16, 0.5 * m_h)`. Ordering holds in every row: latest feature `availableAt`
-(09:30 IST) < publish deadline (09:31) <= `P0` available (09:31) < label final.
+`max(16, 0.5 * m_h)`. Ordering holds in every row (DP0930, IST): latest feature
+`availableAt` (09:30:05) <= input cutoff (09:30:10) < publish deadline (09:31:00)
+< `P0` bar end (09:32:00) < label final.
 The demo series moves little, so every label is `FLAT`; that is a property of the
 demo data, not of the rule.
 
@@ -326,10 +346,14 @@ cannot be computed: `NO_HISTORY`.
 `MISSING_BARS`. v1 does not interpolate.
 
 **E. Late input (lookahead guard).** DP0930, bar stamped 09:29 IST arrives with
-`receivedAt` 04:00:03 UTC. Its `availableAt` is 04:00:03 > cutoff 04:00:00. If
-the engine waits for it, it uses an input after `D`; so the bar is excluded,
-which makes it missing: `MISSING_BARS`. If any code path did use it, the record
-is `LOOKAHEAD_GUARD` and an error event is raised.
+`receivedAt` 04:00:15 UTC. Its `availableAt` is 04:00:15 > cutoff `T` 04:00:10,
+so it is excluded, which makes it missing: `MISSING_BARS`. If any code path did
+use it, the record is `LOOKAHEAD_GUARD` and an error event is raised. (The same
+bar arriving at 04:00:03 is inside the grace window and is used normally.)
+
+**G. Frozen history.** 20 prior sessions exist, but a bad feed repeated one
+price, so the median opening range `M` is 0. `rangeRatio` is undefined:
+`FLAT_HISTORY`.
 
 **F. Extreme open.** `gap = -240 bps`: volatility state `EXTREME`,
 `EXTREME_REGIME`.
@@ -364,9 +388,10 @@ async def main() -> None:
         print(f"{hh:02d}:{mm:02d}", len(f), "gap", round(1e4 * math.log(o / prev.close), 1),
               "drive", round(1e4 * math.log(c / o), 1), "range", round(1e4 * math.log(hi / lo), 1),
               "eff", round(abs(c - o) / (hi - lo), 3))
-        p0 = by[f"{t0 // 60:02d}:{t0 % 60:02d}"].close
+        e = t0 + 1  # P0 is the bar stamped D + 1 min
+        p0 = by[f"{e // 60:02d}:{e % 60:02d}"].close
         for h in (15, 30, 60):
-            ph = by[f"{(t0 + h) // 60:02d}:{(t0 + h) % 60:02d}"].close
+            ph = by[f"{(e + h) // 60:02d}:{(e + h) % 60:02d}"].close
             print("  h", h, p0, ph, round(1e4 * math.log(ph / p0), 1))
 
 asyncio.run(main())
@@ -379,9 +404,11 @@ Each has a recommended option; the values above already use it.
 1. **Universe v1.** Recommended: the three indices only (NIFTY 50, Bank Nifty,
    Fin Nifty). Alternative: add liquid equities now, which needs point-in-time
    corporate-action data (L8) from the E02 feed.
-2. **Entry reference.** Recommended: close of the bar stamped `D` (one-minute
-   publish budget). Alternative: close of the last feature bar (`D - 1 min`),
-   which is not tradable once the prediction is ready and overstates results.
+2. **Entry reference.** Recommended: close of the bar stamped `D + 1 min`
+   (one minute to publish, then one minute to act). Alternatives: the close of
+   the bar stamped `D`, which ends exactly at the publish deadline and so assumes
+   zero execution latency; or a later bar, which is safer if execution turns out
+   slower than a minute but measures less of the move.
 3. **Dead zone.** Recommended: `max(16 bps, 0.5 x 20-session median |r_h|)`.
    Alternative: a fixed 16 bps, simpler but makes `FLAT` rare on volatile days.
 4. **Missing bars.** Recommended: abstain on any missing bar in v1.
@@ -393,7 +420,7 @@ Each has a recommended option; the values above already use it.
 
 | Item | Status |
 |---|---|
-| Draft | 0.1.0, 2026-11-26 |
+| Draft | 0.1.0, 2026-11-26 (revised after CodeRabbit review: input grace, entry latency, zero-range history) |
 | Engine boundary version | ENGINES.md 1.0.0 |
 | Owner decisions (section 10) | Pending |
 | Tested revision | Docs only; examples computed on main `17a409d` with the script in 9.4 |

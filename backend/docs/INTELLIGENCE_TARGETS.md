@@ -142,6 +142,10 @@ Labels per (instrument, session, decision point, horizon):
   `DOWN`.
 - `m_h` = median of `|r_h|` for the same instrument, decision point and horizon
   over the **20 prior sessions** (strictly before the labelled session, rule L4).
+  Sessions whose label is `INVALID` are skipped, not replaced. `m_h` needs at
+  least **15 valid returns** out of the 20 (proposal). With fewer, `theta_h` is
+  undefined and the current label is final as `INVALID` with reason
+  `NO_DEAD_ZONE`; it is never labelled `UP`, `DOWN` or `FLAT`.
 
 A label is `INVALID`, not `FLAT`, when any bar it needs is missing. Invalid
 labels are excluded from training and scoring and counted in the evaluation
@@ -165,7 +169,7 @@ Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars that e
 | `drive` | `10,000 * ln(C_D / O)` bps |
 | `range` | `10,000 * ln(H_D / L_D)` bps |
 | `eff` | `abs(C_D - O) / (H_D - L_D)`, 0 when the range is 0 |
-| `M` | median `range` at the same `D` over the 20 prior sessions |
+| `M` | median `range` at the same `D` over the 20 prior sessions, skipping sessions with missing opening bars; needs at least 15 valid ranges, otherwise abstain `NO_HISTORY` |
 | `rangeRatio` | `range / M` when `M > 0`; undefined when `M = 0` (abstain `FLAT_HISTORY`, section 6), whatever the current `range` |
 | `vix` | last INDIAVIX observation made at or before `D` (a 1m bar whose end, `time + 1 min`, is at or before `D`; or a snapshot with `asOf <= D`) and with `availableAt <= T` (feature only) |
 
@@ -218,12 +222,12 @@ forces `ABSTAIN`:
 | `STALE_INPUT` | `freshness` is `stale`; or the newest 1m bar's `availableAt` is earlier than `D - 2 min`; or the INDIAVIX value is older than 5 min at `D` |
 | `MISSING_BARS` | any 1m bar stamped 09:15 to `D - 1 min` is missing at `T` (v1 requires all 15 or 30) |
 | `INVALID_BAR` | a bar fails the `MarketCandle` invariants (OHLC bounds, UTC, ascending), or a 1m bar's `time` is not on a whole minute (seconds and fractions must be 0; the schema does not enforce this today, so the engine checks it on input) |
-| `NO_HISTORY` | fewer than 20 prior sessions exist for the trailing medians, or `PC` is missing |
+| `NO_HISTORY` | fewer than 20 prior sessions exist for the trailing medians, fewer than 15 of them have a valid opening range for `M`, or `PC` is missing |
 | `FLAT_HISTORY` | the 20 sessions exist but their median opening range `M` is 0, so `rangeRatio` is undefined (a frozen or bad feed, not a real market) |
 | `EXTREME_REGIME` | volatility state is `EXTREME` |
 | `MODEL_NOT_VALIDATED` | no validated model version exists for this decision point and horizon (E06 rule: no automatic promotion) |
 | `LOW_CONFIDENCE` | the model's top class probability is below `0.55` (Estimate, to be calibrated in E05) |
-| `LOOKAHEAD_GUARD` | any input used has `availableAt > T`, or any bar used is stamped `D` or later (rules L1, L2); this also raises an error event, because it means a bug, not a market condition |
+| `LOOKAHEAD_GUARD` | any input used has `availableAt > T`, or was observed after `D` (a bar whose end is after `D`, or a snapshot with `asOf > D`), even if it arrived before `T` (rules L1, L2); this also raises an error event, because it means a bug, not a market condition. A misaligned bar is rejected earlier as `INVALID_BAR` |
 | `LATE` | the record would be published after `D + 1 min` |
 
 Abstention is per horizon where the cause is horizon-specific (`MODEL_NOT_VALIDATED`,

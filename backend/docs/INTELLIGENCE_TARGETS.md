@@ -105,10 +105,15 @@ Price references, from 1m bars of the target instrument:
   never fills at a price whose bar ends before `D + 2 min`. The label itself does
   not change with the replay's choice.
 
-| Decision | `P0` bar | 15m `Ph` bar | 30m `Ph` bar | 60m `Ph` bar | Label final at |
+| Decision | `P0` bar | 15m `Ph` bar | 30m `Ph` bar | 60m `Ph` bar | Last exit bar ends |
 |---|---|---|---|---|---|
 | DP0930 | 09:31 | 09:46 | 10:01 | 10:31 | 10:32 IST |
 | DP0945 | 09:46 | 10:01 | 10:16 | 10:46 | 10:47 IST |
+
+A label is **final** only when every bar it needs has `availableAt` at or before
+that time: the last exit bar's end for a live feed that delivered on time, or that
+end plus 5 seconds for a backfill (so 10:32:05 and 10:47:05 IST for the 60m
+labels above). A label is never read before it is final.
 
 All windows end well before 15:30, so no label crosses a session.
 
@@ -154,7 +159,7 @@ Inputs at decision `D` (all from inputs with `availableAt <= T`, and bars stampe
 | `eff` | `abs(C_D - O) / (H_D - L_D)`, 0 when the range is 0 |
 | `M` | median `range` at the same `D` over the 20 prior sessions |
 | `rangeRatio` | `range / M` when `M > 0`; undefined when `M = 0` (abstain `FLAT_HISTORY`, section 6), whatever the current `range` |
-| `vix` | last INDIAVIX value with `availableAt <= T` (feature only) |
+| `vix` | last INDIAVIX observation made at or before `D` (a 1m bar stamped before `D`, or a snapshot with `asOf <= D`) and with `availableAt <= T` (feature only) |
 
 Two axes, each with fixed rules evaluated in order:
 
@@ -227,7 +232,7 @@ a model that abstains on everything scores zero coverage, not perfect accuracy.
 | Id | Rule | How E16 can test it |
 |---|---|---|
 | L1 | A feature at `D` uses only records with `availableAt <= T` (`T = D + 10 s`). The bar `time` alone is never the cutoff. | Inject a bar stamped `D - 1 min` with `receivedAt = D + 3 s`: used. Same bar with `receivedAt = D + 15 s`: excluded (`MISSING_BARS`), never used. |
-| L2 | Bars stamped `D` or later (forming or future at `D`) are never features, even if they arrive before `T`. They are only label inputs. | Change the `D` and `D + 1 min` bars' values; features and regime must not change. |
+| L2 | No input observed after `D` is a feature, even if it arrives before `T`: no bar stamped `D` or later (forming or future at `D`), and no snapshot with `asOf > D`. Such bars are only label inputs. | Change the `D` and `D + 1 min` bars' values; features and regime must not change. |
 | L3 | Today's daily bar is forming during the session and is never a feature. Only completed prior-session daily bars are. | Drop today's 1D bar; features must not change. |
 | L4 | Every trailing statistic (medians, percentiles, scaler means, the `theta_h` dead zone) uses sessions strictly before the decision session. No full-sample normalization. | Change any value on or after the decision session; past statistics must not change. |
 | L5 | Feature and label code live in separate modules; feature code may not import label code. | Import-graph check. |
@@ -305,14 +310,14 @@ what this example shows.
 
 Labels. Every exit bar is available after the publish deadline:
 
-| Decision | h | `P0` (bar, close) | `Ph` (bar, close) | `r_h` | Label final at (IST) | Direction at `theta = 16` |
+| Decision | h | `P0` (bar, close) | `Ph` (bar, close) | `r_h` | Label final at, backfill (IST) | Direction at `theta = 16` |
 |---|---|---|---|---|---|---|
-| DP0930 | 15 | 09:31, 24329.21 | 09:46, 24335.17 | +2.4 bps | 09:47 | `FLAT` |
-| DP0930 | 30 | 09:31, 24329.21 | 10:01, 24343.09 | +5.7 bps | 10:02 | `FLAT` |
-| DP0930 | 60 | 09:31, 24329.21 | 10:31, 24338.70 | +3.9 bps | 10:32 | `FLAT` |
-| DP0945 | 15 | 09:46, 24335.17 | 10:01, 24343.09 | +3.3 bps | 10:02 | `FLAT` |
-| DP0945 | 30 | 09:46, 24335.17 | 10:16, 24348.58 | +5.5 bps | 10:17 | `FLAT` |
-| DP0945 | 60 | 09:46, 24335.17 | 10:46, 24317.68 | -7.2 bps | 10:47 | `FLAT` |
+| DP0930 | 15 | 09:31, 24329.21 | 09:46, 24335.17 | +2.4 bps | 09:47:05 | `FLAT` |
+| DP0930 | 30 | 09:31, 24329.21 | 10:01, 24343.09 | +5.7 bps | 10:02:05 | `FLAT` |
+| DP0930 | 60 | 09:31, 24329.21 | 10:31, 24338.70 | +3.9 bps | 10:32:05 | `FLAT` |
+| DP0945 | 15 | 09:46, 24335.17 | 10:01, 24343.09 | +3.3 bps | 10:02:05 | `FLAT` |
+| DP0945 | 30 | 09:46, 24335.17 | 10:16, 24348.58 | +5.5 bps | 10:17:05 | `FLAT` |
+| DP0945 | 60 | 09:46, 24335.17 | 10:46, 24317.68 | -7.2 bps | 10:47:05 | `FLAT` |
 
 `theta = 16` is the cost floor `C`; with 20 prior sessions it would be
 `max(16, 0.5 * m_h)`. Ordering holds in every row (DP0930, IST): latest feature

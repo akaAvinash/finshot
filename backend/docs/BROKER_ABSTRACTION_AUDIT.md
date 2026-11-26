@@ -155,9 +155,13 @@ error-to-HTTP mapping, audit and alerts.
 **Acceptance check "a second adapter can be added without Zerodha-specific
 core types":** today a second adapter needs edits to `adapter.py`,
 `models.py`, a migration, the contract and five frontend files (section 3).
-After F1 to F4, adding a provider should touch only a new adapter module and
-its registry entry. T23 is the test of that; T21's conformance suite should
-check it.
+After F1 to F4 and F12, adding a provider should touch only a new adapter
+module and its registry entry. F12 matters here: until the frontend reads
+display names (and its proxy allow-list in `route.ts`) from the backend
+instead of the fixed `brokerNames` map, a new provider still needs a
+frontend edit. T23 is the test of that, and it is not complete while any
+fixed frontend provider list remains. T21's conformance suite should check
+that a registry-only provider shows a display name end to end.
 
 ## 7. Reproduce
 

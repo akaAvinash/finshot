@@ -1,6 +1,6 @@
 # Market Intelligence: decision points, prediction targets, regimes and abstention
 
-Jira: TRAD-9 (E03). Version **0.1.0 (draft)**, 2026-11-26. Builds against
+Jira: TRAD-9 (E03). Version **0.2.0**, 2026-11-26 (owner decisions approved). Builds against
 [ENGINES.md](ENGINES.md) **1.0.0 (frozen)**. Engine 3, Market Intelligence (lead:
 Claude Quant). Downstream users: E05 feature and score engine, E06 regime filter,
 E07 historical replay, E16 conformance and leakage tests.
@@ -419,7 +419,8 @@ asyncio.run(main())
 
 ## 10. Decisions for the owner
 
-Each has a recommended option; the values above already use it.
+Each had a recommended option, and the values above use it. **Approved by the owner
+on 2026-11-26: all five recommended options.**
 
 1. **Universe v1.** Recommended: the three indices only (NIFTY 50, Bank Nifty,
    Fin Nifty). Alternative: add liquid equities now, which needs point-in-time
@@ -440,7 +441,7 @@ Each has a recommended option; the values above already use it.
 
 | Item | Status |
 |---|---|
-| Draft | 0.1.0, 2026-11-26 (revised after CodeRabbit review: input grace, entry latency, zero-range history) |
+| Version | 0.2.0, 2026-11-26. 0.1.0 draft was revised over five CodeRabbit review rounds |
 | Engine boundary version | ENGINES.md 1.0.0 |
-| Owner decisions (section 10) | Pending |
+| Owner decisions (section 10) | Approved 2026-11-26: all five recommended options (indices-only universe, entry at bar `D + 1 min`, adaptive dead zone, abstain on any missing bar, `NOT_A_SESSION` records) |
 | Tested revision | Docs only; examples computed on main `17a409d` with the script in 9.4 |

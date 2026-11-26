@@ -5,10 +5,13 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 import structlog
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -97,6 +100,49 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+
+class UnhandledErrorMiddleware:
+    """Turns an unhandled exception into the app's 500 response *inside* the
+    middleware stack.
+
+    Starlette sends an `exception_handler(Exception)` response from its
+    outermost ServerErrorMiddleware, which bypasses every user middleware (so
+    no X-Request-ID or security headers) and then re-raises to the server,
+    which closes the keep-alive connection. Added innermost, this middleware
+    answers instead, so the 500 gets the same headers as every other response
+    and the connection stays usable. If the response has already started, a
+    second one cannot be sent, so the error is re-raised unchanged."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        handler: Callable[[Request, Exception], Awaitable[Response]],
+    ) -> None:
+        self.app = app
+        self.handler = handler
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            if response_started:
+                raise
+            response = await self.handler(Request(scope), exc)
+            await response(scope, receive, send)
 
 
 class HostAllowlistMiddleware(TrustedHostMiddleware):

@@ -10,7 +10,7 @@ from pydantic.alias_generators import to_camel
 
 JOURNAL_LIMIT = 500
 
-Reason = Literal["entry", "signal-exit", "stop-loss", "end-of-replay"]
+Reason = Literal["entry", "signal-exit", "stop-loss", "take-profit", "end-of-replay"]
 
 
 class _Wire(BaseModel):

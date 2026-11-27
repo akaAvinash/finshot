@@ -22,7 +22,7 @@ paper only. No live order path exists or is added here.
 | 4 | Strategy Research | Claude Quant | `app/strategies` | Strategies, versions, `risk_review`, `backtest_verdict`. No regime filter. | E06 |
 | 5 | Backtesting | Claude Quant | `app/backtests` | Pure `replay(window, candles, position_size_bps)`, stored runs, a polling worker. | E07, T13 |
 | 6 | Paper Trading | Claude | `app/paper` | Pure `step(...)` simulator, account, orders, trades, events, replays, a polling worker. | T14, T38 to T41, E17 |
-| 7 | Risk Management | Claude Risk | not a package | Partial and embedded: `paper/engine.py` (`risk_blocked`, `session_loss`) and `strategies/rules.py` (`risk_review`). | E08 |
+| 7 | Risk Management | Claude Risk | not a package | Partial and embedded: `paper/engine.py` (`blocked_reason`, `session_loss`; per-user limits from Trade Controls in `paper/controls.py`) and `strategies/rules.py` (`risk_review`). | E08 |
 | 8 | Trade Execution | Claude Risk | not a package | Simulated fills live inside `paper/engine.py`. `BrokerAdapter` has no write methods. | E09, E21 |
 | 9 | Portfolio and Performance | Claude + Codex | `app/reports` | Read-only paper reports and reconciliation over paper trades. UI is Codex's. | E10, E18 |
 | 10 | Orchestration | Claude | `app/main.py`, `app/agents` | Three in-process polling workers (backtests, paper, agents). Four advisory agents. No market calendar, no shared event log. | E11, E17 |

@@ -24,6 +24,7 @@ from app.auth.models import AuditEvent
 from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.market.demo import DemoMarketDataProvider
+from app.paper import controls as tc
 from app.paper import engine as rules
 from app.paper.models import (
     PaperAccount,
@@ -32,6 +33,8 @@ from app.paper.models import (
     PaperReplay,
     PaperReplayFinish,
     PaperTrade,
+    TradeControlChange,
+    TradeControlsRow,
 )
 from app.paper.schemas import (
     RECENT_EVENTS,
@@ -104,7 +107,7 @@ class PaperService:
         candles = await self._market.get_candles(instrument_id, "1D")
         if candles is None:
             return []
-        return [rules.Session(c.time, c.open, c.low, c.close) for c in candles.candles]
+        return [rules.Session(c.time, c.open, c.low, c.close, c.high) for c in candles.candles]
 
     # ----------------------------------------------------------------- reads
 
@@ -158,6 +161,7 @@ class PaperService:
             assigned_active = False
             if account is not None and account.strategy_id is not None:
                 assigned_active = any(s.id == account.strategy_id for s in active)
+            revision, _updated, control_values = await _load_controls(db, user_id)
         # `replay` is 0 until the first assign: an account created only by
         # halt or another command has never assigned a strategy.
         never_assigned = account is None or account.replay == 0
@@ -187,13 +191,13 @@ class PaperService:
                 strategies=strategies,
                 strategy_id=None,
                 agent=PaperAgentOut(ready=False),
-                risk=_risk_out("idle", 0, 0),
+                risk=_risk_out(None, control_values, revision),
                 account=PaperAccountOut(
                     capital_paise=rules.CAPITAL_PAISE,
                     cash_paise=rules.CAPITAL_PAISE,
                     equity_paise=rules.CAPITAL_PAISE,
                     position_quantity=0,
-                    per_trade_risk_paise=rules.PER_TRADE_RISK_PAISE,
+                    per_trade_risk_paise=_int(control_values["maxRiskPerTradePaise"]),
                 ),
                 replay=PaperReplayOut(
                     session_date=None, sessions_done=0, sessions_total=0, finished=False
@@ -217,13 +221,13 @@ class PaperService:
             strategies=strategies,
             strategy_id=None if account.strategy_id is None else str(account.strategy_id),
             agent=PaperAgentOut(ready=assigned_active and not account.finished),
-            risk=_risk_out(account.engine, account.session_pnl_paise, account.session_fills),
+            risk=_risk_out(account, control_values, revision),
             account=PaperAccountOut(
                 capital_paise=account.capital_paise,
                 cash_paise=account.cash_paise,
                 equity_paise=equity,
                 position_quantity=account.position_quantity,
-                per_trade_risk_paise=rules.PER_TRADE_RISK_PAISE,
+                per_trade_risk_paise=_int(control_values["maxRiskPerTradePaise"]),
             ),
             replay=PaperReplayOut(
                 session_date=session_date,
@@ -286,6 +290,105 @@ class PaperService:
         if snapshot is None:  # pragma: no cover - the account row exists now
             raise unavailable()
         return snapshot
+
+    # -------------------------------------------------------- trade controls
+
+    def _controls_enabled(self) -> None:
+        if not self._enabled:
+            raise ApiError(
+                503,
+                "TRADE_CONTROLS_UNAVAILABLE",
+                "Trade controls are temporarily unavailable. Try again shortly.",
+            )
+
+    async def trade_controls(self, user_id: uuid.UUID) -> tc.TradeControlsSettingsOut:
+        self._controls_enabled()
+        async with self._factory() as db:
+            revision, updated_at, values = await _load_controls(db, user_id)
+        return _settings_out(revision, updated_at, values)
+
+    async def trade_controls_history(self, user_id: uuid.UUID) -> tc.TradeControlsHistoryOut:
+        self._controls_enabled()
+        async with self._factory() as db:
+            rows = (
+                await db.scalars(
+                    select(TradeControlChange)
+                    .where(TradeControlChange.user_id == user_id)
+                    .order_by(TradeControlChange.revision.desc())
+                    .limit(tc.HISTORY_LIMIT)
+                )
+            ).all()
+        return tc.TradeControlsHistoryOut.model_validate(
+            {
+                "changes": [
+                    {"revision": r.revision, "changed_at": r.changed_at, "fields": r.fields}
+                    for r in rows
+                ]
+            }
+        )
+
+    async def update_trade_controls(
+        self, user_id: uuid.UUID, body: tc.TradeControlsUpdateIn
+    ) -> tc.TradeControlsSettingsOut:
+        self._controls_enabled()
+        new = body.controls.values()
+        problems = tc.out_of_bounds(new)
+        if problems:
+            raise ApiError(
+                400,
+                "TRADE_CONTROLS_OUT_OF_BOUNDS",
+                "Some limits are above what paper trading allows.",
+                extra={"fieldErrors": problems},
+            )
+        async with self._factory() as db:
+            async with db.begin():
+                now = self._clock()
+                account = await self._locked_account(db, user_id, now)
+                if account.engine == "running":
+                    raise ApiError(
+                        409,
+                        "TRADE_CONTROLS_ENGINE_RUNNING",
+                        "Pause the paper engine before changing trade controls.",
+                    )
+                revision, updated_at, old = await _load_controls(db, user_id, lock=True)
+                if body.expected_revision != revision:
+                    raise ApiError(
+                        409,
+                        "TRADE_CONTROLS_REVISION_CONFLICT",
+                        "These controls changed since you opened them. Reload to see the latest.",
+                    )
+                changes = tc.changed_fields(old, new)
+                if not changes:
+                    return _settings_out(revision, updated_at, old)
+                columns = {tc.COLUMNS[name]: value for name, value in new.items()}
+                if revision == 0:
+                    db.add(TradeControlsRow(user_id=user_id, revision=1, updated_at=now, **columns))
+                else:
+                    await db.execute(
+                        update(TradeControlsRow)
+                        .where(TradeControlsRow.user_id == user_id)
+                        .values(revision=revision + 1, updated_at=now, **columns)
+                    )
+                db.add(
+                    TradeControlChange(
+                        user_id=user_id, revision=revision + 1, changed_at=now, fields=changes
+                    )
+                )
+                db.add(
+                    AuditEvent(
+                        user_id=user_id,
+                        actor=f"user:{user_id}",
+                        action="settings.trade_controls_updated",
+                        resource=f"trade-controls:{user_id}",
+                        metadata_redacted={
+                            "environment": "PAPER",
+                            "revision": revision + 1,
+                            "fields": [c["field"] for c in changes],
+                        },
+                        created_at=now,
+                    )
+                )
+                return _settings_out(revision + 1, now, new)
 
     async def _locked_account(
         self, db: AsyncSession, user_id: uuid.UUID, now: datetime
@@ -377,6 +480,8 @@ class PaperService:
         account.finished = False
         account.session_pnl_paise = 0
         account.session_fills = 0
+        account.session_peak_pnl_paise = 0
+        account.session_loss_streak = 0
         account.last_tick_at = None
         return [f"Assigned {params.name} v{number} for a paper replay of {params.instrument}."]
 
@@ -481,8 +586,13 @@ class PaperService:
             position_quantity=account.position_quantity,
             position_entry_paise=account.position_entry_paise,
             position_stop_paise=account.position_stop_paise,
+            position_target_paise=account.position_target_paise,
             position_fees_paise=account.position_fees_paise,
             sessions_done=account.sessions_done,
+        )
+        _revision, _updated, control_values = await _load_controls(db, account.user_id)
+        limits, size_bps, stop_loss_bps = tc.limits_for(
+            control_values, params.position_size_bps, params.stop_loss_bps
         )
         queued = (
             None
@@ -495,9 +605,10 @@ class PaperService:
             state,
             sessions,
             queued,
-            size_bps=params.position_size_bps,
-            stop_loss_bps=params.stop_loss_bps,
+            size_bps=size_bps,
+            stop_loss_bps=stop_loss_bps,
             symbol=params.instrument,
+            limits=limits,
         )
         session_index = account.sessions_done
         if queued_row is not None and out.queued_outcome is not None:
@@ -525,8 +636,8 @@ class PaperService:
                 kind="PAPER_RISK_LIMIT_REACHED",
                 dedupe_key=f"paper-risk-limit:{account.replay}:{session_index}",
                 message=(
-                    f"A buy signal for {params.instrument} was blocked: the session loss or"
-                    " trade limit was reached."
+                    f"A buy signal for {params.instrument} was blocked: a session risk limit"
+                    " was reached."
                 ),
                 at=now,
             )
@@ -581,8 +692,11 @@ class PaperService:
         account.position_quantity = state.position_quantity
         account.position_entry_paise = state.position_entry_paise
         account.position_stop_paise = state.position_stop_paise
+        account.position_target_paise = state.position_target_paise
         account.position_fees_paise = state.position_fees_paise
         account.session_pnl_paise = state.session_pnl_paise
+        account.session_peak_pnl_paise = state.session_peak_pnl_paise
+        account.session_loss_streak = state.session_loss_streak
         account.session_fills = state.session_fills
         account.sessions_done = state.sessions_done
         if out.finished:
@@ -668,20 +782,68 @@ def _clear_position(account: PaperAccount) -> None:
     account.position_quantity = 0
     account.position_entry_paise = None
     account.position_stop_paise = None
+    account.position_target_paise = None
     account.position_fees_paise = 0
 
 
-def _risk_out(engine: str, session_pnl_paise: int, session_fills: int) -> PaperRiskOut:
-    loss = max(0, -session_pnl_paise)
-    blocked = (
-        engine == "halted" or loss >= rules.LOSS_LIMIT_PAISE or session_fills >= rules.TRADE_LIMIT
+def _settings_out(
+    revision: int, updated_at: datetime | None, values: dict[str, int | None]
+) -> tc.TradeControlsSettingsOut:
+    return tc.TradeControlsSettingsOut(
+        revision=revision,
+        updated_at=updated_at,
+        controls=tc.TradeControlsOut.from_values(values),
+        defaults=tc.TradeControlsOut.from_values(tc.DEFAULTS),
+        bounds=tc.bounds_out(),
     )
-    return PaperRiskOut(
-        status="blocked" if blocked else "approved",
-        daily_loss_paise=loss,
-        loss_limit_paise=rules.LOSS_LIMIT_PAISE,
-        trades_today=session_fills,
-        trade_limit=rules.TRADE_LIMIT,
+
+
+def _int(value: int | None) -> int:
+    if value is None:
+        raise ValueError("a required Trade Control is null")
+    return value
+
+
+async def _load_controls(
+    db: AsyncSession, user_id: uuid.UUID, *, lock: bool = False
+) -> tuple[int, datetime | None, dict[str, int | None]]:
+    """A user's revision, last save time and control values; the defaults at
+    revision 0 when they never saved."""
+    statement = select(TradeControlsRow).where(TradeControlsRow.user_id == user_id)
+    if lock:
+        statement = statement.with_for_update().execution_options(populate_existing=True)
+    row = await db.scalar(statement)
+    if row is None:
+        return 0, None, dict(tc.DEFAULTS)
+    return row.revision, row.updated_at, {n: getattr(row, c) for n, c in tc.COLUMNS.items()}
+
+
+def _risk_out(
+    account: PaperAccount | None, control_values: dict[str, int | None], revision: int
+) -> PaperRiskOut:
+    """The caller's risk status under their effective limits."""
+    limits, _size, _stop = tc.limits_for(control_values, rules.BASIS_POINTS, 1)
+    state = rules.State(
+        cash_paise=0,
+        session_pnl_paise=0 if account is None else account.session_pnl_paise,
+        session_peak_pnl_paise=0 if account is None else account.session_peak_pnl_paise,
+        session_loss_streak=0 if account is None else account.session_loss_streak,
+        session_fills=0 if account is None else account.session_fills,
+    )
+    reason: str | None = rules.blocked_reason(state, limits)
+    if account is not None and account.engine == "halted":
+        reason = "HALTED"
+    return PaperRiskOut.model_validate(
+        {
+            "status": "approved" if reason is None else "blocked",
+            "blocked_reason": reason,
+            "daily_loss_paise": rules.session_loss(state),
+            "loss_limit_paise": limits.loss_limit_paise,
+            "trades_today": state.session_fills,
+            "trade_limit": limits.trade_limit,
+            "consecutive_losses": state.session_loss_streak,
+            "controls_revision": revision,
+        }
     )
 
 

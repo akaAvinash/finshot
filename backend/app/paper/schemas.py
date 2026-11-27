@@ -55,10 +55,15 @@ class PaperAgentOut(_Wire):
 
 class PaperRiskOut(_Wire):
     status: Literal["approved", "blocked"]
+    blocked_reason: (
+        Literal["HALTED", "LOSS_LIMIT", "TRADE_LIMIT", "PROFIT_CAP", "CONSECUTIVE_LOSSES"] | None
+    )
     daily_loss_paise: int = Field(ge=0)
     loss_limit_paise: int = Field(ge=0)
     trades_today: int = Field(ge=0)
     trade_limit: int = Field(ge=1)
+    consecutive_losses: int = Field(ge=0)
+    controls_revision: int = Field(ge=0)
 
 
 class PaperAccountOut(_Wire):
@@ -95,7 +100,7 @@ class PaperTradeOut(_Wire):
     fees_paise: int = Field(ge=0)
     pnl_paise: int
     filled_at: datetime
-    reason: Literal["entry", "signal-exit", "stop-loss", "end-of-replay"]
+    reason: Literal["entry", "signal-exit", "stop-loss", "take-profit", "end-of-replay"]
 
 
 class PaperEventOut(_Wire):

@@ -7,13 +7,15 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from app.api.routes.auth import Auth, RequiredSession
+from app.api.routes.auth import Auth, RequiredSession, ensure_stepped_up
 from app.api.routes.brokers import csrf_session
 from app.auth.otp import mask_phone
 from app.auth.schemas import SettingsProfileIn, SettingsProfileOut, Timezone
 from app.auth.service import SessionInfo
+from app.paper import controls as tc
+from app.paper.service import PaperService
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
@@ -42,3 +44,55 @@ async def update_profile(
         session, display_name=body.display_name, timezone=body.timezone
     )
     return _out(session, name, timezone)
+
+
+def get_paper(request: Request) -> PaperService:
+    service: PaperService = request.app.state.paper
+    return service
+
+
+Paper = Annotated[PaperService, Depends(get_paper)]
+
+
+async def trade_controls_save_session(
+    request: Request, auth: Auth, session: RequiredSession
+) -> SessionInfo:
+    """401, 403 TOTP_SETUP_REQUIRED, 403 CSRF_FAILED, 403 STEP_UP_REQUIRED, in
+    this order, before the body is looked at."""
+    auth.enforce_csrf(request, session)
+    ensure_stepped_up(auth, session)
+    return session
+
+
+TradeControlsSaveSession = Annotated[SessionInfo, Depends(trade_controls_save_session)]
+
+
+@router.get(
+    "/trade-controls",
+    response_model=tc.TradeControlsSettingsOut,
+    operation_id="getTradeControls",
+)
+async def get_trade_controls(session: RequiredSession, paper: Paper) -> tc.TradeControlsSettingsOut:
+    return await paper.trade_controls(session.user_id)
+
+
+@router.put(
+    "/trade-controls",
+    response_model=tc.TradeControlsSettingsOut,
+    operation_id="updateTradeControls",
+)
+async def update_trade_controls(
+    body: tc.TradeControlsUpdateIn, session: TradeControlsSaveSession, paper: Paper
+) -> tc.TradeControlsSettingsOut:
+    return await paper.update_trade_controls(session.user_id, body)
+
+
+@router.get(
+    "/trade-controls/history",
+    response_model=tc.TradeControlsHistoryOut,
+    operation_id="getTradeControlsHistory",
+)
+async def get_trade_controls_history(
+    session: RequiredSession, paper: Paper
+) -> tc.TradeControlsHistoryOut:
+    return await paper.trade_controls_history(session.user_id)

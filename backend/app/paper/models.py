@@ -57,6 +57,9 @@ class PaperAccount(Base):
             "sessions_done >= 0 AND sessions_done <= sessions_total", name="sessions_valid"
         ),
         CheckConstraint("session_fills >= 0", name="session_fills_nonnegative"),
+        CheckConstraint(
+            "position_target_paise IS NULL OR position_quantity > 0", name="target_needs_position"
+        ),
         # Only a running engine is ticked; it needs an unfinished replay.
         CheckConstraint("engine <> 'running' OR NOT finished", name="running_unfinished"),
     )
@@ -79,6 +82,8 @@ class PaperAccount(Base):
     position_quantity: Mapped[int] = mapped_column(BigInteger)
     position_entry_paise: Mapped[int | None] = mapped_column(BigInteger)
     position_stop_paise: Mapped[int | None] = mapped_column(BigInteger)
+    # Trade Controls take-profit target of the open position, if one is set.
+    position_target_paise: Mapped[int | None] = mapped_column(BigInteger)
     # Entry fee of the open position, charged against its exit P&L.
     position_fees_paise: Mapped[int] = mapped_column(BigInteger)
     sessions_done: Mapped[int] = mapped_column(Integer)
@@ -87,6 +92,10 @@ class PaperAccount(Base):
     # Signed realised P&L and fills of the last replayed session.
     session_pnl_paise: Mapped[int] = mapped_column(BigInteger)
     session_fills: Mapped[int] = mapped_column(Integer)
+    # Highest realised P&L reached in that session, and its trailing run of
+    # losing exits (Trade Controls profit cap and consecutive-loss limit).
+    session_peak_pnl_paise: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    session_loss_streak: Mapped[int] = mapped_column(Integer, server_default="0")
     last_tick_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -156,7 +165,7 @@ class PaperTrade(Base):
     __table_args__ = (
         CheckConstraint("side IN ('Buy', 'Sell')", name="side_valid"),
         CheckConstraint(
-            "reason IN ('entry', 'signal-exit', 'stop-loss', 'end-of-replay')",
+            "reason IN ('entry', 'signal-exit', 'stop-loss', 'take-profit', 'end-of-replay')",
             name="reason_valid",
         ),
         CheckConstraint("quantity >= 1", name="quantity_positive"),
@@ -193,3 +202,55 @@ class PaperEvent(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TradeControlsRow(Base):
+    """A user's saved Trade Controls (paper only). No row means the defaults,
+    revision 0. `revision` counts applied saves."""
+
+    __tablename__ = "trade_controls"
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="revision_positive"),
+        CheckConstraint("loss_limit_paise >= 1", name="loss_positive"),
+        CheckConstraint("trade_limit >= 1", name="trades_positive"),
+        CheckConstraint(
+            "profit_limit_paise IS NULL OR profit_limit_paise >= 1", name="profit_positive"
+        ),
+        CheckConstraint("max_consecutive_losses >= 0", name="streak_nonnegative"),
+        CheckConstraint(
+            "stop_loss_bps IS NULL OR stop_loss_bps BETWEEN 1 AND 9999", name="stop_range"
+        ),
+        CheckConstraint(
+            "take_profit_bps IS NULL OR take_profit_bps BETWEEN 1 AND 10000", name="target_range"
+        ),
+        CheckConstraint("max_risk_per_trade_paise >= 1", name="risk_positive"),
+        CheckConstraint("max_position_size_bps BETWEEN 1 AND 10000", name="size_range"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    loss_limit_paise: Mapped[int] = mapped_column(BigInteger)
+    trade_limit: Mapped[int] = mapped_column(Integer)
+    profit_limit_paise: Mapped[int | None] = mapped_column(BigInteger)
+    max_consecutive_losses: Mapped[int] = mapped_column(Integer)
+    stop_loss_bps: Mapped[int | None] = mapped_column(Integer)
+    take_profit_bps: Mapped[int | None] = mapped_column(Integer)
+    max_risk_per_trade_paise: Mapped[int] = mapped_column(BigInteger)
+    max_position_size_bps: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TradeControlChange(Base):
+    """One applied save: the changed fields with their old and new values."""
+
+    __tablename__ = "trade_control_changes"
+    __table_args__ = (CheckConstraint("revision >= 1", name="revision_positive"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fields: Mapped[list[dict[str, Any]]] = mapped_column(JSONB(none_as_null=True))

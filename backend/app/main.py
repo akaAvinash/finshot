@@ -197,6 +197,7 @@ def create_app(
             exc.code,
             exc.message,
             retry_after_seconds=exc.retry_after_seconds,
+            extra=exc.extra,
         )
 
     @app.exception_handler(RequestValidationError)

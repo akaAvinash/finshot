@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, case, func, literal, select, update
+from sqlalchemy import and_, case, delete, func, literal, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -38,7 +38,7 @@ from app.alerts.delivery import (
     NotificationDeliveryError,
     NotificationProvider,
 )
-from app.alerts.models import Alert, AlertChannelSetting, AlertDelivery
+from app.alerts.models import Alert, AlertChannelSetting, AlertDelivery, EmailSendAttempt
 from app.alerts.schemas import (
     AlertChannelOut,
     AlertChannelsIn,
@@ -55,6 +55,7 @@ logger = structlog.get_logger(__name__)
 MAX_ATTEMPTS = 3
 _BACKOFF = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15))
 _BATCH = 50
+_Claim = tuple[uuid.UUID, Notification, NotificationProvider, int, datetime]
 _RANK = {"info": 1, "warning": 2, "critical": 3}
 TEST_TITLE = "Tradeo test message"
 TEST_BODY = "This is a test message from Tradeo. Alerts can reach you on this channel."
@@ -305,8 +306,8 @@ class AlertDeliveryService:
             )
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
-    async def _claim(self) -> list[tuple[uuid.UUID, Notification, NotificationProvider]]:
-        claimed: list[tuple[uuid.UUID, Notification, NotificationProvider]] = []
+    async def _claim(self) -> list[_Claim]:
+        claimed: list[_Claim] = []
         async with self._factory() as db, db.begin():
             now = self._clock()
             rows = (
@@ -319,9 +320,17 @@ class AlertDeliveryService:
                 )
             ).all()
             day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            await db.execute(
+                delete(EmailSendAttempt).where(EmailSendAttempt.at < day - timedelta(days=2))
+            )
             # The daily check and the attempt increment below must not interleave
             # with another claimer for the same user and channel. Locks are taken
             # in sorted key order so concurrent batches cannot deadlock.
+            if any(r.channel == "email" for r in rows) and not self._providers["email"].simulated:
+                # One mailbox, one cap: serialize real-email claims across workers.
+                await db.execute(
+                    select(func.pg_advisory_xact_lock(func.hashtextextended("alerts:email-cap", 0)))
+                )
             for user_id, chan in sorted({(r.user_id, r.channel) for r in rows}, key=str):
                 await db.execute(
                     select(
@@ -354,6 +363,8 @@ class AlertDeliveryService:
                     )
                     if (used or 0) >= self._s.notify_daily_limit_per_channel:
                         reason = "DAILY_LIMIT"
+                if reason is None and channel == "email" and not provider.simulated:
+                    reason = await self._email_cap_reason(db, row, now, day)
                 if reason is not None:
                     row.status = "skipped"
                     row.status_reason = reason
@@ -368,6 +379,8 @@ class AlertDeliveryService:
                     title, body = alert.title, alert.message
                 row.attempts += 1
                 row.last_attempt_at = now
+                if channel == "email" and not provider.simulated:
+                    db.add(EmailSendAttempt(user_id=row.user_id, at=now))
                 row.next_attempt_at = now + _BACKOFF[min(row.attempts, MAX_ATTEMPTS) - 1]
                 row.destination_masked = mask_destination(destination)
                 row.simulated = provider.simulated
@@ -384,14 +397,58 @@ class AlertDeliveryService:
                             link=f"{self._s.public_origin.rstrip('/')}/alerts",
                         ),
                         provider,
+                        row.attempts,
+                        row.next_attempt_at,
                     )
                 )
         return claimed
 
+    async def _email_cap_reason(
+        self, db: AsyncSession, row: AlertDelivery, now: datetime, day: datetime
+    ) -> str | None:
+        """Hard caps for real email, counted per send attempt (retries included)
+        by each attempt's own timestamp: the whole mailbox per UTC day, then this
+        user per rolling hour. The caller holds the mailbox advisory lock."""
+        today = await db.scalar(
+            select(func.count()).select_from(EmailSendAttempt).where(EmailSendAttempt.at >= day)
+        )
+        if int(today or 0) >= self._s.notify_email_daily_cap:
+            return "DAILY_LIMIT"
+        recent = await db.scalar(
+            select(func.count())
+            .select_from(EmailSendAttempt)
+            .where(
+                EmailSendAttempt.user_id == row.user_id,
+                EmailSendAttempt.at >= now - timedelta(hours=1),
+            )
+        )
+        if int(recent or 0) >= self._s.notify_email_per_user_per_hour:
+            return "DAILY_LIMIT"
+        return None
+
+    async def _still_owned(self, delivery_id: uuid.UUID, attempts: int, lease: datetime) -> bool:
+        """Atomically re-take the lease just before sending. False when another
+        worker has claimed the row since (different attempts or lease)."""
+        now = self._clock()
+        async with self._factory() as db, db.begin():
+            result = await db.execute(
+                update(AlertDelivery)
+                .where(
+                    AlertDelivery.id == delivery_id,
+                    AlertDelivery.status == "pending",
+                    AlertDelivery.attempts == attempts,
+                    AlertDelivery.next_attempt_at == lease,
+                )
+                .values(next_attempt_at=now + _BACKOFF[min(attempts, MAX_ATTEMPTS) - 1])
+            )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
     async def send_due(self) -> int:
         """Send every due delivery once. Returns how many were sent."""
         sent = 0
-        for delivery_id, notification, provider in await self._claim():
+        for delivery_id, notification, provider, attempts, lease in await self._claim():
+            if not await self._still_owned(delivery_id, attempts, lease):
+                continue  # the lease ran out and another worker took it
             try:
                 await provider.send(notification)
             except NotificationDeliveryError as exc:

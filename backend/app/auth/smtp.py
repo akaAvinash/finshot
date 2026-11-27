@@ -35,6 +35,7 @@ class StdlibSmtpTransport:
         password: SecretStr,
         starttls: bool,
         timeout: float,
+        tls_context: ssl.SSLContext | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -42,11 +43,12 @@ class StdlibSmtpTransport:
         self._password = password
         self._starttls = starttls
         self._timeout = timeout
+        self._tls_context = tls_context
 
     def send(self, message: EmailMessage) -> None:
         with smtplib.SMTP(self._host, self._port, timeout=self._timeout) as client:
             if self._starttls:
-                client.starttls(context=ssl.create_default_context())
+                client.starttls(context=self._tls_context or ssl.create_default_context())
             client.login(self._username, self._password.get_secret_value())
             client.send_message(message)
 

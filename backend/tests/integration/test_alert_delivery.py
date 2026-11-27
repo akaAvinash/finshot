@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 from typing import Any
 
@@ -18,7 +18,10 @@ from fastapi.testclient import TestClient
 
 from app.alerts.delivery import Notification, NotificationDeliveryError
 from app.alerts.delivery_service import AlertDeliveryService
+from app.auth.smtp import StdlibSmtpTransport
 from app.retention.service import RetentionService
+from tests.conftest import SettingsFactory
+from tests.fake_smtp import FakeSmtpServer
 from tests.integration.test_paper import CONTRACT_PATH, _alembic, check
 from tests.support import PHONE, Browser, FakeClock, db_rows, invite_phone
 
@@ -482,3 +485,251 @@ def test_migration_0018_round_trips(db_url: str, user: Browser) -> None:
     assert db_rows(db_url, "SELECT 1 FROM pg_tables WHERE tablename = 'alert_deliveries'") == []
     command.upgrade(_alembic(db_url), "head")
     assert db_rows(db_url, "SELECT 1 FROM pg_tables WHERE tablename = 'alert_deliveries'")
+
+
+# --- Real email over SMTP (local fake server) --------------------------------
+
+SMTP_SECRET = "s3cret-pw"
+
+
+@pytest.fixture
+def smtp_server() -> Iterator[FakeSmtpServer]:
+    with FakeSmtpServer(password=SMTP_SECRET) as server:
+        yield server
+
+
+@pytest.fixture
+def smtp_client(
+    make_app: Callable[..., TestClient],
+    smtp_server: FakeSmtpServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    real = StdlibSmtpTransport
+
+    def trusting(**kw: Any) -> StdlibSmtpTransport:
+        return real(**kw, tls_context=smtp_server.client_context)
+
+    monkeypatch.setattr("app.alerts.delivery.StdlibSmtpTransport", trusting)
+    return make_app(
+        paper_worker_enabled=False,
+        backtest_worker_enabled=False,
+        agent_worker_enabled=False,
+        alert_worker_enabled=False,
+        notify_email_provider="smtp",
+        smtp_host="localhost",
+        smtp_port=smtp_server.port,
+        smtp_username="mailbox",
+        smtp_password=SMTP_SECRET,
+        smtp_from="alerts@example.com",
+        smtp_timeout_seconds=5,
+        **{"notify_email_daily_cap": 3, "notify_email_per_user_per_hour": 2},
+    )
+
+
+@pytest.fixture
+def smtp_user(smtp_client: TestClient, clock: FakeClock) -> Browser:
+    invite_phone(PHONE, email="avi@example.com")
+    browser = Browser(smtp_client)
+    browser.login_ready()
+    clock.advance(1)
+    assert save(browser, body(email=(True, "info"))).status_code == 200
+    return browser
+
+
+def test_smtp_sends_real_mail_over_starttls(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+    contract: dict[str, Any],
+) -> None:
+    add_alert(uid(smtp_user), clock.now)
+    assert run(smtp_client) == 1
+    assert smtp_server.auth_before_tls_attempts == 0
+    (mail,) = smtp_server.messages
+    assert "To: avi@example.com" in mail and "From: alerts@example.com" in mail
+    assert "Synthetic" in mail
+    (item,) = deliveries(smtp_user, contract)
+    assert item["status"] == "sent" and item["simulated"] is False
+    assert item["destinationMasked"] == "a***@example.com"
+
+
+def test_smtp_failure_is_clear_and_leaks_nothing(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    smtp_server.fail_after_auth = True
+    add_alert(uid(smtp_user), clock.now)
+    for _ in range(3):
+        assert run(smtp_client) == 0
+        clock.advance(3601)
+    (item,) = db_rows(db(), "SELECT status, status_reason, attempts FROM alert_deliveries")
+    assert (item["status"], item["status_reason"], item["attempts"]) == (
+        "failed",
+        "PROVIDER_ERROR",
+        3,
+    )
+    out = capsys.readouterr()
+    for text in (out.out, out.err, str(item)):
+        assert SMTP_SECRET not in text and "avi@example.com" not in text
+        assert "secret-server-text" not in text
+
+
+def test_smtp_bad_credentials_fail_without_leaking(
+    smtp_client: TestClient, smtp_user: Browser, smtp_server: FakeSmtpServer, clock: FakeClock
+) -> None:
+    smtp_server.password = "other"
+    add_alert(uid(smtp_user), clock.now)
+    assert run(smtp_client) == 0
+    rows = db_rows(db(), "SELECT status, status_reason FROM alert_deliveries")
+    assert rows == [{"status": "pending", "status_reason": "PROVIDER_ERROR"}]
+
+
+def test_smtp_per_user_hourly_cap(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+    contract: dict[str, Any],
+) -> None:
+    me = uid(smtp_user)
+    for _ in range(3):
+        add_alert(me, clock.now)
+    assert run(smtp_client) == 2
+    assert len(smtp_server.messages) == 2
+    assert sorted(i["status"] for i in deliveries(smtp_user, contract)) == [
+        "sent",
+        "sent",
+        "skipped",
+    ]
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 0  # still inside the hour
+    clock.advance(3601)
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 1
+
+
+def test_smtp_daily_cap_is_hard(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    me = uid(smtp_user)
+    sent = 0
+    for _ in range(5):
+        add_alert(me, clock.now)
+        sent += run(smtp_client)
+        clock.advance(3601)  # past the hourly window each time
+        if clock.now.day != 24:
+            break
+    assert sent == 3 and len(smtp_server.messages) == 3
+    reasons = db_rows(db(), "SELECT status_reason FROM alert_deliveries WHERE status = 'skipped'")
+    assert reasons and {r["status_reason"] for r in reasons} == {"DAILY_LIMIT"}
+
+
+def test_smtp_config_needs_mailbox_and_starttls(make_settings: SettingsFactory) -> None:
+    with pytest.raises(ValueError, match="SMTP_HOST"):
+        make_settings(notify_email_provider="smtp")
+    base: dict[str, Any] = {
+        "notify_email_provider": "smtp",
+        "smtp_host": "smtp.example.com",
+        "smtp_from": "a@example.com",
+        "smtp_username": "u",
+        "smtp_password": "p",
+    }
+    assert make_settings(**base).notify_email_provider == "smtp"
+    with pytest.raises(ValueError, match="STARTTLS"):
+        make_settings(smtp_starttls=False, **base)
+    assert make_settings().notify_email_provider == "disabled"
+
+
+def test_smtp_retry_counts_its_earlier_attempts_in_the_hourly_cap(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    me = uid(smtp_user)
+    smtp_server.fail_after_auth = True  # every attempt is recorded, even failed ones
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 0  # attempt 1 (hourly cap of the fixture is 2)
+    clock.advance(2 * 60)
+    assert run(smtp_client) == 0  # attempt 2 uses the last slot
+    clock.advance(6 * 60)
+    assert run(smtp_client) == 0  # attempt 3 would exceed the cap: skipped, not sent
+    row = db_rows(db(), "SELECT status, status_reason, attempts FROM alert_deliveries")[0]
+    assert row == {"status": "skipped", "status_reason": "DAILY_LIMIT", "attempts": 2}
+    assert len(db_rows(db(), "SELECT 1 FROM email_send_attempts")) == 2
+
+
+def test_smtp_caps_count_each_attempt_in_its_own_window(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    me = uid(smtp_user)
+    # An attempt just before the hour boundary, one a day ago: neither counts now.
+    for at in (clock.now - timedelta(minutes=61), clock.now - timedelta(days=1)):
+        db_rows(db(), "INSERT INTO email_send_attempts (user_id, at) VALUES (:u, :t)", u=me, t=at)
+    add_alert(me, clock.now)
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 2  # hourly cap 2 not yet reached by the old attempts
+
+
+def test_a_lost_lease_is_not_sent_twice(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    add_alert(uid(smtp_user), clock.now)
+    svc = service(smtp_client)
+
+    async def stolen() -> int:
+        await svc.enqueue()
+        claimed = await svc._claim()
+        assert len(claimed) == 1
+        # another worker claims it after the lease expired and bumps attempts
+        db_rows_update = "UPDATE alert_deliveries SET attempts = attempts + 1"
+        await asyncio.to_thread(db_rows, db(), db_rows_update)
+        _, _, _, attempts, lease = claimed[0]
+        return int(await svc._still_owned(claimed[0][0], attempts, lease))
+
+    assert smtp_client.portal is not None
+    assert smtp_client.portal.call(stolen) == 0
+    assert smtp_server.messages == []
+
+
+def test_send_due_skips_a_claim_superseded_before_sending(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    add_alert(uid(smtp_user), clock.now)
+    svc = service(smtp_client)
+    real_claim = svc._claim
+
+    async def claim_then_lose_the_lease() -> list[Any]:
+        claimed = await real_claim()
+        assert len(claimed) == 1
+        # another worker re-claims the row between our claim and the ownership check
+        await asyncio.to_thread(
+            db_rows, db(), "UPDATE alert_deliveries SET attempts = attempts + 1"
+        )
+        return claimed
+
+    svc._claim = claim_then_lose_the_lease  # type: ignore[method-assign]
+
+    async def run() -> int:
+        await svc.enqueue()
+        return await svc.send_due()
+
+    assert smtp_client.portal is not None
+    assert smtp_client.portal.call(run) == 0
+    assert smtp_server.messages == []

@@ -161,3 +161,18 @@ class AlertDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EmailSendAttempt(Base):
+    """One row per real email send attempt (retries included), so the mailbox-wide
+    daily cap and the per-user hourly cap count attempts inside their own windows."""
+
+    __tablename__ = "email_send_attempts"
+    __table_args__ = (
+        Index("ix_email_send_attempts_at", "at"),
+        Index("ix_email_send_attempts_user_id_at", "user_id", "at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

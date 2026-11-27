@@ -13,6 +13,7 @@ export const authEndpoints = {
   "otp/verify": "POST",
   "login/totp": "POST",
   "login/recovery": "POST",
+  "login/tester": "POST",
   "totp/enroll": "POST",
   "totp/confirm": "POST",
   "totp/recovery-codes": "POST",

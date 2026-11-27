@@ -85,6 +85,8 @@ Next.js verifies those headers and sends the verified address as a single `X-For
 
 On first sign-in, select **First-time email** and enter the phone number on the invite. Verify the code sent to the email on file, then scan the locally rendered QR code or enter the setup key in an authenticator app. Confirm the current six-digit code, then generate and save the recovery codes shown once. On later visits, select **Authenticator** and enter the phone number and current code. If you lose the authenticator, select **Recovery code** and enter the same number with a saved code. Recovery retires the previous authenticator and its codes, and requires replacement setup before opening the workspace. Private staging enrolment requires a configured email OTP provider and an invite with an email address. Local preview keeps its simulated phone and code flow.
 
+When the backend enables tester invites, set the server-only `TRADEO_TESTER_SIGN_IN_ENABLED=true` on the frontend to expose **Tester invite**. The tester uses an issued single-use invite and the associated phone number. The resulting session is limited to demo and paper features.
+
 Account Settings saves the display name and timezone on the server, lists active sessions, and offers recovery-code replacement. Ending another session or generating codes prompts for a current authenticator code when the session’s verification window has expired.
 
 After building the frontend, run `npm run test:e2e:staging`. The local ingress fixture listens on `127.0.0.1:3101`, the API fixture on `127.0.0.1:3102`, and the production frontend build on `127.0.0.1:3103`. The suite exercises auth, browser cookies, rate-limit isolation, and signed-in paper reports and CSV export without contacting staging or sending SMS.

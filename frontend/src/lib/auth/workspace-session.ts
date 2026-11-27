@@ -11,7 +11,7 @@ type WorkspaceSession =
   | { mode: "preview"; signedIn: boolean }
   | { mode: "unavailable"; signedIn: false }
   | { mode: "staging"; signedIn: false }
-  | { mode: "staging"; signedIn: true; totpEnabled: boolean };
+  | { mode: "staging"; signedIn: true; totpEnabled: boolean; tester: boolean };
 
 export const getWorkspaceSession = cache(async (): Promise<WorkspaceSession> => {
   const cookieStore = await cookies();
@@ -28,7 +28,11 @@ export const getWorkspaceSession = cache(async (): Promise<WorkspaceSession> => 
     if (response.status === 200) {
       const payload = await response.json();
       if (typeof payload?.user?.id === "string" && typeof payload.user.totpEnabled === "boolean" && typeof payload?.session?.expiresAt === "string") {
-        return { mode: config.mode, signedIn: true, totpEnabled: payload.user.totpEnabled };
+        const access = payload.session.access;
+        if (access === undefined) return { mode: config.mode, signedIn: true, totpEnabled: payload.user.totpEnabled, tester: false };
+        if (access === "tester" && config.testerSignInEnabled && !payload.user.totpEnabled && payload.session.stepUpUntil === null) {
+          return { mode: config.mode, signedIn: true, totpEnabled: false, tester: true };
+        }
       }
     } else {
       await response.body?.cancel();
@@ -42,6 +46,6 @@ export const getWorkspaceSession = cache(async (): Promise<WorkspaceSession> => 
 export async function requireWorkspaceSession() {
   const session = await getWorkspaceSession();
   if (!session.signedIn) redirect("/login");
-  if (session.mode === "staging" && !session.totpEnabled) redirect("/login/authenticator");
+  if (session.mode === "staging" && !session.totpEnabled && !session.tester) redirect("/login/authenticator");
   return session;
 }

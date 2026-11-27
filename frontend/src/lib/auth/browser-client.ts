@@ -13,6 +13,7 @@ let sessionCsrfToken: string | undefined;
 export type EmailChallenge = { challengeId: string; expiresAt: string; resendAvailableAt: string };
 export type AuthenticatorEnrollment = { secret: string; otpauthUri: string; expiresAt: string };
 export const recoveryCodePattern = /^[A-Z2-7]{5}-[A-Z2-7]{5}$/;
+export const testerInviteCodePattern = /^[A-Za-z0-9_-]{22}$/;
 
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
@@ -38,7 +39,7 @@ async function readCsrf(context?: CsrfContext) {
   return data.csrfToken as string;
 }
 
-type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "step-up" | "logout";
+type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "login/tester" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "step-up" | "logout";
 
 async function writeWithCsrf(path: string, method: "POST" | "PUT" | "DELETE", context?: CsrfContext, body?: object, signal?: AbortSignal) {
   function send(token: string) {
@@ -91,6 +92,15 @@ export async function signInWithAuthenticator(phone: string, code: string) {
 
 export async function signInWithRecoveryCode(phone: string, recoveryCode: string) {
   return readSignedIn(await postAuth("login/recovery", "pre_login", { phone: `+91${phone}`, recoveryCode }));
+}
+
+export async function signInWithTesterInvite(phone: string, inviteCode: string) {
+  const data = await (await postAuth("login/tester", "pre_login", { phone: `+91${phone}`, inviteCode })).json();
+  if (typeof data?.csrfToken !== "string" || !data.csrfToken || data?.user?.totpEnabled !== false ||
+      data?.session?.access !== "tester" || data.session.stepUpUntil !== null || !isTimestamp(data.session.expiresAt)) {
+    throw new AuthError(502);
+  }
+  sessionCsrfToken = data.csrfToken;
 }
 
 export async function enrollAuthenticator(): Promise<AuthenticatorEnrollment> {

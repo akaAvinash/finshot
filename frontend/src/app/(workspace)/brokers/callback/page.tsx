@@ -6,7 +6,7 @@ import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 export const metadata: Metadata = { title: "Complete broker authorization", referrer: "no-referrer", robots: { index: false, follow: false } };
 
 export default async function CallbackPage() {
-  const { mode } = await requireWorkspaceSession();
-  if (mode !== "staging") redirect("/brokers");
+  const session = await requireWorkspaceSession();
+  if (session.mode !== "staging" || session.tester) redirect("/brokers");
   return <BrokerCallbackPage />;
 }

@@ -14,6 +14,9 @@ async function proxy(request: NextRequest, context: Context) {
   const config = readAuthConfig();
   const endpoint = getAuthEndpoint((await context.params).endpoint.join("/"));
   if (!endpoint || config.mode === "preview") return errorResponse(404, "NOT_FOUND", "Auth endpoint unavailable.");
+  if (endpoint === "login/tester" && (config.mode !== "staging" || !config.testerSignInEnabled)) {
+    return errorResponse(404, "NOT_FOUND", "Auth endpoint unavailable.");
+  }
   const method = authEndpointMethod(endpoint);
   if (request.method !== method) return wrongMethod([method]);
   if (config.mode === "unavailable") return errorResponse(503, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");

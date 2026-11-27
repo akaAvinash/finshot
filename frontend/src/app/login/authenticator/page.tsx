@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Authenticator setup" };
 export default async function AuthenticatorPage() {
   const session = await getWorkspaceSession();
   if (session.mode !== "staging" || !session.signedIn) redirect("/login");
-  if (session.totpEnabled) redirect("/dashboard");
+  if (session.totpEnabled || session.tester) redirect("/dashboard");
 
   return <LoginFrame title="Set up your authenticator">
     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

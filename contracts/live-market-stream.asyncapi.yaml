@@ -1,0 +1,139 @@
+asyncapi: 3.1.0
+info:
+  title: FinShot owner market stream
+  version: 0.1.0-draft
+  description: |
+    Proposed read-only WebSocket for the FinShot Markets chart.
+    The existing public snapshot routes stay on demo data during the owner pilot.
+defaultContentType: application/json
+channels:
+  ownerMarket:
+    address: /api/v1/market/stream
+    description: |
+      The browser opens a same-origin WSS connection for one instrument and
+      candle timeframe. To switch instruments or timeframes, it closes the old
+      socket and opens another one. The browser sends no application messages.
+      The ingress routes this upgrade directly to the backend.
+
+      At upgrade, the backend checks the exact Origin and validates the
+      FinShot session cookie against the configured owner account. Anonymous
+      visitors, other accounts, tester sessions, and sessions pending
+      authenticator setup are denied. A deactivated or expired session must
+      lose streaming access. The route is disabled unless explicitly enabled.
+      Broker tokens stay on the server.
+
+      Reject before upgrade with HTTP 404 when disabled, 403 for an invalid
+      Origin or ineligible account, 401 for a missing, expired, or revoked
+      session, 400 for invalid selection parameters, and 503 for temporary
+      stream unavailability.
+
+      After upgrade, close with 4401 on session expiry or revocation, and
+      4403 if the account loses permission or the stream is disabled.
+      Treat 4401 as terminal until the user signs in again. Treat 4403 as
+      terminal until authorization or configuration changes. Normal closure
+      (1000) or a protocol policy violation (1008) is terminal for that
+      subscription. Reconnect with bounded
+      backoff after 1012 (service restart) or 1013 (temporary overload).
+      Browsers may observe a failed upgrade or a lost connection as 1006.
+      Recheck the session using the HTTP auth API before retrying 1006,
+      and stop automatic retries if the session is invalid or the bounded
+      retry budget is exhausted. The MarketStatus message describes the
+      upstream feed and never signals a session or authorization change.
+
+      The first data message after each connection is a snapshot. Subsequent
+      updates carry the latest quote and candle for the same selection. Both
+      frame types use the exchange quote timestamp in asOf. An update
+      replaces a matching candle or appends a later one. Older updates
+      are ignored. A reconnect loads a fresh snapshot to cover any gaps.
+
+      Quote and candle data come from a dedicated, server-side Zerodha market
+      WebSocket and historical candles. FinShot does not relay broker frames.
+      The market adapter ignores broker order events. The market feed has
+      separate connection state, queues, and retries from the order path.
+      Bound each subscriber's queue and close with 1013 if a client cannot keep up.
+      Future order submissions use Kite's order API, and order updates use a
+      dedicated connection. Broker-wide outages or shared credential expiry
+      can still affect both.
+    bindings:
+      ws:
+        bindingVersion: '0.1.0'
+        method: GET
+        query:
+          type: object
+          additionalProperties: false
+          required: [instrumentId, timeframe]
+          properties:
+            instrumentId:
+              $ref: './openapi.yaml#/components/schemas/InstrumentId'
+            timeframe:
+              $ref: './openapi.yaml#/components/schemas/Timeframe'
+    messages:
+      snapshot:
+        $ref: '#/components/messages/MarketSnapshot'
+      update:
+        $ref: '#/components/messages/MarketUpdate'
+      status:
+        $ref: '#/components/messages/MarketStatus'
+operations:
+  receiveOwnerMarket:
+    action: receive
+    channel:
+      $ref: '#/channels/ownerMarket'
+components:
+  messages:
+    MarketSnapshot:
+      payload:
+        type: object
+        additionalProperties: false
+        required: [type, asOf, quote, history]
+        properties:
+          type:
+            const: snapshot
+          asOf:
+            type: string
+            format: date-time
+            description: Exchange timestamp of the latest quote.
+          quote:
+            $ref: './openapi.yaml#/components/schemas/InstrumentQuote'
+          history:
+            description: History must match the requested selection and have source market.
+            allOf:
+              - $ref: './openapi.yaml#/components/schemas/MarketCandles'
+              - properties:
+                  source:
+                    const: market
+    MarketUpdate:
+      payload:
+        type: object
+        additionalProperties: false
+        required: [type, timeframe, asOf, quote, candle]
+        properties:
+          type:
+            const: update
+          timeframe:
+            $ref: './openapi.yaml#/components/schemas/Timeframe'
+          asOf:
+            type: string
+            format: date-time
+            description: Exchange timestamp of the latest quote.
+          quote:
+            $ref: './openapi.yaml#/components/schemas/InstrumentQuote'
+          candle:
+            $ref: './openapi.yaml#/components/schemas/MarketCandle'
+    MarketStatus:
+      payload:
+        type: object
+        additionalProperties: false
+        required: [type, state, sentAt]
+        properties:
+          type:
+            const: status
+          state:
+            enum: [live, closed, stale, unavailable]
+            description: |
+              Upstream feed state. Send on state change and periodically while
+              idle. The browser uses the latest data timestamp for freshness.
+              A heartbeat alone does not make an old quote current.
+          sentAt:
+            type: string
+            format: date-time

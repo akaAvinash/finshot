@@ -22,6 +22,24 @@ channels:
       lose streaming access. The route is disabled unless explicitly enabled.
       Broker tokens stay on the server.
 
+      Reject before upgrade with HTTP 404 when disabled, 403 for an invalid
+      Origin or ineligible account, 401 for a missing, expired, or revoked
+      session, 400 for invalid selection parameters, and 503 for temporary
+      stream unavailability.
+
+      After upgrade, close with 4401 on session expiry or revocation, and
+      4403 if the account loses permission or the stream is disabled.
+      Treat 4401 as terminal until the user signs in again. Treat 4403 as
+      terminal until authorization or configuration changes. Normal closure
+      (1000) or a protocol policy violation (1008) is terminal for that
+      subscription. Reconnect with bounded
+      backoff after 1012 (service restart) or 1013 (temporary overload).
+      Browsers may observe a failed upgrade or a lost connection as 1006.
+      Recheck the session using the HTTP auth API before retrying 1006,
+      and stop automatic retries if the session is invalid or the bounded
+      retry budget is exhausted. The MarketStatus message describes the
+      upstream feed and never signals a session or authorization change.
+
       The first data message after each connection is a snapshot. Subsequent
       updates carry the latest quote and candle for the same selection. Both
       frame types use the exchange quote timestamp in asOf. An update
@@ -32,7 +50,7 @@ channels:
       WebSocket and historical candles. FinShot does not relay broker frames.
       The market adapter ignores broker order events. The market feed has
       separate connection state, queues, and retries from the order path.
-      Bound each subscriber's queue and disconnect a client that cannot keep up.
+      Bound each subscriber's queue and close with 1013 if a client cannot keep up.
       Future order submissions use Kite's order API, and order updates use a
       dedicated connection. Broker-wide outages or shared credential expiry
       can still affect both.

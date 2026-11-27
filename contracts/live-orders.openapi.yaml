@@ -8,6 +8,8 @@ info:
     order. Live submission is off by default. Timing tests use a mock order
     adapter and a separate read-only Kite probe.
     Responses are private and use Cache-Control no-store.
+security:
+  - sessionCookie: []
 paths:
   /api/v1/live/orders:
     post:
@@ -20,24 +22,40 @@ paths:
         Require the enabled feature, the approved owner account, a current
         session with recent authenticator step-up, and the exact FinShot
         Origin. Resolve the instrument and broker connection on the server.
-        Check available funds
-        or holdings, price and quantity rules, market data freshness and live
-        risk limits, including the live kill switch, before calling Kite. Fail
-        closed if required risk data is missing. Never use paper limits or
-        demo quotes to authorize a live order.
+        Check available funds or holdings, price and quantity rules, market
+        data freshness and live risk limits, including the live kill switch,
+        before calling Kite. Fail closed if required risk data is missing.
+        Never use paper limits or demo quotes to authorize a live order.
 
         Durably reserve the idempotency key for the owner before sending the
         broker request. The key is also the clientOrderId. Bind it to the
         normalized intent and broker account. The same key and intent return
         the stored submission result, including an in-progress result. A
         different intent or broker account under the same key returns
-        409 IDEMPOTENCY_CONFLICT.
+        409 IDEMPOTENCY_CONFLICT. Before any dispatch, persist an
+        account-scoped unique broker tag (up to 20 alphanumeric characters).
+        Reserve the tag with the submission and never reuse it for another
+        submission in the same broker account.
 
-        A timeout, connection loss, or process interruption after dispatch can
-        leave the result unknown. Preserve that state and reconcile using the
-        broker order book and a persisted broker tag. Do not auto-resubmit an
-        ambiguous order. If reconciliation cannot establish the outcome,
-        keep it unknown for operator review. Preserve the mapping across
+        Initially persist the reservation as eligible for dispatch. Bound
+        its dispatch deadline by the original authorization and trading
+        session. A worker can recover it only while durable state proves
+        dispatch has not begun. Recheck the owner authorization, submission
+        flag, deadline, and live risk before dispatch. If they no longer
+        allow dispatch, persist a rejection with an appropriate code.
+        A single atomic transition from reserved to dispatch started grants
+        one worker permission to make the single broker request. Record the
+        transition before network I/O. Once set, that marker is never cleared
+        to resend, including after a crash before the network call.
+
+        A timeout, connection loss, interruption after the dispatch marker,
+        or malformed reply or reply without a usable order ID leaves the
+        outcome unknown unless the broker definitively confirms rejection.
+        Persist unknown, return 202 when able to respond, and reconcile
+        without resubmitting. Only accept an unambiguous match from the
+        broker order book using the account, reserved tag, original intent,
+        and dispatch time. Keep unmatched, conflicting, or multiply matched
+        outcomes unknown for operator review. Preserve the mapping across
         retries and restarts. Keep broker credentials and raw responses out
         of client payloads and logs.
       parameters:
@@ -55,22 +73,40 @@ paths:
       responses:
         '200':
           description: Existing acknowledged or rejected result for the same key and intent.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Submission'
+                allOf:
+                  - $ref: '#/components/schemas/Submission'
+                  - properties:
+                      state: { enum: [acknowledged, rejected] }
         '201':
           description: Kite returned an order ID. Exchange acceptance and fills are still unconfirmed.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Submission'
+                allOf:
+                  - $ref: '#/components/schemas/Submission'
+                  - properties:
+                      state: { const: acknowledged }
         '202':
           description: The submission is pending or its broker outcome is unknown. Look it up by clientOrderId.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Submission'
+                allOf:
+                  - $ref: '#/components/schemas/Submission'
+                  - properties:
+                      state: { enum: [pending, unknown] }
         '400':
           $ref: '#/components/responses/OrderError'
         '401':
@@ -83,14 +119,24 @@ paths:
           $ref: '#/components/responses/OrderError'
         '422':
           description: Kite definitively rejected submission without creating an order.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Submission'
+                allOf:
+                  - $ref: '#/components/schemas/Submission'
+                  - properties:
+                      state: { const: rejected }
+                      rejectionCode: { const: BROKER_REJECTED }
         '429':
           $ref: '#/components/responses/OrderError'
         '503':
           description: Submission is unavailable before dispatch. An uncertain result after dispatch is reported as 202.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
@@ -100,8 +146,10 @@ paths:
       operationId: getLiveOrderSubmission
       summary: Look up the persisted submission result
       description: |
-        Read the result by the original idempotency key. Require the owner
-        session and enabled feature. This lookup never submits an order.
+        Read the result by the original idempotency key with an authorized
+        owner session. Lookup and reconciliation remain available when the
+        live kill switch or configuration disables new submissions.
+        This lookup never submits an order.
         It reports broker submission state, such as acknowledgement or
         rejection. Exchange order lifecycle and fills are a later contract.
       security:
@@ -115,6 +163,9 @@ paths:
       responses:
         '200':
           description: Current submission result.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
@@ -130,6 +181,13 @@ paths:
         '503':
           $ref: '#/components/responses/OrderError'
 components:
+  headers:
+    NoStore:
+      description: Prevent storage of order and error responses.
+      required: true
+      schema:
+        type: string
+        const: no-store
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -147,6 +205,9 @@ components:
   responses:
     OrderError:
       description: Request denied, invalid, or unavailable. The error code identifies the cause.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -176,7 +237,8 @@ components:
         clientOrderId: { type: string, format: uuid }
         state: { enum: [pending, acknowledged, rejected, unknown] }
         brokerOrderId: { type: string, minLength: 1 }
-        rejectionCode: { const: BROKER_REJECTED }
+        rejectionCode:
+          enum: [BROKER_REJECTED, RISK_BLOCKED, DISPATCH_EXPIRED, LIVE_ORDERS_UNAVAILABLE]
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
       allOf:
@@ -221,11 +283,18 @@ x-verification:
   mock-order-acknowledgement: |
     Run FinShot against a stubbed Kite adapter. Measure FinShot HTTP response
     time and the adapter round trip separately with a monotonic clock.
-    Inject fast and slow acknowledgements, definite rejection, and a timeout
-    after dispatch. Assert the result state and exercise same-key replay and
-    concurrent requests. Confirm refused requests never call the broker and
-    each valid key triggers at most one submission, including when a broker
-    accepted the request but its acknowledgement was lost.
+    Inject fast and slow acknowledgements, definite rejection, a timeout,
+    malformed broker JSON, and a reply without a usable order ID. Assert the
+    documented response states and no-store header. Restart after reserving
+    but before recording the dispatch marker, and verify a single eligible
+    worker can resume only after fresh risk checks. Restart after recording
+    the marker and verify the order stays unknown without resend. Reject a
+    recovered reservation whose risk or deadline no longer permits dispatch.
+    Exercise same-key replay, concurrent requests, and tag collisions. Check
+    that conflicting or multiple broker matches stay unknown. Confirm refused
+    requests never call the broker, each key triggers at most one broker
+    submission, and disabling submission preserves owner-authorized lookup
+    and reconciliation.
   authenticated-kite-timing-only: |
     From the intended server, make a small series of sequential, paced,
     authenticated GET /user/profile requests. Measure fresh and reused HTTP

@@ -159,7 +159,13 @@ class AlertDeliveryService:
                 row = current.get(channel)
                 old_enabled = bool(row.enabled) if row is not None else False
                 old_min = row.min_severity if row is not None else "critical"
-                if new.enabled and self._availability(channel, destinations[channel]):
+                # Only turning an unavailable channel on is refused. One that was
+                # on and became unavailable may stay on; it sends nothing.
+                if (
+                    new.enabled
+                    and not old_enabled
+                    and self._availability(channel, destinations[channel])
+                ):
                     raise channel_unavailable()
                 if (old_enabled, old_min) == (new.enabled, new.min_severity):
                     continue

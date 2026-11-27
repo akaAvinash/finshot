@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+import jsonschema
 import pytest
 import yaml  # type: ignore[import-untyped]
 from alembic import command
@@ -189,11 +190,42 @@ def test_save_channels_is_audited_and_validated(user: Browser, contract: dict[st
 
     push = save(user, body(push=(True, "critical")))
     assert (push.status_code, code_of(push)) == (409, "ALERT_CHANNEL_UNAVAILABLE")
-    check(contract, "AlertError", push.json())
+    check(contract, "AlertDeliveryError", push.json())
     dup = {"channels": [{"channel": "sms", "enabled": False, "minSeverity": "info"}] * 3}
     assert code_of(save(user, dup)) == "INVALID_REQUEST"
     assert code_of(save(user, {"channels": body()["channels"][:2]})) == "INVALID_REQUEST"
     assert code_of(save(user, body(), headers=user.headers(csrf="x"))) == "CSRF_FAILED"
+
+
+def test_unavailable_channel_already_enabled_may_stay_enabled(
+    user: Browser, contract: dict[str, Any]
+) -> None:
+    # Push was enabled while it was available and has since become unavailable.
+    db_rows(
+        db(),
+        "INSERT INTO alert_channel_settings (user_id, channel, enabled, min_severity,"
+        " enabled_at, updated_at) SELECT id, 'push', true, 'critical', now(), now() FROM users",
+    )
+    saved = save(user, body(push=(True, "warning")))
+    assert saved.status_code == 200, saved.text
+    push = {c["channel"]: c for c in saved.json()["channels"]}["push"]
+    assert (push["available"], push["enabled"], push["minSeverity"]) == (False, True, "warning")
+    # Turning it off is allowed; turning it back on is refused and changes nothing.
+    assert save(user, body()).status_code == 200
+    refused = save(user, body(sms=(True, "info"), push=(True, "critical")))
+    assert (refused.status_code, code_of(refused)) == (409, "ALERT_CHANNEL_UNAVAILABLE")
+    check(contract, "AlertDeliveryError", refused.json())
+    channels = {c["channel"]: c for c in user.get("/api/v1/alerts/preferences").json()["channels"]}
+    assert not channels["sms"]["enabled"] and not channels["push"]["enabled"]
+
+
+def test_channels_need_one_entry_each_in_the_contract(contract: dict[str, Any]) -> None:
+    validator = jsonschema.Draft202012Validator(
+        {"$ref": "#/components/schemas/AlertChannelsUpdate", "components": contract["components"]}
+    )
+    assert validator.is_valid(body())
+    dup = {"channels": [{"channel": "sms", "enabled": False, "minSeverity": "info"}] * 3}
+    assert not validator.is_valid(dup)
 
 
 def test_worker_sends_matching_alerts_once(
@@ -282,7 +314,7 @@ def test_test_messages(client: TestClient, user: Browser, contract: dict[str, An
     user.post(f"{CHANNELS}/sms/test")
     limited = user.post(f"{CHANNELS}/sms/test")
     assert (limited.status_code, code_of(limited)) == (429, "RATE_LIMITED")
-    check(contract, "AlertError", limited.json())
+    check(contract, "AlertDeliveryError", limited.json())
     assert int(limited.headers["Retry-After"]) >= 1
     push = user.post(f"{CHANNELS}/push/test")
     assert (push.status_code, code_of(push)) == (409, "ALERT_CHANNEL_UNAVAILABLE")

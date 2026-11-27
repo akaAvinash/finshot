@@ -113,6 +113,9 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   a lease/backoff (1, 5, 15 min), send outside the transaction, 3 attempts, then
   `failed`. At least once. Tables: `alert_channel_settings`, `alert_deliveries`
   (migration 0018); a purged alert leaves its delivery with `alert_id` null.
+- Daily cap rule: every send attempt, first or retry, needs room under
+  `NOTIFY_DAILY_LIMIT_PER_CHANNEL` per user and channel, counted as deliveries last
+  attempted since 00:00 UTC. A retry over the cap is skipped (`DAILY_LIMIT`).
 - A real provider is an owner decision (provider, credentials, spend, and for
   SMS in India a DLT-registered sender and template). Add a class implementing
   the protocol, a new `NOTIFY_*_PROVIDER` value and a branch for it in

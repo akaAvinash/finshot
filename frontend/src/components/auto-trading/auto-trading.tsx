@@ -28,8 +28,8 @@ const scenarios = [
 type Request = { scenario: PaperScenario };
 type Result = PaperResult | { status: "error" };
 
-export function AutoTrading({ mode = "preview" }: { mode?: "preview" | "staging" }) {
-  return mode === "staging" ? <StagingAutoTrading /> : <PreviewAutoTrading />;
+export function AutoTrading({ mode = "preview", readOnlyControls = false }: { mode?: "preview" | "staging"; readOnlyControls?: boolean }) {
+  return mode === "staging" ? <StagingAutoTrading readOnlyControls={readOnlyControls} /> : <PreviewAutoTrading />;
 }
 
 function PreviewAutoTrading() {

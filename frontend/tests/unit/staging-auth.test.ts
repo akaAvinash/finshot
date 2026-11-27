@@ -31,6 +31,13 @@ describe("staging auth config", () => {
     vi.stubEnv("TRADEO_AUTH_INGRESS_TOKEN", "too-short");
     expect(readAuthConfig().mode).toBe("unavailable");
   });
+
+  it("requires an explicit opt-in for tester sign-in", () => {
+    vi.stubEnv("TRADEO_TESTER_SIGN_IN_ENABLED", undefined);
+    expect(readAuthConfig()).toMatchObject({ mode: "staging", testerSignInEnabled: false });
+    vi.stubEnv("TRADEO_TESTER_SIGN_IN_ENABLED", "true");
+    expect(readAuthConfig()).toMatchObject({ mode: "staging", testerSignInEnabled: true });
+  });
 });
 
 it("accepts a single IP only with valid ingress proof", () => {

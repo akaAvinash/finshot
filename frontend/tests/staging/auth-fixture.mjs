@@ -22,6 +22,9 @@ let alerts = createAlertsFixture();
 let workspaceFixture;
 const returningNumber = "+919876543218";
 const registrationNumber = "+919876543219";
+const testerNumber = "+919876543216";
+const testerInvite = "Fixture_Invite-1234567";
+let testerInviteUsed = false;
 const accountRows = new Map();
 const after = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
 
@@ -37,7 +40,7 @@ function newRecoveryCodes() {
 
 function resetAccounts() {
   accountRows.clear();
-  for (const number of [returningNumber, registrationNumber]) {
+  for (const number of [returningNumber, registrationNumber, testerNumber]) {
     accountRows.set(number, { id: randomUUID(), phoneMasked: `+91******${number.slice(-4)}`, displayName: null,
       createdAt: after(0), timezone: "Asia/Kolkata", totpEnabled: number === returningNumber, pending: false, lastCode: null,
       recoveryCodes: number === returningNumber ? ["ABCDE-FGHIJ", "KLMNO-PQRST"] : [] });
@@ -95,7 +98,8 @@ function cookie(name, value) {
 function sessionPayload(account, session) {
   const { id, phoneMasked, displayName, createdAt, totpEnabled } = account;
   return { user: { id, phoneMasked, displayName, createdAt, totpEnabled },
-    session: { idleExpiresAt: after(30), expiresAt: after(180), stepUpUntil: session.stepUpUntil } };
+    session: { idleExpiresAt: after(30), expiresAt: after(session.phone === testerNumber ? 120 : 180),
+      stepUpUntil: session.stepUpUntil, ...(session.phone === testerNumber ? { access: "tester" } : {}) } };
 }
 
 function startSession(response, phone, previousId, steppedUp) {
@@ -116,6 +120,7 @@ createServer(async (request, response) => {
     challenges.clear();
     otpRequestsByIp.clear();
     resetAccounts();
+    testerInviteUsed = false;
     failNextLogout = false;
     failNextProfileRead = false;
     rejectNextProfileCsrf = false;
@@ -123,6 +128,12 @@ createServer(async (request, response) => {
     marketMode = "ready";
     alerts = createAlertsFixture();
     workspaceFixture = undefined;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/tester/revoke") {
+    for (const [id, session] of sessions) {
+      if (session.phone === testerNumber) sessions.delete(id);
+    }
     return response.writeHead(204).end();
   }
   if (request.method === "POST" && request.url === "/__fixture/workspace/enable") {
@@ -213,7 +224,7 @@ createServer(async (request, response) => {
       return error(response, 404, "NOT_FOUND");
     }
     if (!session) return error(response, 401, "UNAUTHENTICATED");
-    if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
+    if (session.phone !== testerNumber && !accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
     if (workspaceRead) {
       if (workspaceFixture) return json(response, ...workspaceFixture.handle(url, session.phone));
       if (url.pathname === "/api/v1/auto-trading/paper" && reportMode !== "empty") {
@@ -354,7 +365,7 @@ createServer(async (request, response) => {
     return response.writeHead(204).end();
   }
 
-  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "login/recovery", "totp/enroll", "totp/confirm", "totp/recovery-codes", "step-up", "logout"].includes(endpoint)) {
+  if (request.method !== "POST" || !["otp/request", "otp/verify", "login/totp", "login/recovery", "login/tester", "totp/enroll", "totp/confirm", "totp/recovery-codes", "step-up", "logout"].includes(endpoint)) {
     return error(response, 404, "NOT_FOUND");
   }
   if (request.headers.origin !== publicOrigin || !csrfToken || request.headers["x-csrf-token"] !== csrfToken) {
@@ -441,6 +452,13 @@ createServer(async (request, response) => {
     return json(response, 200, { totpEnabled: true, stepUpUntil: session.stepUpUntil });
   }
   if (body.phone === "+919876543211") return error(response, 429, "RATE_LIMITED", { "Retry-After": "30" });
+  if (endpoint === "login/tester") {
+    if (Object.keys(body).length !== 2 || !csrfToken.startsWith("pre.") || body.phone !== testerNumber || body.inviteCode !== testerInvite || testerInviteUsed) {
+      return error(response, 401, "INVALID_CREDENTIALS");
+    }
+    testerInviteUsed = true;
+    return startSession(response, testerNumber, sessionId, false);
+  }
   const account = accountRows.get(body.phone);
   if (endpoint === "login/recovery") {
     if (Object.keys(body).length !== 2 || !csrfToken.startsWith("pre.") || !account?.totpEnabled || !account.recoveryCodes.includes(body.recoveryCode)) {

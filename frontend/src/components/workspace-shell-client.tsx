@@ -15,10 +15,10 @@ import { stagingSignOut } from "@/lib/auth/browser-client";
 import type { AuthMode } from "@/lib/auth/config";
 import { cn } from "@/lib/utils";
 
-function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function Navigation({ pathname, tester, onNavigate }: { pathname: string; tester: boolean; onNavigate?: () => void }) {
   return (
     <nav aria-label="Workspace" className="space-y-1">
-      {workspaceRoutes.map(({ slug, title, icon: Icon }) => {
+      {workspaceRoutes.filter(({ slug }) => !tester || slug !== "settings").map(({ slug, title, icon: Icon }) => {
         const href = `/${slug}`;
         const active = pathname === href;
 
@@ -62,7 +62,7 @@ function SessionControls({ mode }: { mode: AuthMode }) {
   );
 }
 
-export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; children: ReactNode }) {
+export function WorkspaceShellClient({ mode, tester, children }: { mode: AuthMode; tester: boolean; children: ReactNode }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const activeRoute = workspaceRoutes.find(({ slug }) => pathname === `/${slug}`);
@@ -77,7 +77,7 @@ export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; child
           <Wordmark />
         </Link>
         <div className="mt-3 mb-6">
-          <Navigation pathname={pathname} />
+          <Navigation pathname={pathname} tester={tester} />
         </div>
         <div className="mt-auto pb-4"><SessionControls mode={mode} /></div>
       </aside>
@@ -94,7 +94,7 @@ export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; child
                   <DialogTitle className="sr-only">Workspace navigation</DialogTitle>
                   <DialogDescription className="sr-only">Go to a FinShot workspace page.</DialogDescription>
                   <div className="mb-5 self-start"><Wordmark /></div>
-                  <Navigation pathname={pathname} onNavigate={() => setMenuOpen(false)} />
+                  <Navigation pathname={pathname} tester={tester} onNavigate={() => setMenuOpen(false)} />
                   <div className="mt-auto"><SessionControls mode={mode} /></div>
                 </DialogContent>
               </Dialog>
@@ -107,7 +107,7 @@ export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; child
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <Status tone="accent" dot>Preview</Status>
+            <Status tone="accent" dot>{tester ? "Tester · Paper only" : "Preview"}</Status>
             <div className="mx-1 hidden h-5 w-px bg-border sm:block" />
             <ThemeToggle />
             <Button asChild variant="ghost" size="icon" className="hidden sm:inline-flex">

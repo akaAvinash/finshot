@@ -58,7 +58,7 @@ function readForm(form: HTMLFormElement, bounds: TradeControlSettings["bounds"])
   return { values: values as TradeControlValues, errors };
 }
 
-export function StagingTradeControls({ engineRunning, onSaved }: { engineRunning: boolean; onSaved: () => void }) {
+export function StagingTradeControls({ readOnly, engineRunning, onSaved }: { readOnly?: boolean; engineRunning: boolean; onSaved: () => void }) {
   const [settings, setSettings] = useState<TradeControlSettings>();
   const [error, setError] = useState("");
   const [history, setHistory] = useState<TradeControlChange[]>();
@@ -98,11 +98,18 @@ export function StagingTradeControls({ engineRunning, onSaved }: { engineRunning
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 id="paper-trade-controls" className="font-semibold">Trade Controls</h2><Status tone="accent">Paper only</Status>
     </div>
-    {engineRunning && <p role="status" className="text-sm text-muted-foreground">Pause the paper engine before editing these limits.</p>}
+    {readOnly && <p className="text-sm text-muted-foreground">Tester accounts have read-only access to paper limits.</p>}
+    {!readOnly && engineRunning && <p role="status" className="text-sm text-muted-foreground">Pause the paper engine before editing these limits.</p>}
     {error && <div className="space-y-2"><p role="alert" className="text-sm text-negative">{error}</p>
       <Button variant="outline" onClick={reload}>Retry Trade Controls</Button></div>}
     {!settings && !error && <p role="status" className="text-sm text-muted-foreground">Loading paper limits…</p>}
-    {settings && <TradeControlForm key={`${refresh}:${settings.revision}`} settings={settings} engineRunning={engineRunning}
+    {settings && readOnly && <dl className="grid gap-3 sm:grid-cols-2">
+      {tradeControlFields.map((field) => <div key={field} className="rounded-lg border border-border p-3">
+        <dt className="text-sm text-muted-foreground">{fields[field].label}</dt>
+        <dd className="font-medium">{display(field, settings.controls[field])}</dd>
+      </div>)}
+    </dl>}
+    {settings && !readOnly && <TradeControlForm key={`${refresh}:${settings.revision}`} settings={settings} engineRunning={engineRunning}
       onReload={reload} onSave={(next, message = "Paper Trade Controls saved.") => {
         setSettings(next);
         setHistoryRefresh((value) => value + 1);

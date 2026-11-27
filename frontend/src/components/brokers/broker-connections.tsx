@@ -23,7 +23,7 @@ type Intent = { kind: "authorize"; label: string; selection: BrokerAuthorization
 const verbs = { authorize: "Authorize", sync: "Sync", disconnect: "Disconnect" } as const;
 const events = { connect: "Connected", reconnect: "Reauthorized", sync: "Synced", disconnect: "Disconnected", expire: "Expired" } as const;
 
-export function BrokerConnections() {
+export function BrokerConnections({ readOnly = false }: { readOnly?: boolean }) {
   const [snapshot, setSnapshot] = useState<BrokerConnectionsSnapshot>();
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -67,7 +67,7 @@ export function BrokerConnections() {
 
   const selected = snapshot?.connections.find(({ connectionId }) => connectionId === portfolio);
   return <div className="space-y-4 sm:space-y-5">
-    <PageHeading title="Brokers" description="Authorize demo accounts, sync read-only data, and review connection activity."
+    <PageHeading title="Brokers" description={readOnly ? "View demo connections, portfolios, and activity." : "Authorize demo accounts, sync read-only data, and review connection activity."}
       actions={<><Status tone="accent" dot>Demo connections</Status>
         <Button variant="outline" disabled={!!intent || (!snapshot && !error)} onClick={() => reload(true)}>Refresh brokers</Button></>} />
     {!snapshot && !error && <DashboardSkeleton label="Loading brokers" />}
@@ -87,8 +87,8 @@ export function BrokerConnections() {
               <Status tone={provider.available ? "accent" : "neutral"}>{provider.available ? "Demo provider" : "Unavailable"}</Status>
             </div>
             <p className="text-xs text-muted-foreground">{accounts.length} / {provider.maxConnections} connections</p>
-            <Button variant="outline" disabled={!!intent || !!error || !provider.available || accounts.length >= provider.maxConnections}
-              onClick={(event) => open({ kind: "authorize", label: provider.displayName, selection: { providerId: provider.id } }, event.currentTarget)}>Connect demo</Button>
+            {!readOnly && <Button variant="outline" disabled={!!intent || !!error || !provider.available || accounts.length >= provider.maxConnections}
+              onClick={(event) => open({ kind: "authorize", label: provider.displayName, selection: { providerId: provider.id } }, event.currentTarget)}>Connect demo</Button>}
             {accounts.length > 0 && <ul className="space-y-2">
               {accounts.map((account) => <li key={account.connectionId} className="space-y-2 rounded-lg border border-border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -100,13 +100,13 @@ export function BrokerConnections() {
                   {account.lastSyncedAt ? <> Last synced <time dateTime={account.lastSyncedAt}>{formatBrokerTime(account.lastSyncedAt)}</time></> : " Awaiting first sync"}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" disabled={!!intent || !!error || account.status !== "connected"}
+                  {!readOnly && <><Button size="sm" variant="outline" disabled={!!intent || !!error || account.status !== "connected"}
                     onClick={(event) => open({ kind: "sync", label: account.maskedAccountId, connectionId: account.connectionId }, event.currentTarget)}>Sync demo</Button>
                   <Button size="sm" variant="outline" disabled={!!intent || !!error || !provider.available}
-                    onClick={(event) => open({ kind: "authorize", label: account.maskedAccountId, selection: { connectionId: account.connectionId } }, event.currentTarget)}>Reauthorize</Button>
+                    onClick={(event) => open({ kind: "authorize", label: account.maskedAccountId, selection: { connectionId: account.connectionId } }, event.currentTarget)}>Reauthorize</Button></>}
                   <Button size="sm" variant="outline" onClick={() => setPortfolio(account.connectionId)}>View portfolio</Button>
-                  <Button size="sm" variant="ghost" disabled={!!intent || !!error}
-                    onClick={(event) => open({ kind: "disconnect", label: account.maskedAccountId, connectionId: account.connectionId }, event.currentTarget)}>Disconnect</Button>
+                  {!readOnly && <Button size="sm" variant="ghost" disabled={!!intent || !!error}
+                    onClick={(event) => open({ kind: "disconnect", label: account.maskedAccountId, connectionId: account.connectionId }, event.currentTarget)}>Disconnect</Button>}
                 </div>
               </li>)}
             </ul>}

@@ -4,7 +4,7 @@ export type AuthMode = "preview" | "staging";
 
 type AuthConfig =
   | { mode: "preview" }
-  | { mode: "staging"; upstream: string; publicOrigin: string; ingressToken: string }
+  | { mode: "staging"; upstream: string; publicOrigin: string; ingressToken: string; testerSignInEnabled: boolean }
   | { mode: "unavailable" };
 
 function readOrigin(value: string | undefined) {
@@ -35,5 +35,5 @@ export function readAuthConfig(): AuthConfig {
     return { mode: "unavailable" };
   }
 
-  return { mode, upstream, publicOrigin, ingressToken };
+  return { mode, upstream, publicOrigin, ingressToken, testerSignInEnabled: process.env.TRADEO_TESTER_SIGN_IN_ENABLED === "true" };
 }

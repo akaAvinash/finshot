@@ -20,7 +20,7 @@ export default defineConfig({
       url: `${nextOrigin}/login`,
       timeout: 60_000,
       reuseExistingServer: false,
-      env: { ...ingressEnv, TRADEO_AUTH_MODE: "staging", TRADEO_API_ORIGIN: upstream, TRADEO_PUBLIC_ORIGIN: baseURL },
+      env: { ...ingressEnv, TRADEO_AUTH_MODE: "staging", TRADEO_API_ORIGIN: upstream, TRADEO_PUBLIC_ORIGIN: baseURL, TRADEO_TESTER_SIGN_IN_ENABLED: "true" },
     },
   ],
 });

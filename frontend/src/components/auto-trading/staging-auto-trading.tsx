@@ -54,7 +54,7 @@ function ServerTradeControls({ snapshot }: { snapshot: PaperData }) {
   </Card>;
 }
 
-export function StagingAutoTrading() {
+export function StagingAutoTrading({ readOnlyControls = false }: { readOnlyControls?: boolean }) {
   const [result, setResult] = useState<StagingPaperResult>();
   const [loadError, setLoadError] = useState("");
   const [commandError, setCommandError] = useState<{ action: PaperEngineCommand["action"]; message: string }>();
@@ -134,7 +134,7 @@ export function StagingAutoTrading() {
         finished={snapshot.replay.finished} haltError={commandError?.action === "halt" ? commandError.message : undefined} />
       <ServerTradeControls snapshot={snapshot} />
     </>}
-    <StagingTradeControls engineRunning={running} onSaved={() => setRefresh((value) => value + 1)} />
+    <StagingTradeControls readOnly={readOnlyControls} engineRunning={running} onSaved={() => setRefresh((value) => value + 1)} />
     {snapshot && <PaperActivity snapshot={snapshot} />}
   </div>;
 }

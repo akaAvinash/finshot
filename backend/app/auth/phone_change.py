@@ -195,11 +195,14 @@ class PhoneChangeService:
 
         try:
             async with auth._factory() as db, db.begin():
-                # Serialise every change to the same number. Read the clock only
-                # after the lock: the wait must not let an expired challenge or
-                # session through.
+                # Serialise every change to the same number, then take the account
+                # row. Read the clock only after both locks: waiting for them must
+                # not let an expired challenge or a closed step-up window through.
                 lock_key = func.hashtextextended(f"phone:{new_phone}", 0)
                 await db.execute(select(func.pg_advisory_xact_lock(lock_key)))
+                user = await db.scalar(
+                    select(User).where(User.id == session.user_id).with_for_update()
+                )
                 now = auth.clock()
                 consumed = await db.scalar(
                     update(PhoneChangeChallenge)
@@ -220,9 +223,6 @@ class PhoneChangeService:
                 )
                 if taken:
                     raise code_invalid()
-                user = await db.scalar(
-                    select(User).where(User.id == session.user_id).with_for_update()
-                )
                 if user is None or user.status != "active":
                     raise code_invalid()
                 # The initiating session must still be live and stepped up: another

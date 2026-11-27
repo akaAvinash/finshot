@@ -103,7 +103,7 @@ test("verifies first-time email, enrols with a local QR, then signs in using a f
   };
   page.on("request", trackCsrf);
   await page.getByRole("button", { name: "Start authenticator setup" }).click();
-  const qr = page.getByRole("img", { name: "Tradeo authenticator setup QR code" });
+  const qr = page.getByRole("img", { name: "FinShot authenticator setup QR code" });
   await expect(qr).toBeVisible();
   await expect.poll(() => qr.evaluate((node: HTMLCanvasElement) =>
     node.getContext("2d")?.getImageData(0, 0, node.width, node.height).data.some((value, index) => index % 4 === 0 && value === 0),

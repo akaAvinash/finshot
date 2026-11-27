@@ -125,7 +125,7 @@ export function AuthenticatorSetup() {
     {setup && <div className="space-y-3">
       <p className="text-sm text-muted-foreground">Scan the QR code in your authenticator app, or use the setup key.</p>
       <div className="flex justify-center">
-        <QRCodeCanvas value={setup.otpauthUri} size={192} marginSize={4} level="M" role="img" aria-label="Tradeo authenticator setup QR code" className="rounded-md" />
+        <QRCodeCanvas value={setup.otpauthUri} size={192} marginSize={4} level="M" role="img" aria-label="FinShot authenticator setup QR code" className="rounded-md" />
       </div>
       <Button type="button" variant="outline" size="sm" aria-expanded={showKey} aria-controls="manual-setup-key"
         onClick={() => setShowKey((visible) => !visible)}>{showKey ? "Hide setup key" : "Show setup key"}</Button>

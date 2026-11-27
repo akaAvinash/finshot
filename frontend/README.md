@@ -1,6 +1,6 @@
-# Tradeo frontend
+# FinShot frontend
 
-Tradeo is a simulated Indian trading workspace. The dashboard includes a fixed, dated sample portfolio, market indices and recent trades. Markets offers searchable NSE instruments, candlestick charts and a browser-local watchlist. Auto Trading previews paper automation and risk controls. Brokers previews account connection and sync workflows. Strategies previews a strategy library, a draft editor and version history. Backtesting previews a replay queue, holdout results and CSV exports. Agents previews observer health and advisory review. Upcoming modules have labeled placeholder pages.
+FinShot is a simulated Indian trading workspace. Local preview includes sample market data, a watchlist, broker and strategy previews, backtests, paper trading, and advisory activity. The signed-in staging screens use the corresponding demo APIs.
 
 ## Local development
 
@@ -58,7 +58,7 @@ Vitest covers preview validation, API responses, search ranking, candle aggregat
 - `src/app/` holds Next.js App Router routes, the preview sign-in action and protected workspace layout.
 - `src/components/ui/` holds locally owned shadcn/ui-style primitives built on Radix where needed. Theme and typography tokens live in `src/app/globals.css`.
 - `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
-- `public/brand/` contains the provided approved Tradeo raster logo. The UI presents the supplied image in a CSS viewport to trim surrounding padding.
+- `public/brand/` contains the supplied bull-and-bear artwork. The UI shows the emblem beside the FinShot wordmark.
 
 The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
 

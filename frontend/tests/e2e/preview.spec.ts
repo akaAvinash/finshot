@@ -5,6 +5,8 @@ test("protects routes and supports demo OTP validation, change number, and sign-
   await page.goto("/strategies");
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Preview sign-in" })).toBeVisible();
+  await expect(page).toHaveTitle(/FinShot/);
+  await expect(page.getByRole("img", { name: "FinShot", exact: true }).filter({ visible: true })).toBeVisible();
   await capture(page, "login-desktop-dark");
 
   await page.getByLabel("Mobile number").fill("1234567890");

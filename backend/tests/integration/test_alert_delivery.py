@@ -703,3 +703,33 @@ def test_a_lost_lease_is_not_sent_twice(
     assert smtp_client.portal is not None
     assert smtp_client.portal.call(stolen) == 0
     assert smtp_server.messages == []
+
+
+def test_send_due_skips_a_claim_superseded_before_sending(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    add_alert(uid(smtp_user), clock.now)
+    svc = service(smtp_client)
+    real_claim = svc._claim
+
+    async def claim_then_lose_the_lease() -> list[Any]:
+        claimed = await real_claim()
+        assert len(claimed) == 1
+        # another worker re-claims the row between our claim and the ownership check
+        await asyncio.to_thread(
+            db_rows, db(), "UPDATE alert_deliveries SET attempts = attempts + 1"
+        )
+        return claimed
+
+    svc._claim = claim_then_lose_the_lease  # type: ignore[method-assign]
+
+    async def run() -> int:
+        await svc.enqueue()
+        return await svc.send_due()
+
+    assert smtp_client.portal is not None
+    assert smtp_client.portal.call(run) == 0
+    assert smtp_server.messages == []

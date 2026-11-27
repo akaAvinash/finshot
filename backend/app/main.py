@@ -47,6 +47,7 @@ from app.market.demo import DemoMarketDataProvider
 from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
 from app.paper.service import PaperService
 from app.reports.service import ReportService
+from app.retention.service import RetentionService
 from app.strategies.service import StrategyService
 
 logger = structlog.get_logger(__name__)
@@ -148,7 +149,16 @@ def create_app(
             clock=clock,
             enabled=settings.alerts_enabled,
         )
+        app.state.retention = RetentionService(
+            settings=settings, session_factory=app.state.session_factory, clock=clock
+        )
         workers: list[asyncio.Task[None]] = []
+        if settings.retention_worker_enabled:
+            workers.append(
+                asyncio.create_task(
+                    app.state.retention.run_worker(settings.retention_purge_interval_seconds)
+                )
+            )
         if settings.backtests_enabled and settings.backtest_worker_enabled:
             workers.append(
                 asyncio.create_task(

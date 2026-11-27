@@ -59,6 +59,7 @@ from app.brokers.models import BrokerConnection, BrokerEvent
 from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.paper.models import PaperOrder, PaperReplay, PaperTrade
+from app.retention.service import purged_floor
 
 logger = structlog.get_logger(__name__)
 
@@ -372,6 +373,8 @@ def _expired_connections(now: datetime) -> Selectable:
         literal(now),
     ).where(
         BrokerConnection.expires_at <= now,
+        # An expiry older than the retention purge may have had its alert purged.
+        BrokerConnection.expires_at > purged_floor(BrokerConnection.user_id),
         # A connection the provider already invalidated was alerted then.
         BrokerConnection.status_reason.is_(None),
         _not_alerted(BrokerConnection.user_id, dedupe),
@@ -408,6 +411,7 @@ def _reconciliation_mismatches(now: datetime) -> Selectable:
     ).where(
         AgentEvent.agent_id == "execution-monitor",
         AgentEvent.reason_code == "RECONCILIATION_MISMATCH",
+        AgentEvent.created_at > purged_floor(AgentEvent.user_id),
         _not_alerted(AgentEvent.user_id, dedupe),
     )
 

@@ -52,6 +52,7 @@ from app.paper.models import (
     PaperReplayFinish,
     PaperTrade,
 )
+from app.retention.service import purged_floor
 from app.strategies.models import StrategyVersion
 
 logger = structlog.get_logger(__name__)
@@ -372,6 +373,8 @@ class AgentService:
                 .where(
                     PaperOrder.user_id == user_id,
                     PaperOrder.status == "cancelled",
+                    # Older than the retention purge: its event may be gone.
+                    PaperOrder.updated_at > purged_floor(PaperOrder.user_id),
                     ~reported.exists(),
                 )
                 .order_by(PaperOrder.seq)
@@ -400,7 +403,11 @@ class AgentService:
                     .scalar_subquery(),
                     select(func.max(PaperTrade.filled_at)).where(replay_fills).scalar_subquery(),
                 )
-                .where(PaperReplayFinish.user_id == user_id, ~summarised.exists())
+                .where(
+                    PaperReplayFinish.user_id == user_id,
+                    PaperReplayFinish.finished_at > purged_floor(PaperReplayFinish.user_id),
+                    ~summarised.exists(),
+                )
                 .order_by(PaperReplayFinish.replay)
             )
         ).all()

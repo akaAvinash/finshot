@@ -214,6 +214,16 @@ class Settings(BaseSettings):
     alert_worker_enabled: bool = True
     alert_worker_poll_seconds: float = Field(default=5.0, gt=0, le=300)
 
+    # --- Data retention (contract 0.13.0) -------------------------------------
+    # Bounds and default for the user's retention period, in days. The purge
+    # worker runs every `retention_purge_interval_seconds` (the contract
+    # promises at least once every 24 hours).
+    data_retention_min_days: int = Field(default=30, ge=1, le=36500)
+    data_retention_max_days: int = Field(default=730, ge=1, le=36500)
+    data_retention_default_days: int = Field(default=365, ge=1, le=36500)
+    retention_worker_enabled: bool = True
+    retention_purge_interval_seconds: float = Field(default=3600.0, ge=60, le=86_400)
+
     @field_validator("otp_staging_allowlist", mode="before")
     @classmethod
     def _parse_allowlist(cls, value: object) -> object:
@@ -280,6 +290,18 @@ class Settings(BaseSettings):
         if "change-me" in raw or "change_me" in raw or len(set(raw)) < 8:
             raise ValueError("AUTH_SECRET_KEY looks like a placeholder; generate a real secret")
         return value
+
+    @model_validator(mode="after")
+    def _enforce_retention_bounds(self) -> Self:
+        if not (
+            self.data_retention_min_days
+            <= self.data_retention_default_days
+            <= self.data_retention_max_days
+        ):
+            raise ValueError(
+                "DATA_RETENTION_MIN_DAYS <= DATA_RETENTION_DEFAULT_DAYS <= DATA_RETENTION_MAX_DAYS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _enforce_otp_provider_rules(self) -> Self:

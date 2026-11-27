@@ -191,3 +191,10 @@ def test_settings_cannot_exceed_contract_otp_limits(
     """The contract fixes OTP life at <= 5 minutes and <= 5 verify attempts."""
     with pytest.raises(ValidationError):
         make_settings(**override)
+
+
+def test_retention_default_must_be_inside_bounds(make_settings: SettingsFactory) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        make_settings(data_retention_min_days=100, data_retention_default_days=50)

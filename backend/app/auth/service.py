@@ -7,11 +7,11 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import Request
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, false, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,11 +19,20 @@ from app.alerts import producer as alerts
 from app.auth import csrf as csrf_tokens
 from app.auth.cookies import CSRF_COOKIE, SESSION_COOKIE
 from app.auth.crypto import Keys, constant_time_equal, hmac_hex
-from app.auth.models import AuditEvent, Invite, OtpChallenge, TotpCredential, User
+from app.auth.models import (
+    AuditEvent,
+    Invite,
+    OtpChallenge,
+    TesterIdentity,
+    TesterInvite,
+    TotpCredential,
+    User,
+)
 from app.auth.models import Session as SessionRow
 from app.auth.otp import DisabledOtpProvider, OtpDeliveryError, OtpProvider, generate_code
 from app.auth.ratelimit import RateLimiter
 from app.auth.stepup import StepUpService
+from app.auth.tester import CODE_PATTERN, code_digest
 from app.core.config import Settings
 from app.core.errors import ApiError
 
@@ -51,6 +60,9 @@ class SessionInfo:
     device_label: str | None
     totp_enabled: bool = False
     step_up_until: datetime | None = None
+    # "tester": a session from an owner-issued invite, limited to demo and
+    # paper trading. It never has step-up and never has an authenticator.
+    access: Literal["regular", "tester"] = "regular"
 
 
 def _unauthenticated() -> ApiError:
@@ -277,22 +289,37 @@ class AuthService:
                     .outerjoin(TotpCredential, TotpCredential.user_id == User.id)
                     # Revoking an invite ends access at once, even for a session a
                     # concurrent verification created just before the revocation.
-                    .join(
+                    .outerjoin(
                         Invite,
                         (Invite.phone_e164 == User.phone_e164) & Invite.revoked_at.is_(None),
                     )
+                    .outerjoin(TesterInvite, TesterInvite.id == SessionRow.tester_invite_id)
                     .where(
                         SessionRow.session_digest == digest,
                         SessionRow.revoked_at.is_(None),
                         SessionRow.expires_at > now,
                         SessionRow.last_seen_at + idle > now,
                         User.status == "active",
+                        or_(
+                            and_(
+                                SessionRow.tester_invite_id.is_(None),
+                                Invite.phone_e164.is_not(None),
+                            ),
+                            # A tester session lives only while the feature is
+                            # on and its invite is not revoked.
+                            and_(
+                                SessionRow.tester_invite_id.is_not(None),
+                                TesterInvite.revoked_at.is_(None),
+                                (true() if self.settings.tester_sign_in_enabled else false()),
+                            ),
+                        ),
                     )
                 )
             ).first()
             if row is None:
                 return None
             sess, user, totp_confirmed_at = row
+            is_tester = sess.tester_invite_id is not None
             last_seen = sess.last_seen_at
             # Throttle writes, but never beyond a quarter of the idle TTL, so a
             # short idle TTL can still be renewed by regular activity.
@@ -319,7 +346,8 @@ class AuthService:
                 expires_at=sess.expires_at,
                 device_label=sess.device_label,
                 totp_enabled=totp_confirmed_at is not None,
-                step_up_until=sess.step_up_until,
+                step_up_until=None if is_tester else sess.step_up_until,
+                access="tester" if is_tester else "regular",
             )
 
     def idle_expires_at(self, info: SessionInfo) -> datetime:
@@ -815,6 +843,137 @@ class AuthService:
                     },
                 )
             raise _invalid_credentials()
+        csrf = self.issue_token("session", str(session_id), expires_at)
+        return info, token, csrf
+
+    async def login_with_tester_invite(
+        self,
+        *,
+        request: Request,
+        phone: str,
+        code: str,
+        current_session: SessionInfo | None,
+    ) -> tuple[SessionInfo, str, str]:
+        """Redeem an owner-issued invite for a demo and paper session.
+
+        Every failure (unknown number, wrong, used, expired or revoked code,
+        an account that is not a tester) is the same 401. Attempts are
+        throttled per IP and per number, whether or not the number exists. The
+        code is consumed and the session created in one transaction, so a
+        concurrent or later redemption cannot reuse it."""
+        s = self.settings
+        ip = self.client_ip(request)
+        ip_key = hmac_hex(self.keys.identifier, "ip", ip)[:32]
+        phone_key = hmac_hex(self.keys.identifier, "phone", phone)[:32]
+        window = s.rate_limit_totp_window_seconds
+        retry = await self._limiter.hit("tester_login_ip", ip_key, s.rate_limit_totp_per_ip, window)
+        window_token = ""
+        if retry is None:
+            retry, window_token = await self._limiter.reserve(
+                "tester_login_phone", phone_key, s.rate_limit_totp_per_user, window
+            )
+        if retry is not None:
+            raise _rate_limited(retry)
+
+        now = self.clock()
+        token = secrets.token_urlsafe(32)
+        session_id = uuid.uuid4()
+        expires_at = now + timedelta(seconds=s.tester_session_ttl_seconds)
+        label = device_label_from_user_agent(request.headers.get("user-agent"))
+        # Always computed, so a malformed code and a wrong one cost the same.
+        digest = code_digest(self.keys, phone, code if CODE_PATTERN.fullmatch(code) else "-")
+        info: SessionInfo | None = None
+        failed_user: uuid.UUID | None = None
+        async with self._factory() as db, db.begin():
+            row = (
+                await db.execute(
+                    select(
+                        User.id,
+                        User.status,
+                        User.display_name,
+                        User.created_at,
+                        TesterInvite.id.label("invite_id"),
+                    )
+                    .join(TesterIdentity, TesterIdentity.user_id == User.id)
+                    .join(TesterInvite, TesterInvite.user_id == User.id)
+                    .where(
+                        User.phone_e164 == phone,
+                        TesterIdentity.purged_at.is_(None),
+                        TesterInvite.code_digest == digest,
+                    )
+                )
+            ).first()
+            if row is not None:
+                failed_user = row.id
+            if row is not None and row.status == "active" and CODE_PATTERN.fullmatch(code):
+                # The single winner: a concurrent request waits on this row and
+                # then finds it used (or revoked) and gets nothing back.
+                consumed = await db.scalar(
+                    update(TesterInvite)
+                    .where(
+                        TesterInvite.id == row.invite_id,
+                        TesterInvite.used_at.is_(None),
+                        TesterInvite.revoked_at.is_(None),
+                        TesterInvite.expires_at > now,
+                    )
+                    .values(used_at=now)
+                    .returning(TesterInvite.id)
+                )
+                if consumed is not None:
+                    if current_session is not None:
+                        await db.execute(
+                            update(SessionRow)
+                            .where(SessionRow.id == current_session.session_id)
+                            .values(revoked_at=now)
+                        )
+                    db.add(
+                        SessionRow(
+                            id=session_id,
+                            user_id=row.id,
+                            session_digest=self._session_digest(token),
+                            created_at=now,
+                            last_seen_at=now,
+                            expires_at=expires_at,
+                            device_label=label,
+                            step_up_until=None,
+                            tester_invite_id=consumed,
+                        )
+                    )
+                    await self._audit(
+                        db,
+                        action="tester.redeemed",
+                        user_id=row.id,
+                        resource=f"session:{session_id}",
+                        metadata={"ip_hash": self._ip_hash(ip), "invite_id": str(consumed)},
+                    )
+                    info = SessionInfo(
+                        session_id=session_id,
+                        user_id=row.id,
+                        phone_e164=phone,
+                        display_name=row.display_name,
+                        user_created_at=row.created_at,
+                        created_at=now,
+                        last_seen_at=now,
+                        expires_at=expires_at,
+                        device_label=label,
+                        totp_enabled=False,
+                        step_up_until=None,
+                        access="tester",
+                    )
+        if info is None:
+            async with self._factory() as db, db.begin():
+                await self._audit(
+                    db,
+                    action="tester.redeem_failed",
+                    user_id=failed_user,
+                    resource=None,
+                    metadata={"ip_hash": self._ip_hash(ip)},
+                )
+            raise _invalid_credentials()
+        try:
+            await self._limiter.release_reservation("tester_login_phone", phone_key, window_token)
+        except Exception:
+            logger.warning("tester_login_phone_refund_failed")
         csrf = self.issue_token("session", str(session_id), expires_at)
         return info, token, csrf
 

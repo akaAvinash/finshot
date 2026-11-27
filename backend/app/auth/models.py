@@ -96,6 +96,11 @@ class Session(Base):
     device_label: Mapped[str | None] = mapped_column(String(100))
     # End of the TOTP step-up window on this session; null when closed.
     step_up_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set only for a tester session: the invite that created it. Revoking the
+    # invite, or disabling the feature, ends the session at once.
+    tester_invite_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tester_invites.id", ondelete="CASCADE")
+    )
 
 
 class AuditEvent(Base):
@@ -165,3 +170,44 @@ class RecoveryCode(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     digest: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TesterIdentity(Base):
+    """A dedicated tester account on a synthetic phone number. It is a normal
+    `users` row with no `invites` row and no authenticator, so the regular
+    OTP, authenticator and recovery sign-in cannot reach it. `purged_at` is
+    set when the operator purges its credentials; the audit trail stays."""
+
+    __tablename__ = "tester_identities"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TesterInvite(Base):
+    """A single-use, short-lived code for one tester identity. Only a keyed
+    digest of the code is stored; the code is shown once to the operator."""
+
+    __tablename__ = "tester_invites"
+    __table_args__ = (
+        CheckConstraint("expires_at > created_at", name="expiry_after_issue"),
+        CheckConstraint(
+            "expires_at <= created_at + interval '15 minutes'", name="expiry_within_15_minutes"
+        ),
+        Index("ix_tester_invites_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4, server_default=_UUID_DEFAULT
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tester_identities.user_id", ondelete="CASCADE")
+    )
+    code_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

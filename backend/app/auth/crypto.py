@@ -23,6 +23,7 @@ class Keys:
     csrf: bytes
     identifier: bytes  # hashing IPs/phones for rate-limit keys and audit logs
     totp: bytes  # sealing authenticator secrets at rest
+    tester: bytes  # digesting tester invite codes
 
     @classmethod
     def from_secret(cls, secret: str) -> Keys:
@@ -33,6 +34,7 @@ class Keys:
             csrf=_derive(master, "csrf"),
             identifier=_derive(master, "identifier"),
             totp=_derive(master, "totp-seal"),
+            tester=_derive(master, "tester-invite"),
         )
 
 

@@ -165,6 +165,28 @@ def create_app(
             workers.append(
                 asyncio.create_task(app.state.alerts.run_worker(settings.alert_worker_poll_seconds))
             )
+        if not settings.tester_sign_in_enabled:
+            # Disabling tester sign-in ends every tester session, even ones an
+            # earlier run issued, and a later re-enable does not revive them.
+            from app.auth.tester import revoke_all_tester_sessions
+
+            async def end_tester_sessions() -> None:
+                # Retry until the revocation commits, so a database that is
+                # down at startup cannot leave sessions to revive on re-enable.
+                delay = 1.0
+                while True:
+                    try:
+                        async with app.state.session_factory() as db:
+                            ended = await revoke_all_tester_sessions(db, clock())
+                        if ended:
+                            logger.info("tester_sessions_ended", count=ended)
+                        return
+                    except Exception:
+                        logger.warning("tester_sessions_end_failed", retry_in=delay)
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 60.0)
+
+            workers.append(asyncio.create_task(end_tester_sessions()))
         logger.info("startup", env=settings.app_env.value, version=__version__)
         try:
             yield

@@ -23,12 +23,14 @@ from app.auth.schemas import (
     SessionListOut,
     SessionSummaryOut,
     StepUpResultOut,
+    TesterLogin,
     TotpCodeIn,
     TotpEnrollmentOut,
     TotpLogin,
 )
 from app.auth.service import AuthService, SessionInfo, totp_setup_required
 from app.auth.stepup import StepUpService, step_up_required
+from app.auth.tester import operation_allowed
 from app.core.errors import ApiError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -54,14 +56,29 @@ async def optional_session(request: Request, auth: Auth) -> SessionInfo | None:
     return await auth.resolve_session(request.cookies.get(SESSION_COOKIE))
 
 
+def tester_denied() -> ApiError:
+    return ApiError(
+        403, "TESTER_ACCESS_DENIED", "This operation is not available in a tester session."
+    )
+
+
 async def setup_session(
+    request: Request,
     session: Annotated[SessionInfo | None, Depends(optional_session)],
 ) -> SessionInfo:
     """Any valid session, including one whose account has no active
     authenticator yet. Only the operations the contract lists as available
-    before setup use this."""
+    before setup use this.
+
+    A tester session may call only the operations on the tester allowlist; the
+    route's operation id decides, so a route without one is refused (fail
+    closed), and so is any operation added later."""
     if session is None:
         raise ApiError(401, "UNAUTHENTICATED", "Sign in to continue.")
+    if session.access == "tester":
+        route = request.scope.get("route")
+        if not operation_allowed(getattr(route, "operation_id", None)):
+            raise tester_denied()
     return session
 
 
@@ -70,7 +87,8 @@ async def required_session(
 ) -> SessionInfo:
     """A valid session whose account has an active authenticator. Checked
     after 401 and before any CSRF check, and changes nothing."""
-    if not session.totp_enabled:
+    # A tester session never has an authenticator and is never asked for one.
+    if session.access != "tester" and not session.totp_enabled:
         raise totp_setup_required()
     return session
 
@@ -85,7 +103,9 @@ def ensure_stepped_up(auth: AuthService, session: SessionInfo) -> None:
 
     Call it after the CSRF check and before changing anything, so the order is
     401, CSRF, step-up."""
-    if session.step_up_until is None or session.step_up_until <= auth.clock():
+    if session.access == "tester" or session.step_up_until is None:
+        raise step_up_required()  # a tester invite never confers step-up
+    if session.step_up_until <= auth.clock():
         raise step_up_required()
 
 
@@ -115,10 +135,11 @@ def _session_out(auth: AuthService, info: SessionInfo) -> SessionExpiryOut:
         idle_expires_at=auth.idle_expires_at(info),
         expires_at=info.expires_at,
         step_up_until=open_until if open_until is not None and open_until > auth.clock() else None,
+        access="tester" if info.access == "tester" else None,
     )
 
 
-@router.get("/csrf", response_model=CsrfTokenOut)
+@router.get("/csrf", response_model=CsrfTokenOut, operation_id="getCsrfToken")
 async def get_csrf(request: Request, response: Response, auth: Auth) -> CsrfTokenOut:
     claims, token, issued, clear_stale_session = await auth.csrf_for_request(request)
     # Separate Set-Cookie fields, in this order: clear stale session, set CSRF.
@@ -194,12 +215,36 @@ async def login_with_recovery_code(
     )
 
 
-@router.get("/me", response_model=AuthSessionOut)
+@router.post(
+    "/login/tester",
+    response_model=OtpVerifyResponse,
+    operation_id="redeemTesterInvite",
+    responses={404: {"description": "Tester sign-in is disabled."}},
+)
+async def login_with_tester_invite(
+    body: TesterLogin, request: Request, response: Response, auth: Auth, session: OptionalSession
+) -> OtpVerifyResponse:
+    # Off by default: the route then does not exist, before anything else is looked at.
+    if not auth.settings.tester_sign_in_enabled:
+        raise ApiError(404, "NOT_FOUND", "API endpoint not found.")
+    auth.enforce_csrf(request, session)
+    info, token, csrf = await auth.login_with_tester_invite(
+        request=request, phone=body.phone, code=body.invite_code, current_session=session
+    )
+    set_cookie(response, SESSION_COOKIE, token)
+    set_cookie(response, CSRF_COOKIE, csrf)
+    response.headers["Cache-Control"] = "no-store"
+    return OtpVerifyResponse(
+        user=_user_out(info), session=_session_out(auth, info), csrf_token=csrf
+    )
+
+
+@router.get("/me", response_model=AuthSessionOut, operation_id="getCurrentUser")
 async def me(auth: Auth, session: SetupSession) -> AuthSessionOut:
     return AuthSessionOut(user=_user_out(session), session=_session_out(auth, session))
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, operation_id="logout")
 async def logout(request: Request, auth: Auth, session: OptionalSession) -> Response:
     auth.enforce_csrf(request, session)
     if session is not None:

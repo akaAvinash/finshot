@@ -6,9 +6,16 @@ from __future__ import annotations
 import unicodedata
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+)
 from pydantic.alias_generators import to_camel
 
 PHONE_PATTERN = r"^\+91[6-9][0-9]{9}$"
@@ -57,6 +64,17 @@ class SessionExpiryOut(_Wire):
     idle_expires_at: datetime
     expires_at: datetime
     step_up_until: datetime | None
+    # Only a tester session reports its access; a regular session leaves the
+    # field out, so the existing response shape does not change.
+    access: Literal["tester"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_access(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        for key in ("access",):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class AuthSessionOut(_Wire):
@@ -136,6 +154,11 @@ RECOVERY_CODE_PATTERN = r"^[A-Z2-7]{5}-[A-Z2-7]{5}$"
 class RecoveryLogin(_Strict):
     phone: str = Field(pattern=PHONE_PATTERN)
     recovery_code: str = Field(pattern=RECOVERY_CODE_PATTERN)
+
+
+class TesterLogin(_Strict):
+    phone: str = Field(pattern=PHONE_PATTERN)
+    invite_code: str = Field(pattern=r"^[A-Za-z0-9_-]{22}$")
 
 
 class TotpLogin(_Strict):

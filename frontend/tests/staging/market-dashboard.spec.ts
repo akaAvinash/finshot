@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { InstrumentQuote } from "../../src/lib/api/market-types";
 import { signInStaging } from "./staging-helpers";
 
 const fixture = "http://127.0.0.1:3102/__fixture";
@@ -84,4 +85,36 @@ test("uses the staged instrument catalog and handles candle state changes withou
   await page.goto("/markets");
   await expect(page.getByRole("heading", { name: "No quotes available" })).toBeVisible();
   await expect(page.locator("canvas")).toHaveCount(0);
+});
+
+test("refreshes market quotes and candles for the selected instrument and timeframe", async ({ page, request }) => {
+  await signInStaging(page);
+  let price = 503;
+  await page.route("**/api/v1/market/overview", async (route) => {
+    const response = await route.fetch();
+    const overview = await response.json();
+    const quotes = overview.quotes.map((quote: InstrumentQuote) => quote.instrumentId === "NSE:SBIN"
+      ? { ...quote, price, high: Math.max(price, quote.high), change: price - quote.previousClose,
+        changePercent: (price / quote.previousClose - 1) * 100 }
+      : quote);
+    await route.fulfill({ response, json: { ...overview, quotes, source: "market" } });
+  });
+  await page.route("**/api/v1/market/instruments/*/candles?*", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), source: "market" } });
+  });
+  await page.goto("/markets");
+  await page.getByRole("button", { name: "Find instrument" }).click();
+  await page.getByRole("button", { name: "Select SBIN", exact: true }).click();
+  await page.getByRole("button", { name: "5m", exact: true }).click();
+  const chart = page.getByRole("region", { name: "SBIN", exact: true });
+  await expect(chart.getByText("₹503.00", { exact: true })).toBeVisible();
+  await expect(chart.getByRole("group", { name: "Market 5m candlestick chart" }).locator("canvas").first()).toBeVisible();
+
+  price = 518;
+  expect((await request.post(`${fixture}/market/stale`)).status()).toBe(204);
+  await page.getByRole("button", { name: "Refresh market data" }).click();
+  await expect(chart.getByText("₹518.00", { exact: true })).toBeVisible();
+  await expect(chart.getByText("Showing stale market candles.")).toBeVisible();
+  await expect(chart.getByRole("button", { name: "5m", exact: true })).toHaveAttribute("aria-pressed", "true");
 });

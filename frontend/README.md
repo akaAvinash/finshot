@@ -18,7 +18,7 @@ The development and production build scripts use Next.js’s Webpack mode becaus
 
 Use **Preview data** on the dashboard to switch between the normal, stale, empty and error responses. Applying a scenario or refreshing data briefly shows the loading state. The **Sample snapshot** date identifies the fixture in use.
 
-In **Markets**, select an overview card, find an instrument by name or symbol, or choose one from the watchlist. The chart supports 1m, 5m, 15m, 30m, 1h and 1D candles. **Chart demo data** lets you exercise stale, empty and failed history requests. The session indicator is dated to the demo snapshot. Equity volumes use sample share counts. Index volume is unavailable.
+In **Markets**, select an overview card, find an instrument by name or symbol, or choose one from the watchlist. The chart supports 1m, 5m, 15m, 30m, 1h and 1D candles. In staging, **Refresh market data** reloads quotes and candles for the selected instrument and timeframe. In preview, **Chart demo data** lets you exercise stale, empty and failed history requests. The session indicator is dated to the market snapshot. Demo equity volumes use sample share counts. Index volume is unavailable.
 
 In **Auto Trading**, assign a strategy while the paper engine is idle. Start or pause the simulator, review risk approvals in the order queue, and inspect sample trades and the event log. The paper kill switch requires typing **STOP**. It halts the simulator, cancels pending paper orders and records an event. Clearing a halt returns the simulator to idle. Demo state lives in memory for the current page visit and resets on reload. Live trading is unavailable.
 

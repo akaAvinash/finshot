@@ -1,0 +1,236 @@
+openapi: 3.1.0
+info:
+  title: FinShot order submission proposal
+  version: 0.1.0-draft
+  description: |
+    Proposed owner-only Zerodha order submission and acknowledgement lookup.
+    The first slice is a regular, day-valid NSE cash equity delivery limit
+    order. Live submission is off by default. Timing tests use a mock order
+    adapter and a separate read-only Kite probe.
+    Responses are private and use Cache-Control no-store.
+paths:
+  /api/v1/live/orders:
+    post:
+      operationId: submitLiveOrder
+      summary: Submit one order to the configured Zerodha account
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      description: |
+        Require the enabled feature, the approved owner account, a current
+        session with recent authenticator step-up, and the exact FinShot
+        Origin. Resolve the instrument and broker connection on the server.
+        Check available funds
+        or holdings, price and quantity rules, market data freshness and live
+        risk limits, including the live kill switch, before calling Kite. Fail
+        closed if required risk data is missing. Never use paper limits or
+        demo quotes to authorize a live order.
+
+        Durably reserve the idempotency key for the owner before sending the
+        broker request. The key is also the clientOrderId. Bind it to the
+        normalized intent and broker account. The same key and intent return
+        the stored submission result, including an in-progress result. A
+        different intent or broker account under the same key returns
+        409 IDEMPOTENCY_CONFLICT.
+
+        A timeout, connection loss, or process interruption after dispatch can
+        leave the result unknown. Preserve that state and reconcile using the
+        broker order book and a persisted broker tag. Do not auto-resubmit an
+        ambiguous order. If reconciliation cannot establish the outcome,
+        keep it unknown for operator review. Preserve the mapping across
+        retries and restarts. Keep broker credentials and raw responses out
+        of client payloads and logs.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LimitOrder'
+      responses:
+        '200':
+          description: Existing acknowledged or rejected result for the same key and intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '201':
+          description: Kite returned an order ID. Exchange acceptance and fills are still unconfirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '202':
+          description: The submission is pending or its broker outcome is unknown. Look it up by clientOrderId.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '400':
+          $ref: '#/components/responses/OrderError'
+        '401':
+          $ref: '#/components/responses/OrderError'
+        '403':
+          $ref: '#/components/responses/OrderError'
+        '404':
+          $ref: '#/components/responses/OrderError'
+        '409':
+          $ref: '#/components/responses/OrderError'
+        '422':
+          description: Kite definitively rejected submission without creating an order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '429':
+          $ref: '#/components/responses/OrderError'
+        '503':
+          description: Submission is unavailable before dispatch. An uncertain result after dispatch is reported as 202.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/live/orders/{clientOrderId}:
+    get:
+      operationId: getLiveOrderSubmission
+      summary: Look up the persisted submission result
+      description: |
+        Read the result by the original idempotency key. Require the owner
+        session and enabled feature. This lookup never submits an order.
+        It reports broker submission state, such as acknowledgement or
+        rejection. Exchange order lifecycle and fills are a later contract.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: clientOrderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current submission result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '400':
+          $ref: '#/components/responses/OrderError'
+        '401':
+          $ref: '#/components/responses/OrderError'
+        '403':
+          $ref: '#/components/responses/OrderError'
+        '404':
+          $ref: '#/components/responses/OrderError'
+        '503':
+          $ref: '#/components/responses/OrderError'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-tradeo_session
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      schema: { type: string }
+  responses:
+    OrderError:
+      description: Request denied, invalid, or unavailable. The error code identifies the cause.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    LimitOrder:
+      type: object
+      additionalProperties: false
+      required: [instrumentId, side, quantity, limitPricePaise]
+      properties:
+        instrumentId:
+          $ref: './openapi.yaml#/components/schemas/InstrumentId'
+        side:
+          enum: [BUY, SELL]
+        quantity:
+          type: integer
+          minimum: 1
+        limitPricePaise:
+          type: integer
+          minimum: 1
+          description: Limit price in paise. The server verifies the exchange tick size.
+    Submission:
+      type: object
+      additionalProperties: false
+      required: [clientOrderId, state, createdAt, updatedAt]
+      properties:
+        clientOrderId: { type: string, format: uuid }
+        state: { enum: [pending, acknowledged, rejected, unknown] }
+        brokerOrderId: { type: string, minLength: 1 }
+        rejectionCode: { const: BROKER_REJECTED }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      allOf:
+        - if:
+            properties:
+              state: { const: acknowledged }
+          then:
+            required: [brokerOrderId]
+          else:
+            properties:
+              brokerOrderId: false
+        - if:
+            properties:
+              state: { const: rejected }
+          then:
+            required: [rejectionCode]
+          else:
+            properties:
+              rejectionCode: false
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId]
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - CSRF_FAILED
+            - TOTP_SETUP_REQUIRED
+            - STEP_UP_REQUIRED
+            - TESTER_ACCESS_DENIED
+            - LIVE_ORDERS_ACCESS_DENIED
+            - NOT_FOUND
+            - IDEMPOTENCY_CONFLICT
+            - RISK_BLOCKED
+            - RATE_LIMITED
+            - LIVE_ORDERS_UNAVAILABLE
+        message: { type: string }
+        requestId: { type: string }
+x-verification:
+  mock-order-acknowledgement: |
+    Run FinShot against a stubbed Kite adapter. Measure FinShot HTTP response
+    time and the adapter round trip separately with a monotonic clock.
+    Inject fast and slow acknowledgements, definite rejection, and a timeout
+    after dispatch. Assert the result state and exercise same-key replay and
+    concurrent requests. Confirm refused requests never call the broker and
+    each valid key triggers at most one submission, including when a broker
+    accepted the request but its acknowledgement was lost.
+  authenticated-kite-timing-only: |
+    From the intended server, make a small series of sequential, paced,
+    authenticated GET /user/profile requests. Measure fresh and reused HTTP
+    connections separately and record sample count, p50, p95, max, HTTP
+    errors, and timeouts. Discard response bodies and redact credentials.
+    This measures real broker read latency. Kite Connect has no sandbox, so
+    skip live order calls in timing QA. Broker order acknowledgement and
+    exchange fill latency require a separately approved live pilot.

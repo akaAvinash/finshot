@@ -206,6 +206,7 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/auth/sessions/{sessionId}",
         "/api/v1/settings/profile",
         "/api/v1/settings/trade-controls",
+        "/api/v1/settings/data-retention",
         "/api/v1/settings/phone/change",
         "/api/v1/settings/phone/change/confirm",
         "/api/v1/settings/trade-controls/history",

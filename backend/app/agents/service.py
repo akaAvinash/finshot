@@ -52,6 +52,8 @@ from app.paper.models import (
     PaperReplayFinish,
     PaperTrade,
 )
+from app.retention.service import lock_key as retention_lock_key
+from app.retention.service import purged_floor
 from app.strategies.models import StrategyVersion
 
 logger = structlog.get_logger(__name__)
@@ -264,6 +266,9 @@ class AgentService:
                     )
                 )
                 return False
+            # Serialise with this user's retention purge: the watermark read by _observe
+            # must still be the committed one when the events below are inserted.
+            await db.execute(select(func.pg_advisory_xact_lock(retention_lock_key(run.user_id))))
             observation = await self._observe(db, run)
             if observation is None:  # pragma: no cover - the account cannot vanish here
                 return True
@@ -357,7 +362,13 @@ class AgentService:
         trades = (
             await db.scalars(
                 select(PaperTrade)
-                .where(PaperTrade.user_id == user_id, PaperTrade.seq > memory.trade_seq)
+                .where(
+                    PaperTrade.user_id == user_id,
+                    PaperTrade.seq > memory.trade_seq,
+                    # Recorded before the retention purge: its advisory event may be gone.
+                    # created_at, not filled_at: a replay fills at historical candle times.
+                    PaperTrade.created_at > purged_floor(PaperTrade.user_id),
+                )
                 .order_by(PaperTrade.seq)
             )
         ).all()
@@ -372,6 +383,8 @@ class AgentService:
                 .where(
                     PaperOrder.user_id == user_id,
                     PaperOrder.status == "cancelled",
+                    # Older than the retention purge: its event may be gone.
+                    PaperOrder.updated_at > purged_floor(PaperOrder.user_id),
                     ~reported.exists(),
                 )
                 .order_by(PaperOrder.seq)
@@ -400,7 +413,11 @@ class AgentService:
                     .scalar_subquery(),
                     select(func.max(PaperTrade.filled_at)).where(replay_fills).scalar_subquery(),
                 )
-                .where(PaperReplayFinish.user_id == user_id, ~summarised.exists())
+                .where(
+                    PaperReplayFinish.user_id == user_id,
+                    PaperReplayFinish.finished_at > purged_floor(PaperReplayFinish.user_id),
+                    ~summarised.exists(),
+                )
                 .order_by(PaperReplayFinish.replay)
             )
         ).all()
@@ -442,6 +459,7 @@ class AgentService:
                     PaperReplay.user_id == user_id,
                     PaperReplay.replay >= memory.scan_replay,
                     PaperReplay.replay < account.replay,
+                    PaperReplayFinish.finished_at > purged_floor(PaperReplayFinish.user_id),
                 )
                 .order_by(PaperReplay.replay)
             )

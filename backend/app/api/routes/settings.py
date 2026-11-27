@@ -24,6 +24,8 @@ from app.auth.schemas import (
 from app.auth.service import SessionInfo
 from app.paper import controls as tc
 from app.paper.service import PaperService
+from app.retention.schemas import DataRetentionIn, DataRetentionOut
+from app.retention.service import RetentionService
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
@@ -156,3 +158,23 @@ async def confirm_phone_change(
         timezone=cast(Timezone, timezone),
         phone_masked=mask_phone(await auth.current_phone(session.user_id)),
     )
+
+
+def get_retention(request: Request) -> RetentionService:
+    service: RetentionService = request.app.state.retention
+    return service
+
+
+Retention = Annotated[RetentionService, Depends(get_retention)]
+
+
+@router.get("/data-retention", response_model=DataRetentionOut, operation_id="getDataRetention")
+async def get_data_retention(session: RequiredSession, retention: Retention) -> DataRetentionOut:
+    return await retention.get(session.user_id)
+
+
+@router.put("/data-retention", response_model=DataRetentionOut, operation_id="updateDataRetention")
+async def update_data_retention(
+    body: DataRetentionIn, session: SteppedUpWriteSession, retention: Retention
+) -> DataRetentionOut:
+    return await retention.update(session.user_id, body.retention_days)

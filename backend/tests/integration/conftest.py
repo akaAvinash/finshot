@@ -69,6 +69,7 @@ def make_app(
 
     def make(**overrides: Any) -> TestClient:
         overrides.setdefault("otp_resend_cooldown_seconds", 0)
+        overrides.setdefault("retention_worker_enabled", False)
         settings: Settings = make_settings(database_url=DB_URL, redis_url=REDIS_URL, **overrides)
         client = TestClient(
             create_app(settings, otp_provider=provider, clock=clock),

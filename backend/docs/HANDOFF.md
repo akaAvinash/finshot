@@ -97,6 +97,25 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   not in this repository) still names `9e5cf9b` as the previous release.
   Correct it on the next staging release; it was left untouched in TRAD-6.
 
+## Data retention notes (contract 0.13.0)
+
+- `GET`/`PUT /api/v1/settings/data-retention` (`app/retention/`, migration 0017).
+  Saving needs step-up. Bounds and default: `DATA_RETENTION_MIN_DAYS` (30),
+  `DATA_RETENTION_MAX_DAYS` (730), `DATA_RETENTION_DEFAULT_DAYS` (365); settings
+  refuse a default outside the bounds.
+- Purge: in-process worker every `RETENTION_PURGE_INTERVAL_SECONDS` (3600; turn off
+  with `RETENTION_WORKER_ENABLED=false`) or by hand: `python -m app.retention.service`.
+  Deletes alerts and agent events (alert deliveries once that table exists) created
+  before `now - period`, per user under an advisory lock. Audit `retention.purged`
+  (counts only) when anything was deleted.
+- Watermark: `data_retention.purged_through` only moves forward. The alert worker
+  (broker expiry, reconciliation mismatch) and the agent worker (cancelled orders,
+  finished replays) ignore sources older than it, so a purged alert or event is
+  never recorded again. Any new "not yet reported" producer must do the same
+  (`app.retention.service.purged_floor`).
+- Kept regardless: audit log, paper ledger and reports, strategies/versions/backtests,
+  Trade Controls history.
+
 ## Alerts (E2) notes
 
 - `alerts` (migration `0009`): one row per alert, unique

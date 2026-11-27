@@ -53,6 +53,7 @@ class Alert(Base):
         ),
         CheckConstraint("(link_kind IS NULL) = (link_id IS NULL)", name="link_complete"),
         Index("ix_alerts_user_id_seq", "user_id", "seq"),
+        Index("ix_alerts_user_id_created_at", "user_id", "created_at"),
         Index(
             "ix_alerts_user_id_unread",
             "user_id",

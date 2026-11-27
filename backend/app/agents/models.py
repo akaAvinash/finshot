@@ -50,6 +50,7 @@ class AgentEvent(Base):
         ),
         CheckConstraint("(link_kind IS NULL) = (link_id IS NULL)", name="link_complete"),
         Index("ix_agent_events_user_id_seq", "user_id", "seq"),
+        Index("ix_agent_events_user_id_created_at", "user_id", "created_at"),
         Index("ix_agent_events_user_id_agent_id_seq", "user_id", "agent_id", "seq"),
     )
 

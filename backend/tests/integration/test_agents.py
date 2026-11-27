@@ -816,3 +816,140 @@ def test_a_replay_reassigned_before_evaluation_is_still_summarised(
     assert len(
         db_rows(_db(), "SELECT 1 FROM agent_events WHERE reason_code = 'LARGE_MOVE'")
     ) == len(want)
+
+
+# -------------------------------------------------- retention watermark filters
+
+
+def _floor(sql_time: str, *, shift: str = "0 seconds") -> None:
+    """Set the user's purge watermark to a stored timestamp (shifted by `shift`)."""
+    db_rows(_db(), "DELETE FROM data_retention")
+    db_rows(
+        _db(),
+        f"INSERT INTO data_retention (user_id, purged_through) SELECT user_id, ({sql_time})"
+        f" - interval '{shift}' FROM paper_accounts",
+    )
+
+
+@pytest.mark.parametrize(("shift", "summarised"), [("0 seconds", False), ("1 second", True)])
+def test_replay_summary_and_backlog_respect_the_purge_floor(
+    client: TestClient, clock: FakeClock, contract: Any, shift: str, summarised: bool
+) -> None:
+    """A finished replay at or before the watermark is neither summarised nor scanned
+    (its events may already have been purged); one second newer than it is both."""
+    browser = assigned(client)
+    ok(browser, {"action": "start"})
+    for _ in range(len(sessions("NSE:SBIN")) + 1):
+        if not tick(client):
+            break
+        clock.advance(TICK)
+    sid = db_rows(_db(), "SELECT strategy_id FROM paper_accounts")[0]["strategy_id"]
+    ok(browser, {"action": "assign", "strategyId": str(sid)})
+    _floor("SELECT finished_at FROM paper_replay_finishes WHERE replay = 1", shift=shift)
+    evaluate(client)
+    events = all_events(browser, contract)
+    got = [e for e in events if e["reasonCode"] == "REPLAY_SUMMARY"]
+    moves = db_rows(_db(), "SELECT 1 FROM agent_events WHERE reason_code = 'LARGE_MOVE'")
+    assert (len(got) == 1) is summarised
+    assert bool(moves) is summarised
+
+
+@pytest.mark.parametrize(("shift", "reported"), [("0 seconds", False), ("1 second", True)])
+def test_cancelled_orders_respect_the_purge_floor(
+    client: TestClient, clock: FakeClock, contract: Any, shift: str, reported: bool
+) -> None:
+    browser = assigned(client)
+    ok(browser, {"action": "start"})
+    for _ in range(len(sessions("NSE:SBIN"))):
+        tick(client)
+        clock.advance(TICK)
+        if db_rows(_db(), "SELECT 1 FROM paper_orders WHERE status = 'queued'"):
+            break
+    ok(browser, {"action": "halt", "confirmation": "STOP"})
+    _floor("SELECT updated_at FROM paper_orders WHERE status = 'cancelled'", shift=shift)
+    evaluate(client)
+    cancelled = [e for e in all_events(browser, contract) if e["reasonCode"] == "ORDER_CANCELLED"]
+    assert (len(cancelled) == 1) is reported
+
+
+@pytest.mark.parametrize(("shift", "explained"), [("0 seconds", False), ("1 second", True)])
+def test_old_trades_respect_the_purge_floor(
+    client: TestClient, clock: FakeClock, contract: Any, shift: str, explained: bool
+) -> None:
+    browser = assigned(client)
+    ok(browser, {"action": "start"})
+    evaluate(client)
+    db_rows(
+        _db(),
+        "INSERT INTO paper_trades (user_id, replay, instrument, side, quantity, fill_paise,"
+        " fees_paise, pnl_paise, reason, filled_at, created_at)"
+        " SELECT user_id, replay, 'SBIN', 'Sell', 3, 80000, 72, -1500, 'stop-loss',"
+        " now() - interval '400 days', now() FROM paper_accounts",
+    )  # a replay fills at a historical time but is recorded now
+    db_rows(_db(), "UPDATE paper_accounts SET updated_at = updated_at + interval '1 second'")
+    _floor("SELECT created_at FROM paper_trades", shift=shift)
+    evaluate(client)
+    stops = [e for e in all_events(browser, contract) if e["reasonCode"] == "STOP_LOSS_EXIT"]
+    assert (len(stops) == 1) is explained
+
+
+def test_an_evaluation_waits_for_a_purge_of_the_same_user(
+    client: TestClient, clock: FakeClock
+) -> None:
+    """The agent run takes the user's retention lock before it reads the watermark and
+    keeps it until its events commit, so a purge cannot slip in between the two."""
+    import asyncio
+    import threading
+    import time
+
+    import asyncpg
+
+    browser = assigned(client)
+    ok(browser, {"action": "start"})
+    tick(client)
+    (me,) = db_rows(_db(), "SELECT user_id FROM paper_accounts")
+    held, release = threading.Event(), threading.Event()
+    holder_pid: list[int] = []
+
+    def hold() -> None:
+        async def run() -> None:
+            conn = await asyncpg.connect(_db().replace("+asyncpg", ""))
+            try:
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                        f"retention:{me['user_id']}",
+                    )
+                    holder_pid.append(conn.get_server_pid())
+                    held.set()
+                    await asyncio.get_running_loop().run_in_executor(None, release.wait, 30)
+            finally:
+                await conn.close()
+
+        asyncio.run(run())
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    done: list[int] = []
+    evaluator = threading.Thread(target=lambda: done.append(evaluate(client)))
+    try:
+        assert held.wait(10)
+        evaluator.start()
+        for _ in range(100):
+            blocked = db_rows(
+                _db(),
+                "SELECT count(*) AS n FROM pg_stat_activity WHERE :h = ANY(pg_blocking_pids(pid))",
+                h=holder_pid[0],
+            )[0]["n"]
+            if blocked:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the evaluation never waited for the retention lock")
+        assert done == []
+    finally:
+        release.set()
+        if evaluator.is_alive():
+            evaluator.join(20)
+        holder.join(10)
+    assert done

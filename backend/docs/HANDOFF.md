@@ -131,7 +131,7 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   Logs carry only the exception class, never the server reply, credentials or address.
 - Default stays `disabled`. Owner actions: create the mailbox, set the `SMTP_*`
   values and `NOTIFY_EMAIL_PROVIDER=smtp` in the server env yourself, restart the API
-  (migration 0019 adds `alert_deliveries.last_attempt_at`).
+  (migration 0019 adds an index).
 
 ## Data retention notes (contract 0.13.0)
 

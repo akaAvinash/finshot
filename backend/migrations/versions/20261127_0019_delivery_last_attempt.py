@@ -1,4 +1,4 @@
-"""Record when a delivery was last attempted (for the email send caps).
+"""Index delivery attempts by time (for the real email send caps).
 
 Revision ID: 0019
 Revises: 0018
@@ -17,9 +17,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "alert_deliveries", sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True)
-    )
     op.create_index(
         "ix_alert_deliveries_last_attempt_at",
         "alert_deliveries",
@@ -30,4 +27,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_alert_deliveries_last_attempt_at", table_name="alert_deliveries")
-    op.drop_column("alert_deliveries", "last_attempt_at")

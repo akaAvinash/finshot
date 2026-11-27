@@ -322,6 +322,11 @@ class AlertDeliveryService:
             # The daily check and the attempt increment below must not interleave
             # with another claimer for the same user and channel. Locks are taken
             # in sorted key order so concurrent batches cannot deadlock.
+            if any(r.channel == "email" for r in rows) and not self._providers["email"].simulated:
+                # One mailbox, one cap: serialize real-email claims across workers.
+                await db.execute(
+                    select(func.pg_advisory_xact_lock(func.hashtextextended("alerts:email-cap", 0)))
+                )
             for user_id, chan in sorted({(r.user_id, r.channel) for r in rows}, key=str):
                 await db.execute(
                     select(

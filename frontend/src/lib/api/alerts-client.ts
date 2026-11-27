@@ -1,4 +1,4 @@
-import { inboxSeverities, inboxSources, type AlertPreferences, type InAppPreferences, type InboxAlert, type InboxPage, type InboxStatus } from "./alerts-types";
+import { inboxAlertLinkKinds, inboxSeverities, inboxSources, type AlertPreferences, type InAppPreferences, type InboxAlert, type InboxPage, type InboxStatus } from "./alerts-types";
 
 const root = "/api/v1/alerts";
 
@@ -27,7 +27,7 @@ function alert(value: unknown): value is InboxAlert {
     (value.environment === null || value.environment === "PAPER" || value.environment === "DEMO") &&
     time(value.occurredAt) && time(value.createdAt) && (value.acknowledgedAt === null || time(value.acknowledgedAt)) &&
     (value.link === null || (record(value.link) && typeof value.link.id === "string" &&
-      member(["paper-trade", "paper-order", "paper-replay", "broker", "session"], value.link.kind)));
+      member(inboxAlertLinkKinds, value.link.kind)));
 }
 
 function page(value: unknown): value is InboxPage {

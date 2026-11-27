@@ -1,9 +1,9 @@
 const root = "/api/v1/alerts";
 const stamp = "2026-11-25T10:00:00Z";
 
-function item(id, source, severity, title, kind) {
+function item(id, source, severity, title, kind, link = null) {
   return { id, source, severity, title, kind, environment: source === "security" ? null : source === "brokers" ? "DEMO" : "PAPER",
-    message: `${title} in the staging test account.`, occurredAt: stamp, createdAt: stamp, acknowledgedAt: null, link: null };
+    message: `${title} in the staging test account.`, occurredAt: stamp, createdAt: stamp, acknowledgedAt: null, link };
 }
 
 export function createAlertsFixture() {
@@ -12,7 +12,9 @@ export function createAlertsFixture() {
     item("paper-cancel", "paper", "warning", "Paper order cancelled", "PAPER_ORDER_CANCELLED"),
     item("sign-in", "security", "info", "New sign-in", "NEW_SIGN_IN"),
     ...Array.from({ length: 24 }, (_, index) => item(`replay-${index}`, "paper", "info", `Paper replay ${index + 1} finished`, "PAPER_REPLAY_FINISHED")),
-    item("broker-expiry", "brokers", "critical", "Demo broker connection expired", "BROKER_CONNECTION_EXPIRED"),
+    item("broker-expiry", "brokers", "critical", "Demo broker connection expired", "BROKER_CONNECTION_EXPIRED", {
+      kind: "broker-connection", id: "35fbccd0-ab7c-4edc-85c0-a23abf2cd7fd",
+    }),
   ];
   let inApp = { critical: true, warning: true, info: true };
   let updatedAt = null;

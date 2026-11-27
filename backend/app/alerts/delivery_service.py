@@ -349,7 +349,6 @@ class AlertDeliveryService:
                         .where(
                             AlertDelivery.user_id == row.user_id,
                             AlertDelivery.channel == channel,
-                            AlertDelivery.id != row.id,
                             AlertDelivery.last_attempt_at >= day,
                         )
                     )

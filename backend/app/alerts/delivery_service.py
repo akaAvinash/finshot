@@ -347,14 +347,14 @@ class AlertDeliveryService:
                     setting = await db.get(AlertChannelSetting, (row.user_id, channel))
                     if setting is None or not setting.enabled:
                         reason = "CHANNEL_DISABLED"
-                if reason is None and row.attempts == 0:
+                if reason is None:
                     used = await db.scalar(
                         select(func.count())
                         .select_from(AlertDelivery)
                         .where(
                             AlertDelivery.user_id == row.user_id,
                             AlertDelivery.channel == channel,
-                            AlertDelivery.attempts > 0,
+                            AlertDelivery.id != row.id,
                             AlertDelivery.last_attempt_at >= day,
                         )
                     )

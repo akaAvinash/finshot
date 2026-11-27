@@ -336,6 +336,25 @@ def test_daily_cap_counts_the_day_sending_starts(
     ]
 
 
+def test_retries_obey_the_daily_cap_too(
+    make_app: Callable[..., TestClient], clock: FakeClock
+) -> None:
+    client = make_app(alert_worker_enabled=False, notify_daily_limit_per_channel=1, **SIMULATED)
+    browser = Browser(client)
+    browser.login_ready()
+    clock.advance(1)
+    me = uid(browser)
+    _insert_deliveries(me, clock.now, 1)
+    db_rows(db(), "UPDATE alert_deliveries SET attempts = 1, last_attempt_at = :t", t=clock.now)
+    _insert_deliveries(me, clock.now, 1)  # a second delivery today, over the limit of 1
+    db_rows(db(), "UPDATE alert_deliveries SET status = 'sent' WHERE attempts = 1")
+    db_rows(db(), "UPDATE alert_deliveries SET attempts = 1 WHERE status = 'pending'")  # a retry
+    assert run(client) == 0
+    assert db_rows(db(), "SELECT status_reason FROM alert_deliveries WHERE status = 'skipped'") == [
+        {"status_reason": "DAILY_LIMIT"}
+    ]
+
+
 def test_concurrent_claims_cannot_exceed_the_daily_cap(
     make_app: Callable[..., TestClient], clock: FakeClock
 ) -> None:

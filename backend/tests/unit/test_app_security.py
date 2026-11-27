@@ -278,3 +278,27 @@ def test_validation_errors_use_contract_shape(make_settings: SettingsFactory) ->
         "message": "The request parameters are invalid.",
         "requestId": "req-2",
     }
+
+
+def test_unknown_path_uses_contract_error_shape(client: TestClient) -> None:
+    """An unknown /api/v1 path gets {code, message, requestId}, not FastAPI's {"detail"}."""
+    response = client.get("/api/v1/no-such-route", headers={"X-Request-ID": "req-404"})
+    assert response.status_code == 404
+    assert response.json() == {
+        "code": "NOT_FOUND",
+        "message": "API endpoint not found.",
+        "requestId": "req-404",
+    }
+    assert response.headers["X-Request-ID"] == "req-404"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_wrong_method_uses_contract_error_shape(client: TestClient) -> None:
+    response = client.delete("/api/v1/market/overview", headers={"X-Request-ID": "req-405"})
+    assert response.status_code == 405
+    assert response.json() == {
+        "code": "METHOD_NOT_ALLOWED",
+        "message": "Method not allowed for this endpoint.",
+        "requestId": "req-405",
+    }
+    assert response.headers["Allow"] == "GET"

@@ -4,7 +4,27 @@ Demo, sandbox and paper only. Staging is a private Tailscale host that cloud
 sessions cannot reach, so every step marked **on staging** runs through a Remote
 Control session on the owner's machine, with the owner's approval.
 
-## Pinned revision
+## Release 2026-11-27 (PR #56 fixes)
+
+Deployed by a Remote Control session on the owner's machine, with the owner's go-ahead.
+
+| Item | Value |
+|---|---|
+| Backend live on staging | main `c255b4be13d7bf671304b036c4b365dfa6d5eca1`, release dir `~/tradeo-staging/repo` (previous moved to `~/tradeo-staging/repo-c700c7e`) |
+| API image | `5cfec6ada510` (`tradeo-staging-api:local`); rollback `tradeo-staging-api:rollback-c700c7e` = `10570d619226` |
+| Frontend image | unchanged, `0c145a823849` (revision `17a409d`) |
+| Backup before deploy | `tradeo-staging-20261127T073059Z-aB8Xj0xm-v1.dump.gpg` (72,025 bytes, `.sha256` ok) |
+| Alembic head | `0012` before and after; no migration ran |
+| Checks | `/health/live` and `/health/ready` 200, `./ops verify` all pass, cryptography 50.0.2; a forced unhandled error returns 500 `INTERNAL_ERROR` with `X-Request-ID` and the security headers, and keep-alive survives (DEF-001) |
+
+Rollback (no migration, so no restore needed): move `repo` aside, move
+`repo-c700c7e` back to `repo`, `docker tag tradeo-staging-api:rollback-c700c7e tradeo-staging-api:local`,
+then `cd ~/tradeo-staging/repo/backend/staging && ./ops compose up -d --wait --force-recreate api frontend ingress`
+(from the restored release, not the moved-aside one). The
+frontend and ingress share the API's network namespace, so they are recreated
+with it; their images do not change.
+
+## Pinned revision (2026-11-25)
 
 Recorded 2026-11-25 by a read-only check on the staging host. Nothing was changed.
 
@@ -102,10 +122,16 @@ put back without restoring the database, Alembic sees `0012` as already applied
 and skips its migration, so code and schema would not match. Main has exactly
 one `0012` (`0012_recovery_codes`).
 
-## Rollback
+## Rollback for releases with migrations
+
+Use this procedure only to undo a release that ran an Alembic migration. For a
+release that ran no migration (such as 2026-11-27, above), follow that
+release's own rollback steps and do not restore a database dump.
 
 1. Backup in `~/.local/state/tradeo-staging/backups` (mode 0600, each with a
-   `.sha256`). Latest: `tradeo-staging-20261125T143541Z-T6Cc26rN-v1.dump.gpg`,
+   `.sha256`). Latest: `tradeo-staging-20261127T073059Z-aB8Xj0xm-v1.dump.gpg`
+   (72,025 bytes, before the 2026-11-27 release, which ran no migration).
+   Last pre-migration dump: `tradeo-staging-20261125T143541Z-T6Cc26rN-v1.dump.gpg`,
    69,586 bytes, 2026-11-25 14:35:41 UTC, taken just before the c700c7e release
    directory (14:44). Older: `20261125T094543Z` (10,293 bytes),
    `20261124T011242Z` (10,277 bytes).

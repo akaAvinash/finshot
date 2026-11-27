@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.agents.service import AgentService
@@ -204,6 +205,21 @@ def create_app(
         return error_response(
             request, 400, "INVALID_REQUEST", "The request parameters are invalid."
         )
+
+    # Routing errors (unknown path, wrong method) use the same error shape as
+    # every contract route instead of FastAPI's {"detail": ...}.
+    _http_error_codes = {
+        404: ("NOT_FOUND", "API endpoint not found."),
+        405: ("METHOD_NOT_ALLOWED", "Method not allowed for this endpoint."),
+    }
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code, message = _http_error_codes.get(exc.status_code, ("HTTP_ERROR", "Request failed."))
+        response = error_response(request, exc.status_code, code, message)
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
 
     async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
         # Log the traceback; never return it to the client.

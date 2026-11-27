@@ -3,8 +3,9 @@
 FastAPI service for Tradeo. It provides configuration, database and cache
 wiring, migrations, health probes, logging, container setup, (Phase A)
 phone-OTP authentication with server-side sessions and (Phase B1) read-only
-market data backed by demo fixtures. It has **no broker or trading endpoints
-yet**, **no live market feed** and **no order placement of any kind**.
+market data backed by demo fixtures, plus an owner-only, read-only market
+WebSocket (off by default; mock or Zerodha Kite feed, `docs/MARKET_STREAM.md`).
+It has **no order placement of any kind**.
 
 ## Stack
 
@@ -112,6 +113,15 @@ python -m app.auth.admin tester list
 Tester sessions are allowed only the operations in `TESTER_ALLOWED_OPERATIONS`
 (`app/auth/tester.py`); everything else, including account security, real broker access
 and step-up, is `403 TESTER_ACCESS_DENIED`.
+
+## Owner market stream (read-only, off by default)
+
+`/api/v1/market/stream` is a WebSocket for the owner's chart, per
+`contracts/live-market-stream.asyncapi.yaml`. Only `MARKET_STREAM_OWNER_USER_ID`
+may connect. Feeds: `mock` (not real prices, refused in production) or `kite`
+(Zerodha Kite Connect; credentials in the server environment only). Setup,
+close codes, the daily Kite token command and staging test steps are in
+`docs/MARKET_STREAM.md`.
 
 ## Market data (Phase B1, read-only)
 

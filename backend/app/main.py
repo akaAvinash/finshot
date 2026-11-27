@@ -47,6 +47,8 @@ from app.core.middleware import (
 from app.db.session import create_engine, create_session_factory
 from app.market.demo import DemoMarketDataProvider
 from app.market.provider import DisabledMarketDataProvider, MarketDataProvider
+from app.market.stream.hub import MarketStreamHub
+from app.market.stream.source import MockTickSource, TickSource
 from app.paper.service import PaperService
 from app.reports.service import ReportService
 from app.retention.service import RetentionService
@@ -65,6 +67,7 @@ def create_app(
     market_provider: MarketDataProvider | None = None,
     broker_adapter: BrokerAdapter | None = None,
     notification_providers: dict[Channel, NotificationProvider] | None = None,
+    market_stream_source: TickSource | None = None,
 ) -> FastAPI:
     """`otp_provider`, `clock`, `market_provider` and `broker_adapter` are
     injection points for tests. Production wiring picks the OTP provider from
@@ -163,6 +166,15 @@ def create_app(
             settings=settings, session_factory=app.state.session_factory, clock=clock
         )
         workers: list[asyncio.Task[None]] = []
+        app.state.market_stream = None
+        if settings.market_stream_enabled:
+            app.state.market_stream = MarketStreamHub(
+                market_stream_source or _build_stream_source(settings, clock),
+                clock=clock,
+                queue_size=settings.market_stream_queue_size,
+                stale_after_seconds=settings.market_stream_stale_after_seconds,
+            )
+            app.state.market_stream.start()
         if settings.retention_worker_enabled:
             workers.append(
                 asyncio.create_task(
@@ -219,6 +231,11 @@ def create_app(
         try:
             yield
         finally:
+            if app.state.market_stream is not None:
+                await app.state.market_stream.stop()
+                aclose = getattr(app.state.market_stream.source, "aclose", None)
+                if aclose is not None:
+                    await aclose()
             for worker in workers:
                 worker.cancel()
             for worker in workers:
@@ -311,6 +328,20 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
 
     return app
+
+
+def _build_stream_source(settings: Settings, clock: Clock) -> TickSource:
+    if settings.market_stream_provider == "kite":
+        from app.market.stream.kite import KiteTickSource
+
+        if not (settings.kite_api_key and settings.kite_access_token_file):  # pragma: no cover
+            raise RuntimeError("Kite credentials are not configured")  # settings validate this
+        return KiteTickSource(
+            api_key=settings.kite_api_key,
+            access_token_file=settings.kite_access_token_file,
+            clock=clock,
+        )
+    return MockTickSource(clock, tick_seconds=settings.market_stream_mock_tick_seconds)
 
 
 def _drop_generated_422(app: FastAPI) -> None:

@@ -23,7 +23,7 @@ export function stagingError(error: unknown, fallback: string) {
   if ([400, 404, 409, 422].includes(error.status) && error.detail && error.detail.length <= 240) {
     return error.detail;
   }
-  return error.requestId && error.status >= 500 ? `${fallback} Request ID ${error.requestId}.` : fallback;
+  return error.requestId && isUnconfirmedStagingWrite(error) ? `${fallback} Request ID ${error.requestId}.` : fallback;
 }
 
 export function isUnconfirmedStagingWrite(error: unknown) {

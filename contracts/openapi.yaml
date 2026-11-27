@@ -312,6 +312,11 @@ tags:
       shorter period deletes history permanently. A server job purges
       records older than the period at least once every 24 hours, so a
       shorter period takes effect within a day; the newest save wins.
+      A save and a purge for the same user never interleave: the purge reads
+      the period when it starts deleting for that user, so a purge that
+      overlaps a save uses the period saved before it, or waits and uses the
+      newly saved one. It never deletes a record that the period saved
+      before the purge started deleting would keep.
 
       | Purged after the period | Kept regardless (reason) |
       |---|---|
@@ -1621,7 +1626,7 @@ paths:
         Sends a one-time code by SMS to `newPhone` and returns a challenge
         bound to the caller's session. A number that cannot be taken is
         answered the same way and sent nothing. Checks run in this order:
-        `401`, `403` (`TOTP_SETUP_REQUIRED`, `TESTER_ACCESS_DENIED`,
+        `401`, `403` (`TESTER_ACCESS_DENIED`, `TOTP_SETUP_REQUIRED`,
         `CSRF_FAILED`, `STEP_UP_REQUIRED`), `400`, `429`, `503`.
       security:
         - sessionCookie: []
@@ -1668,8 +1673,12 @@ paths:
         every other session of the account has ended, and the response is the
         updated profile. A wrong, expired, used or foreign challenge or code,
         or a number that cannot be taken, returns
-        `400 PHONE_CHANGE_CODE_INVALID` and changes nothing except the
-        challenge's attempt count.
+        `400 PHONE_CHANGE_CODE_INVALID`; the account is unchanged. A
+        well-formed request naming an active challenge (the caller's, from
+        this session, unused, unexpired and with attempts left) uses one of
+        its attempts, whether the code is right or wrong; nothing else
+        changes. A malformed body (`400 INVALID_REQUEST`) is rejected before
+        any challenge is read and uses no attempt.
       security:
         - sessionCookie: []
           csrfHeader: []
@@ -1740,6 +1749,11 @@ paths:
         and nothing changes. Saving the current value succeeds without an
         audit entry. Records older than the new period are purged by the
         next purge run, within 24 hours; this endpoint deletes nothing itself.
+        A save is serialised with the purge for the same user: a purge that
+        is deleting when the save arrives finishes with the earlier period
+        before the save applies, and every purge that starts after the save
+        uses the saved period. No purge deletes a record retained by a period
+        saved before that purge started.
       security:
         - sessionCookie: []
           csrfHeader: []
@@ -2992,10 +3006,14 @@ paths:
       summary: Turn email, SMS and push delivery on or off
       description: |
         Replaces the settings of all three channels at once and returns the
-        caller's preferences. Each channel appears exactly once. Enabling a
-        channel that is not `available` returns
-        `409 ALERT_CHANNEL_UNAVAILABLE` and changes nothing; disabling one is
-        always allowed. A disabled channel keeps its `minSeverity`. Saving
+        caller's preferences. Each channel appears exactly once. Turning a channel
+        that is not `available` from disabled to enabled returns
+        `409 ALERT_CHANNEL_UNAVAILABLE` and changes nothing, for any channel
+        in the request. A channel that was enabled and has since become
+        unavailable may be saved as enabled (its `minSeverity` may change);
+        it stays enabled and sends nothing while unavailable, and its
+        deliveries are recorded as `skipped`. Disabling a channel is always
+        allowed. A disabled channel keeps its `minSeverity`. Saving
         the same values again succeeds and changes nothing else. Each change
         is recorded in the audit log as `alerts.channels` with the old and
         new settings and no destination. The newest save wins. Not available
@@ -5619,7 +5637,26 @@ components:
             - CSRF_FAILED
             - ALERT_NOT_FOUND
             - ALERTS_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
+    AlertDeliveryError:
+      type: object
+      description: >
+        Error body of the 403, 409 and 429 responses of the delivery
+        operations (`updateAlertChannels`, `sendAlertChannelTest`,
+        `listAlertDeliveries`). Their other errors use `AlertError`.
+      required: [code, message, requestId]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - TOTP_SETUP_REQUIRED
             - TESTER_ACCESS_DENIED
+            - CSRF_FAILED
             - ALERT_CHANNEL_UNAVAILABLE
             - RATE_LIMITED
         message:
@@ -5679,9 +5716,11 @@ components:
         retentionDays:
           type: integer
           minimum: 1
+          maximum: 36500
         defaultDays:
           type: integer
           minimum: 1
+          maximum: 36500
           description: The server default, used until the caller saves a value.
         bounds:
           type: object
@@ -5692,9 +5731,11 @@ components:
             minDays:
               type: integer
               minimum: 1
+              maximum: 36500
             maxDays:
               type: integer
               minimum: 1
+              maximum: 36500
         categories:
           type: array
           description: What the purge deletes after `retentionDays`. Everything else is kept (see the Settings tag).
@@ -5783,6 +5824,25 @@ components:
           description: Exactly one entry per channel, in any order.
           minItems: 3
           maxItems: 3
+          allOf:
+            - contains:
+                type: object
+                required: [channel]
+                properties:
+                  channel:
+                    const: email
+            - contains:
+                type: object
+                required: [channel]
+                properties:
+                  channel:
+                    const: sms
+            - contains:
+                type: object
+                required: [channel]
+                properties:
+                  channel:
+                    const: push
           items:
             type: object
             required: [channel, enabled, minSeverity]
@@ -7229,7 +7289,9 @@ components:
         number is already the caller's. `PHONE_CHANGE_CODE_INVALID`
         (confirm only): the challenge or code is wrong, expired, used,
         exhausted, from another session, or for a number that cannot be
-        taken. Nothing changed.
+        taken. The account is unchanged; on confirm, a well-formed request
+        for an active challenge uses one of its attempts, and a malformed
+        one uses none.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'
@@ -7292,9 +7354,10 @@ components:
             requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     SettingsReadForbidden:
       description: >
-        `TOTP_SETUP_REQUIRED`: the account has no active authenticator.
-        `TESTER_ACCESS_DENIED`: a tester session cannot use this
-        operation. Nothing changed.
+        Checked in this order: `TESTER_ACCESS_DENIED` (a tester session
+        cannot use this operation), then `TOTP_SETUP_REQUIRED` (the account
+        has no active authenticator; never for a tester session). Nothing
+        changed.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'
@@ -7315,8 +7378,9 @@ components:
                 requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     SettingsForbidden:
       description: >
-        Checked in this order: `TOTP_SETUP_REQUIRED` (no active
-        authenticator), `TESTER_ACCESS_DENIED` (tester session),
+        Checked in this order: `TESTER_ACCESS_DENIED` (tester session),
+        `TOTP_SETUP_REQUIRED` (no active authenticator; never for a tester
+        session),
         `CSRF_FAILED` (token missing or wrong, or the Origin header does
         not match), `STEP_UP_REQUIRED` (the session's step-up window is
         closed). Nothing changed.
@@ -7396,7 +7460,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AlertError'
+            $ref: '#/components/schemas/AlertDeliveryError'
           example:
             code: ALERT_CHANNEL_UNAVAILABLE
             message: This delivery channel is not available yet.
@@ -7416,7 +7480,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AlertError'
+            $ref: '#/components/schemas/AlertDeliveryError'
           example:
             code: RATE_LIMITED
             message: Too many attempts. Try again later.
@@ -7424,16 +7488,17 @@ components:
             retryAfterSeconds: 60
     AlertReadForbidden:
       description: >
-        `TOTP_SETUP_REQUIRED`: the account has no active authenticator.
-        `TESTER_ACCESS_DENIED`: a tester session cannot use this
-        operation. Nothing changed.
+        Checked in this order: `TESTER_ACCESS_DENIED` (a tester session
+        cannot use this operation), then `TOTP_SETUP_REQUIRED` (the account
+        has no active authenticator; never for a tester session). Nothing
+        changed.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AlertError'
+            $ref: '#/components/schemas/AlertDeliveryError'
           examples:
             totpSetupRequired:
               value:
@@ -7447,8 +7512,9 @@ components:
                 requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertWriteForbidden:
       description: >
-        Checked in this order: `TOTP_SETUP_REQUIRED` (no active
-        authenticator), `TESTER_ACCESS_DENIED` (tester session),
+        Checked in this order: `TESTER_ACCESS_DENIED` (tester session),
+        `TOTP_SETUP_REQUIRED` (no active authenticator; never for a tester
+        session),
         `CSRF_FAILED` (token missing or wrong, or the Origin header does
         not match). Nothing changed.
       headers:
@@ -7457,7 +7523,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AlertError'
+            $ref: '#/components/schemas/AlertDeliveryError'
           examples:
             totpSetupRequired:
               value:
@@ -7535,7 +7601,8 @@ components:
         including any added later, answers this way. The 403 error schema of
         every operation that needs a session lists `TESTER_ACCESS_DENIED` in
         its `code` values (`AuthError`, `BrokerError`, `BrokerConnectionError`,
-        `TradeControlsError`, `SettingsError` and `AlertError`), so the denial is a declared body for each
+        `TradeControlsError`, `SettingsError` and `AlertDeliveryError`; the
+        alert operations that use `AlertError` are all on the allowlist), so the denial is a declared body for each
         operation outside the allowlist.
       headers:
         X-Request-ID:

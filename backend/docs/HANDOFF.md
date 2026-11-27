@@ -97,6 +97,26 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   not in this repository) still names `9e5cf9b` as the previous release.
   Correct it on the next staging release; it was left untouched in TRAD-6.
 
+## Alert delivery notes (contract 0.13.0)
+
+- Provider-neutral interface `app/alerts/delivery.py` (`NotificationProvider`:
+  `configured`, `simulated`, `send(Notification)`). Only `disabled` and `log`
+  (simulated: masked log line, sends nothing) exist; settings refuse `log` in
+  production. Env: `NOTIFY_EMAIL_PROVIDER`, `NOTIFY_SMS_PROVIDER`,
+  `NOTIFY_PUSH_PROVIDER` (`disabled` default), `NOTIFY_WORKER_ENABLED`,
+  `NOTIFY_WORKER_POLL_SECONDS` (10), `NOTIFY_LOOKBACK_SECONDS` (3600),
+  `NOTIFY_DAILY_LIMIT_PER_CHANNEL` (20), `NOTIFY_TEST_PER_HOUR` (3).
+- Destinations resolved at send time: email = active invite's email, SMS = user's
+  phone, push = none yet (needs device registration, not in the contract).
+- Worker (`app/alerts/delivery_service.py`): enqueue recent alerts per enabled
+  channel (partial unique index on alert_id+channel), claim with SKIP LOCKED and
+  a lease/backoff (1, 5, 15 min), send outside the transaction, 3 attempts, then
+  `failed`. At least once. Tables: `alert_channel_settings`, `alert_deliveries`
+  (migration 0018); a purged alert leaves its delivery with `alert_id` null.
+- A real provider is an owner decision (provider, credentials, spend, and for
+  SMS in India a DLT-registered sender and template). Add a class implementing
+  the protocol and a new `NOTIFY_*_PROVIDER` value; shapes do not change.
+
 ## Data retention notes (contract 0.13.0)
 
 - `GET`/`PUT /api/v1/settings/data-retention` (`app/retention/`, migration 0017).
@@ -105,7 +125,7 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   refuse a default outside the bounds.
 - Purge: in-process worker every `RETENTION_PURGE_INTERVAL_SECONDS` (3600; turn off
   with `RETENTION_WORKER_ENABLED=false`) or by hand: `python -m app.retention.service`.
-  Deletes alerts and agent events (alert deliveries once that table exists) created
+  Deletes alerts, alert deliveries and agent events created
   before `now - period`, per user under an advisory lock. Audit `retention.purged`
   (counts only) when anything was deleted.
 - Watermark: `data_retention.purged_through` only moves forward. The alert worker

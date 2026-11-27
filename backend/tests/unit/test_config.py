@@ -198,3 +198,10 @@ def test_retention_default_must_be_inside_bounds(make_settings: SettingsFactory)
 
     with pytest.raises(ValidationError):
         make_settings(data_retention_min_days=100, data_retention_default_days=50)
+
+
+def test_simulated_notifications_are_refused_in_production(make_settings: SettingsFactory) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        make_settings(app_env="production", notify_sms_provider="log")

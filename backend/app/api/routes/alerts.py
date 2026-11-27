@@ -9,11 +9,16 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
+from fastapi import status as http_status
 
 from app.alerts.catalog import Severity, Source
+from app.alerts.delivery import Channel
 from app.alerts.schemas import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    AlertChannelsIn,
+    AlertDeliveryListOut,
+    AlertDeliveryOut,
     AlertOut,
     AlertPageOut,
     AlertPreferencesIn,
@@ -113,3 +118,42 @@ async def acknowledge_alert(
     alert_id: Annotated[str, Path(alias="alertId", min_length=1, max_length=64)],
 ) -> AlertOut:
     return await alerts.acknowledge(session.user_id, alert_id)
+
+
+@router.put(
+    "/channels",
+    response_model=AlertPreferencesOut,
+    operation_id="updateAlertChannels",
+    responses={409: {"description": "Channel unavailable."}, **_WRITE_ERRORS},
+)
+async def update_alert_channels(
+    session: Annotated[SessionInfo, Depends(csrf_session)],
+    alerts: Alerts,
+    body: Annotated[AlertChannelsIn, Body()],
+) -> AlertPreferencesOut:
+    return await alerts.save_channels(session.user_id, body)
+
+
+@router.post(
+    "/channels/{channel}/test",
+    response_model=AlertDeliveryOut,
+    status_code=http_status.HTTP_202_ACCEPTED,
+    operation_id="sendAlertChannelTest",
+    responses={409: {"description": "Channel unavailable."}, **_WRITE_ERRORS},
+)
+async def send_alert_channel_test(
+    session: Annotated[SessionInfo, Depends(csrf_session)],
+    alerts: Alerts,
+    channel: Annotated[Channel, Path()],
+) -> AlertDeliveryOut:
+    return await alerts._require_delivery().queue_test(session.user_id, channel)
+
+
+@router.get(
+    "/deliveries",
+    response_model=AlertDeliveryListOut,
+    operation_id="listAlertDeliveries",
+    responses=_READ_ERRORS,
+)
+async def list_alert_deliveries(session: RequiredSession, alerts: Alerts) -> AlertDeliveryListOut:
+    return await alerts._require_delivery().recent(session.user_id)

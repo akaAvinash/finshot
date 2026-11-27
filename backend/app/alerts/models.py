@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -54,6 +55,7 @@ class Alert(Base):
         CheckConstraint("(link_kind IS NULL) = (link_id IS NULL)", name="link_complete"),
         Index("ix_alerts_user_id_seq", "user_id", "seq"),
         Index("ix_alerts_user_id_created_at", "user_id", "created_at"),
+        Index("ix_alerts_created_at", "created_at"),
         Index(
             "ix_alerts_user_id_unread",
             "user_id",
@@ -90,3 +92,71 @@ class AlertPreference(Base):
     warning: Mapped[bool] = mapped_column(Boolean)
     info: Mapped[bool] = mapped_column(Boolean)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AlertChannelSetting(Base):
+    """One user's choice for one external channel. No row means disabled
+    with `min_severity` critical. `enabled_at` is when it was last turned on:
+    only alerts recorded since then are sent."""
+
+    __tablename__ = "alert_channel_settings"
+    __table_args__ = (
+        CheckConstraint("channel IN ('email', 'sms', 'push')", name="channel_valid"),
+        CheckConstraint(
+            "min_severity IN ('critical', 'warning', 'info')", name="min_severity_valid"
+        ),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel: Mapped[str] = mapped_column(String(8), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    min_severity: Mapped[str] = mapped_column(String(8))
+    enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AlertDelivery(Base):
+    """One attempt series to send one alert (or a test) on one channel.
+    `alert_id` becomes null if the alert is purged; at most one row per alert
+    and channel. `next_attempt_at` is when a worker may claim it: a claim moves
+    it forward as a lease, so two workers never send the same row at once."""
+
+    __tablename__ = "alert_deliveries"
+    __table_args__ = (
+        CheckConstraint("channel IN ('email', 'sms', 'push')", name="channel_valid"),
+        CheckConstraint("kind IN ('alert', 'test')", name="kind_valid"),
+        CheckConstraint("kind = 'alert' OR alert_id IS NULL", name="test_has_no_alert"),
+        CheckConstraint("status IN ('pending', 'sent', 'failed', 'skipped')", name="status_valid"),
+        CheckConstraint("attempts BETWEEN 0 AND 3", name="attempts_range"),
+        Index(
+            "uq_alert_deliveries_alert_channel",
+            "alert_id",
+            "channel",
+            unique=True,
+            postgresql_where=text("alert_id IS NOT NULL"),
+        ),
+        Index("ix_alert_deliveries_user_id_created_at", "user_id", "created_at"),
+        Index(
+            "ix_alert_deliveries_pending",
+            "next_attempt_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    alert_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("alerts.id", ondelete="SET NULL"))
+    kind: Mapped[str] = mapped_column(String(8))
+    channel: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(8))
+    status_reason: Mapped[str | None] = mapped_column(String(32))
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    simulated: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    destination_masked: Mapped[str | None] = mapped_column(String(64))
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -19,7 +19,7 @@ from qa.core.mail import SmtpSink
 from qa.core.sut import Backend, run_sql
 from qa.scripts.api_latency import latency
 
-pytestmark = [pytest.mark.needs_services, pytest.mark.suite("performance"), pytest.mark.slow, pytest.mark.performance]
+pytestmark = pytest.mark.suite("performance")
 
 READS = {
     "getMarketInstruments": ("/market/instruments", "instruments"),
@@ -76,7 +76,8 @@ def _measure(
         duration = (time.perf_counter() - started) * 1000
         if response.status_code != 200:
             return duration, f"HTTP {response.status_code}"
-        if expected_field not in response.json():
+        payload = response.json()
+        if not isinstance(payload, dict) or expected_field not in payload:
             return duration, "unexpected-response-shape"
         return duration, "ok"
     except (httpx.HTTPError, ValueError) as error:
@@ -84,6 +85,28 @@ def _measure(
 
 
 @pytest.mark.req("QA-PERF-001")
+@pytest.mark.parametrize(
+    ("payload", "outcome"),
+    [
+        ('{"engine":{}}', "ok"),
+        ('{"other":{}}', "unexpected-response-shape"),
+        ('["engine"]', "unexpected-response-shape"),
+        ('"engine"', "unexpected-response-shape"),
+        ("null", "unexpected-response-shape"),
+    ],
+    ids=["object", "missing-field", "array", "string", "null"],
+)
+def test_measure_requires_json_object(payload: str, outcome: str) -> None:
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, content=payload))
+    with httpx.Client(base_url="http://127.0.0.1", transport=transport) as client:
+        _, actual = _measure(client, "POST", "/auto-trading/paper/commands", "engine")
+    assert actual == outcome
+
+
+@pytest.mark.req("QA-PERF-001")
+@pytest.mark.needs_services
+@pytest.mark.slow
+@pytest.mark.performance
 @pytest.mark.severity("high")
 @pytest.mark.timeout(300)
 def test_api_load(backend_factory: Callable[..., Backend], smtp_sink: SmtpSink, artifacts_dir: Path) -> None:

@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/input";
 import { useNotification } from "@/components/ui/notifications";
 import { Status } from "@/components/ui/status";
 import { createTradeoClient } from "@/lib/api/client";
+import { stagingBrokers } from "@/lib/api/staging-brokers";
+import { stagingError } from "@/lib/api/staging-client";
 import type { BrokerAction, BrokerId, BrokerResult, BrokerScenario, BrokerStatus } from "@/lib/api/broker-types";
 import { brokerNames, formatBrokerTime, getBrokerStatus } from "@/lib/brokers";
 import { cn } from "@/lib/utils";
@@ -43,15 +45,16 @@ const actionLabel: Record<BrokerAction, string> = {
 };
 
 type Request = { scenario: BrokerScenario };
-type Result = BrokerResult | { status: "error" };
+type Result = BrokerResult | { status: "error"; message: string };
 
-export function Brokers() {
-  const [client] = useState(() => createTradeoClient());
+export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) {
+  const staging = mode === "staging";
+  const [client] = useState(() => staging ? stagingBrokers : createTradeoClient());
   const [request, setRequest] = useState<Request>({ scenario: "ready" });
   const [settled, setSettled] = useState<{ request: Request; result: Result }>();
   const [filter, setFilter] = useState<"all" | BrokerStatus>("all");
   const [pending, setPending] = useState<BrokerId | null>(null);
-  const [syncError, setSyncError] = useState("");
+  const [actionError, setActionError] = useState<{ provider: BrokerId; action: BrokerAction; message: string }>();
   const command = useRef<AbortController | null>(null);
   const notify = useNotification();
   const result = settled?.request === request ? settled.result : undefined;
@@ -62,17 +65,18 @@ export function Brokers() {
       .then((result) => {
         if (!controller.signal.aborted) setSettled({ request, result });
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setSettled({ request, result: { status: "error" } });
+      .catch((error) => {
+        const message = staging ? stagingError(error, "The staging broker API could not load.") : "The simulated broker request failed.";
+        if (!controller.signal.aborted) setSettled({ request, result: { status: "error", message } });
       });
     return () => controller.abort();
-  }, [client, request]);
+  }, [client, request, staging]);
 
   useEffect(() => () => command.current?.abort(), []);
 
   function load(scenario: BrokerScenario) {
     if (command.current) return;
-    setSyncError("");
+    setActionError(undefined);
     setRequest({ scenario });
   }
 
@@ -81,7 +85,7 @@ export function Brokers() {
     const controller = new AbortController();
     command.current = controller;
     setPending(provider);
-    setSyncError("");
+    setActionError(undefined);
 
     try {
       const data = await client.sendBrokerAction(provider, action, { scenario: request.scenario, signal: controller.signal });
@@ -90,8 +94,9 @@ export function Brokers() {
       if (action !== "sync") setFilter("all");
       notify(`${brokerNames[provider]} ${actionLabel[action]}`);
       return true;
-    } catch {
-      if (!controller.signal.aborted && action === "sync") setSyncError("Demo account sync failed. Try again.");
+    } catch (error) {
+      const fallback = action === "sync" ? "Demo account sync failed. Try again." : "The demo action did not complete. Try again.";
+      if (!controller.signal.aborted) setActionError({ provider, action, message: staging ? stagingError(error, fallback) : fallback });
       return false;
     } finally {
       command.current = null;
@@ -111,6 +116,7 @@ export function Brokers() {
       <PageHeading title="Brokers" description="Manage sample connections, check session health and review account syncs." actions={
         <div className="flex flex-wrap items-center gap-2">
           <Status tone="accent" dot>Demo connections</Status>
+          {staging ? <Button variant="outline" disabled={pending !== null || !result} onClick={() => load("ready")}>Refresh brokers</Button> : <>
           <Label htmlFor="broker-response" className="sr-only">Broker preview data</Label>
           <select id="broker-response" value={request.scenario} disabled={pending !== null}
             onChange={({ target }) => {
@@ -119,6 +125,7 @@ export function Brokers() {
             }} className="h-10 rounded-lg border border-border bg-card px-3 text-sm text-foreground">
             {scenarios.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
+          </>}
         </div>
       } />
 
@@ -127,13 +134,13 @@ export function Brokers() {
         action={<Button variant="outline" onClick={() => load("ready")}>Load sample brokers</Button>} />}
       {result?.status === "denied" && <DataState title="Broker access denied" description="This preview simulates a session without permission to view broker accounts."
         icon={LockKeyhole} action={<Button variant="outline" onClick={() => load("ready")}>Restore demo access</Button>} />}
-      {result?.status === "error" && <DataState error title="Brokers could not load" description="The simulated broker request failed."
+      {result?.status === "error" && <DataState error title="Brokers could not load" description={result.message}
         action={<Button variant="outline" onClick={() => load("ready")}>Retry broker data</Button>} />}
 
       {snapshot && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>Simulated, read-only broker access</span>
+            <span>{staging ? "Account-scoped staging demo · No live broker access" : "Simulated, read-only broker access"}</span>
             <time dateTime={snapshot.asOf}>Demo snapshot · {formatBrokerTime(snapshot.asOf)}</time>
           </div>
           {result?.status === "stale" && (
@@ -166,13 +173,14 @@ export function Brokers() {
                 {filters.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
-            {syncError && <p role="alert" className="text-sm text-negative">{syncError}</p>}
+            {actionError?.action === "sync" && <p role="alert" className="text-sm text-negative">{actionError.message}</p>}
             {pending && <p role="status" className="sr-only">Updating {brokerNames[pending]} demo connection</p>}
             {visible.length ? (
               <div className="grid gap-4 min-[760px]:grid-cols-2">
                 {visible.map(({ connection }) => (
                   <BrokerCard key={connection.provider} connection={connection} asOf={snapshot.asOf}
-                    disabled={result?.status === "stale" || pending !== null} pending={pending === connection.provider} onAction={run} />
+                    disabled={result?.status === "stale" || pending !== null} pending={pending === connection.provider} onAction={run}
+                    actionError={actionError?.provider === connection.provider ? actionError : undefined} />
                 ))}
               </div>
             ) : (

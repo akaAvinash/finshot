@@ -10,6 +10,8 @@ import { Input, Label } from "@/components/ui/input";
 import { useNotification } from "@/components/ui/notifications";
 import { Status } from "@/components/ui/status";
 import { createTradeoClient } from "@/lib/api/client";
+import { stagingStrategies } from "@/lib/api/staging-strategies";
+import { stagingError } from "@/lib/api/staging-client";
 import { strategyRiskTiers, type Strategy, type StrategyCommand, type StrategyResult, type StrategyScenario } from "@/lib/api/strategy-types";
 import { formatSnapshotDate } from "@/lib/format";
 import { listedStrategyRevision, riskLabels, strategyCandidate, strategyStatusLabels } from "@/lib/strategies";
@@ -26,11 +28,12 @@ const scenarios = [
 const messages = { create: "Demo draft created", "save-draft": "Demo draft saved", activate: "Demo strategy activated", pause: "Demo strategy paused" } as const;
 
 type Request = { scenario: StrategyScenario };
-type Result = StrategyResult | { status: "error" };
+type Result = StrategyResult | { status: "error"; message: string };
 type Panel = { mode: "create" } | { mode: "details" | "edit"; id: string };
 
-export function Strategies() {
-  const [client] = useState(() => createTradeoClient());
+export function Strategies({ mode = "preview" }: { mode?: "preview" | "staging" }) {
+  const staging = mode === "staging";
+  const [client] = useState(() => staging ? stagingStrategies : createTradeoClient());
   const [request, setRequest] = useState<Request>({ scenario: "ready" });
   const [settled, setSettled] = useState<{ request: Request; result: Result }>();
   const [query, setQuery] = useState("");
@@ -39,7 +42,7 @@ export function Strategies() {
   const [view, setView] = useState<"cards" | "table">("cards");
   const [panel, setPanel] = useState<Panel | null>(null);
   const [busy, setBusy] = useState(false);
-  const [commandError, setCommandError] = useState(false);
+  const [commandError, setCommandError] = useState("");
   const pending = useRef<AbortController | null>(null);
   const returnFocus = useRef<HTMLButtonElement>(null);
   const resultsHeading = useRef<HTMLHeadingElement>(null);
@@ -54,17 +57,18 @@ export function Strategies() {
       .then((result) => {
         if (!controller.signal.aborted) setSettled({ request, result });
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setSettled({ request, result: { status: "error" } });
+      .catch((error) => {
+        const message = staging ? stagingError(error, "The staging strategy API could not load.") : "The simulated request failed.";
+        if (!controller.signal.aborted) setSettled({ request, result: { status: "error", message } });
       });
     return () => controller.abort();
-  }, [client, request]);
+  }, [client, request, staging]);
 
   useEffect(() => () => pending.current?.abort(), []);
 
   function open(next: Panel, opener: HTMLButtonElement) {
     returnFocus.current = opener;
-    setCommandError(false);
+    setCommandError("");
     setPanel(next);
   }
 
@@ -79,7 +83,7 @@ export function Strategies() {
     const controller = new AbortController();
     pending.current = controller;
     setBusy(true);
-    setCommandError(false);
+    setCommandError("");
 
     try {
       const data = await client.sendStrategyCommand(command, { scenario: request.scenario, signal: controller.signal });
@@ -92,8 +96,9 @@ export function Strategies() {
         setPanel({ mode: "details", id: command.id });
       }
       notify(messages[command.action]);
-    } catch {
-      if (!controller.signal.aborted) setCommandError(true);
+    } catch (error) {
+      const fallback = "The demo change did not complete. Try again.";
+      if (!controller.signal.aborted) setCommandError(staging ? stagingError(error, fallback) : fallback);
     } finally {
       pending.current = null;
       if (!controller.signal.aborted) setBusy(false);
@@ -120,8 +125,9 @@ export function Strategies() {
       } />
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2"><Status tone="accent" dot>Demo strategies</Status>
-          {snapshot && <time dateTime={snapshot.asOf}>Sample snapshot · {formatSnapshotDate(snapshot.asOf)} IST</time>}
+          {snapshot && <time dateTime={snapshot.asOf}>{staging ? "Staging snapshot" : "Sample snapshot"} · {formatSnapshotDate(snapshot.asOf)} IST</time>}
         </div>
+        {staging ? <Button variant="outline" size="sm" disabled={busy || !result} onClick={() => setRequest({ scenario: "ready" })}>Refresh strategies</Button> : <>
         <Label className="sr-only" htmlFor="strategy-scenario">Strategy preview data</Label>
         <select id="strategy-scenario" className={cn(strategySelectClass, "w-auto")} value={request.scenario} disabled={busy} onChange={({ target }) => {
           const scenario = scenarios.find(({ value }) => value === target.value);
@@ -129,6 +135,7 @@ export function Strategies() {
         }}>
           {scenarios.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
         </select>
+        </>}
       </div>
 
       {!result && <DashboardSkeleton label="Loading strategies" />}
@@ -136,7 +143,7 @@ export function Strategies() {
         action={<Button variant="outline" onClick={() => setRequest({ scenario: "ready" })}>Load sample strategies</Button>} />}
       {result?.status === "denied" && <DataState title="Strategy access denied" description="This scenario simulates a session without permission to view strategies." icon={LockKeyhole}
         action={<Button variant="outline" onClick={() => setRequest({ scenario: "ready" })}>Restore demo access</Button>} />}
-      {result?.status === "error" && <DataState error title="Strategies could not load" description="The simulated request failed."
+      {result?.status === "error" && <DataState error title="Strategies could not load" description={result.message}
         action={<Button variant="outline" onClick={() => setRequest({ scenario: "ready" })}>Retry strategy data</Button>} />}
 
       {snapshot && <>
@@ -187,18 +194,18 @@ export function Strategies() {
             else resultsHeading.current?.focus();
           }}>
             {panel.mode === "details" && selected ? (
-              <StrategyDetails strategy={selected} canWrite={canWrite} busy={busy} onEdit={() => {
-                setCommandError(false);
+              <StrategyDetails strategy={selected} canWrite={canWrite} busy={busy} staging={staging} onEdit={() => {
+                setCommandError("");
                 setPanel({ mode: "edit", id: selected.id });
               }} onAction={(action) => void run({ action, id: selected.id })} />
             ) : (
               <StrategyEditor initial={panel.mode === "edit" ? selectedParameters : undefined} busy={busy}
                 onCancel={() => {
-                  setCommandError(false);
+                  setCommandError("");
                   setPanel(panel.mode === "edit" ? { mode: "details", id: panel.id } : null);
                 }} onSave={(parameters) => panel.mode === "create" ? run({ action: "create", parameters }) : run({ action: "save-draft", id: panel.id, parameters })} />
             )}
-            {commandError && <p role="alert" className="mt-3 text-sm text-negative">The demo change did not complete. Try again.</p>}
+            {commandError && <p role="alert" className="mt-3 text-sm text-negative">{commandError}</p>}
             {busy && <p role="status" className="sr-only">Updating demo strategy</p>}
           </DialogContent>
         )}

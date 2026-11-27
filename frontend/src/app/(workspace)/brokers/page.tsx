@@ -5,6 +5,6 @@ import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 export const metadata: Metadata = { title: "Brokers" };
 
 export default async function BrokersPage() {
-  await requireWorkspaceSession();
-  return <Brokers />;
+  const { mode } = await requireWorkspaceSession();
+  return <Brokers mode={mode} />;
 }

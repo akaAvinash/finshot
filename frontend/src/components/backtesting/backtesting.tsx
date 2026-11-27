@@ -11,6 +11,8 @@ import { useNotification } from "@/components/ui/notifications";
 import { Status } from "@/components/ui/status";
 import type { BacktestConfig, BacktestRun, BacktestScenario, BacktestWorkspace, BacktestWorkspaceResult } from "@/lib/api/backtest-types";
 import { createTradeoClient } from "@/lib/api/client";
+import { stagingBacktests } from "@/lib/api/staging-backtests";
+import { stagingError } from "@/lib/api/staging-client";
 import { BacktestInputError, formatBacktestTime } from "@/lib/backtesting";
 import { formatSnapshotDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -29,7 +31,7 @@ const runStatus = {
 } as const;
 
 type Request = { scenario: BacktestScenario };
-type Result = BacktestWorkspaceResult | { status: "error" };
+type Result = BacktestWorkspaceResult | { status: "error"; message: string };
 
 function RunQueue({ workspace, selectedId, onSelect }: {
   workspace: BacktestWorkspace;
@@ -62,21 +64,26 @@ function RunQueue({ workspace, selectedId, onSelect }: {
   );
 }
 
-export function Backtesting() {
-  const [client] = useState(() => createTradeoClient());
+export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging" }) {
+  const staging = mode === "staging";
+  const [client] = useState(() => staging ? stagingBacktests : createTradeoClient());
   const [request, setRequest] = useState<Request>({ scenario: "ready" });
   const [settled, setSettled] = useState<{ request: Request; result: Result }>();
   const [selected, setSelected] = useState<string>();
   const [activeRun, setActiveRun] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [pollError, setPollError] = useState(false);
+  const [pollError, setPollError] = useState<{ id: string; message: string }>();
   const [pollAttempt, setPollAttempt] = useState(0);
   const submission = useRef<AbortController | null>(null);
   const notify = useNotification();
   const result = settled?.request === request ? settled.result : undefined;
   const workspace = result?.status === "ready" || result?.status === "stale" ? result.data : undefined;
   const selectedRun = workspace?.runs.find(({ id }) => id === selected) ?? workspace?.runs[0];
+  const pollingRun = staging ? (
+    result?.status === "ready" && (selectedRun?.status === "queued" || selectedRun?.status === "running") ? selectedRun.id : undefined
+  ) : activeRun;
+  const pollDelay = staging ? 1500 : 250;
   const busy = submitting || activeRun !== undefined;
 
   useEffect(() => {
@@ -85,11 +92,12 @@ export function Backtesting() {
       .then((result) => {
         if (!controller.signal.aborted) setSettled({ request, result });
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setSettled({ request, result: { status: "error" } });
+      .catch((error) => {
+        const message = staging ? stagingError(error, "The staging backtest API could not load.") : "The simulated workspace request failed.";
+        if (!controller.signal.aborted) setSettled({ request, result: { status: "error", message } });
       });
     return () => controller.abort();
-  }, [client, request]);
+  }, [client, request, staging]);
 
   useEffect(() => () => submission.current?.abort(), []);
 
@@ -102,8 +110,8 @@ export function Backtesting() {
   }, [request]);
 
   useEffect(() => {
-    if (activeRun === undefined) return;
-    const id = activeRun;
+    if (pollingRun === undefined) return;
+    const id = pollingRun;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
 
@@ -112,24 +120,27 @@ export function Backtesting() {
         const run = await client.getBacktestRun(id, { signal: controller.signal });
         if (controller.signal.aborted) return;
         updateRun(run);
-        if (run.status === "queued" || run.status === "running") timer = setTimeout(poll, 250);
+        setPollError(undefined);
+        if (run.status === "queued" || run.status === "running") timer = setTimeout(poll, pollDelay);
         else {
           setActiveRun(undefined);
           if (run.status === "completed") notify("Demo backtest completed");
         }
-      } catch {
-        if (!controller.signal.aborted) setPollError(true);
+      } catch (error) {
+        const fallback = "Run status could not refresh.";
+        if (!controller.signal.aborted) setPollError({ id, message: staging ? stagingError(error, fallback) : fallback });
       }
     }
 
-    timer = setTimeout(poll, 250);
+    timer = setTimeout(poll, pollDelay);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [activeRun, client, notify, pollAttempt, updateRun]);
+  }, [client, notify, pollAttempt, pollDelay, pollingRun, staging, updateRun]);
 
   function load(scenario: BacktestScenario) {
     if (busy) return;
     setRequest({ scenario });
     setSelected(undefined);
+    setPollError(undefined);
     setSubmitError(null);
   }
 
@@ -145,9 +156,10 @@ export function Backtesting() {
       if (controller.signal.aborted) return;
       updateRun(run);
       setSelected(run.id);
-      if (run.status === "queued" || run.status === "running") setActiveRun(run.id);
+      if (!staging && (run.status === "queued" || run.status === "running")) setActiveRun(run.id);
     } catch (error) {
-      if (!controller.signal.aborted) setSubmitError(error instanceof BacktestInputError ? error.message : "The demo run could not be queued. Try again.");
+      const fallback = "The demo run could not be queued. Try again.";
+      if (!controller.signal.aborted) setSubmitError(staging ? stagingError(error, fallback) : error instanceof BacktestInputError ? error.message : fallback);
     } finally {
       submission.current = null;
       if (!controller.signal.aborted) setSubmitting(false);
@@ -159,6 +171,7 @@ export function Backtesting() {
       <PageHeading title="Backtesting" description="Replay a strategy setup on demo history and inspect holdout performance." actions={
         <div className="flex flex-wrap items-center gap-2">
           <Status tone="accent" dot>Demo only</Status>
+          {staging ? <Button variant="outline" disabled={busy || !result} onClick={() => load("ready")}>Refresh backtests</Button> : <>
           <Label className="sr-only" htmlFor="backtest-scenario">Backtest preview data</Label>
           <select id="backtest-scenario" className="h-11 rounded-lg border border-input bg-background px-3 text-sm" value={request.scenario} disabled={busy}
             onChange={({ target }) => {
@@ -167,30 +180,31 @@ export function Backtesting() {
             }}>
             {scenarios.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
+          </>}
         </div>
       } />
       {!result && <DashboardSkeleton label="Loading backtests" />}
       {result?.status === "denied" && <DataState title="Backtest access denied" description="This demo session has no access to the workspace." icon={LockKeyhole}
         action={<Button variant="outline" onClick={() => load("ready")}>Restore demo access</Button>} />}
-      {result?.status === "error" && <DataState error title="Backtesting could not load" description="The simulated workspace request failed."
+      {result?.status === "error" && <DataState error title="Backtesting could not load" description={result.message}
         action={<Button variant="outline" onClick={() => load("ready")}>Retry backtest data</Button>} />}
 
       {workspace && <>
-        <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">Sample snapshot · <time dateTime={workspace.asOf}>{formatSnapshotDate(workspace.asOf)} IST</time> · Daily demo candles · Shared sample rule</p>
+        <p className="border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">{staging ? "Staging snapshot" : "Sample snapshot"} · <time dateTime={workspace.asOf}>{formatSnapshotDate(workspace.asOf)} IST</time> · Daily demo candles · Shared sample rule</p>
         {result?.status === "stale" && <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/35 bg-primary/8 px-4 py-3 text-sm">
           <p className="flex items-center gap-2"><Clock3 aria-hidden className="size-4 shrink-0 text-accent-foreground" /> Backtest data is stale. New runs are paused.</p>
           <Button variant="outline" size="sm" onClick={() => load("ready")}>Load latest backtest data</Button>
         </div>}
         <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[19rem_minmax(0,1fr)] xl:gap-5">
           <div className="min-w-0 space-y-4">
-            <BacktestForm workspace={workspace} canRun={result?.status === "ready"} busy={busy} onRun={start} />
+            <BacktestForm workspace={workspace} canRun={result?.status === "ready"} busy={busy} onRun={start} staging={staging} />
             {submitError && <p role="alert" className="rounded-lg border border-negative/30 bg-negative/8 p-3 text-sm text-negative">{submitError}</p>}
             <RunQueue workspace={workspace} selectedId={selectedRun?.id} onSelect={setSelected} />
           </div>
           <section aria-label="Selected backtest results" className="min-w-0 space-y-4">
-            {pollError && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-negative/30 p-3 text-sm">
-              <p>Run status could not refresh.</p>
-              <Button variant="outline" size="sm" onClick={() => { setPollError(false); setPollAttempt((attempt) => attempt + 1); }}>Retry run status</Button>
+            {pollError && pollError.id === selectedRun?.id && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-negative/30 p-3 text-sm">
+              <p>{pollError.message}</p>
+              <Button variant="outline" size="sm" onClick={() => { setPollError(undefined); setPollAttempt((attempt) => attempt + 1); }}>Retry run status</Button>
             </div>}
             <BacktestResults run={selectedRun} workspace={workspace} />
           </section>

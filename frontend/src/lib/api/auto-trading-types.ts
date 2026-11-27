@@ -7,7 +7,7 @@ export type PaperOrder = {
   quantity: number;
   limitPaise: number;
   approval: "approved" | "pending";
-  status: "queued" | "held" | "cancelled";
+  status: "queued" | "held" | "filled" | "cancelled";
 };
 export type PaperTrade = {
   id: string;
@@ -50,11 +50,12 @@ export type PaperSnapshot = Readonly<{
   events: readonly PaperEvent[];
 }>;
 
-export type PaperCommand =
+export type PaperEngineCommand =
   | { action: "assign"; strategyId: string }
-  | { action: "set-limits"; limits: PaperLimits }
   | { action: "start" | "pause" | "reset" }
   | { action: "halt"; confirmation: "STOP" };
+
+export type PaperCommand = PaperEngineCommand | { action: "set-limits"; limits: PaperLimits };
 
 export type PaperScenario = "ready" | "empty" | "stale" | "denied" | "error";
 

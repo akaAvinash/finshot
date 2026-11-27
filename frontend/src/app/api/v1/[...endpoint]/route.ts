@@ -16,9 +16,14 @@ const endpoints = new Map<string, Endpoint>([
   ["brokers/preview", { method: "GET", account: true }],
   ["strategies/preview", { method: "GET", account: true }],
   ["strategies/preview/commands", { method: "POST", account: true }],
+  ["backtests/preview", { method: "GET", account: true }],
+  ["backtests/preview/runs", { method: "POST", account: true }],
   ["auto-trading/paper", { method: "GET", account: true }],
   ["auto-trading/paper/commands", { method: "POST", account: true }],
   ["reports/paper", { method: "GET", account: true, queryKeys: ["from", "to"] }],
+  ["agents", { method: "GET", account: true }],
+  ["agents/health", { method: "GET", account: true }],
+  ["agents/events", { method: "GET", account: true, queryKeys: ["agentId", "cursor", "limit"] }],
 ]);
 
 const responseHeaders = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
@@ -35,6 +40,10 @@ function matchEndpoint(segments: string[]): { path: string; endpoint: Endpoint }
   if (segments.length === 4 && area === "brokers" && collection === "preview" && action === "actions" &&
       (id === "zerodha" || id === "fyers")) {
     return { path: `brokers/preview/${id}/actions`, endpoint: { method: "POST", account: true } };
+  }
+  if (segments.length === 4 && area === "backtests" && collection === "preview" && id === "runs" &&
+      /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(action)) {
+    return { path: `backtests/preview/runs/${action}`, endpoint: { method: "GET", account: true } };
   }
   if (segments.some((segment) => segment.includes("/"))) return undefined;
   const path = segments.join("/");

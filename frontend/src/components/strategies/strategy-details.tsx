@@ -1,5 +1,6 @@
 import { History, Pause, Play, ShieldCheck, SquarePen } from "lucide-react";
 import { useEffect, useRef } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Status } from "@/components/ui/status";
@@ -25,12 +26,13 @@ function Parameters({ values }: { values: StrategyParameters }) {
   );
 }
 
-export function StrategyDetails({ strategy, canWrite, busy, onEdit, onAction }: {
+export function StrategyDetails({ strategy, canWrite, busy, onEdit, onAction, staging }: {
   strategy: Strategy;
   canWrite: boolean;
   busy: boolean;
   onEdit: () => void;
   onAction: (action: "activate" | "pause") => void;
+  staging?: boolean;
 }) {
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => { title.current?.focus(); }, []);
@@ -64,6 +66,7 @@ export function StrategyDetails({ strategy, canWrite, busy, onEdit, onAction }: 
           <Status tone={candidate.riskReview === "approved" ? "positive" : "neutral"}>Risk review · {reviewLabels[candidate.riskReview]}</Status>
         </div>
         <p id="strategy-eligibility" className="text-sm text-muted-foreground">{blocker ?? "Eligible for demo activation. No orders will be placed."}</p>
+        {staging && strategy.draft && <Link href="/backtesting" className="inline-block text-sm font-medium text-accent-foreground underline underline-offset-4">Open Backtesting</Link>}
       </section>
 
       <section aria-label="Version history" className="mt-4 space-y-2">

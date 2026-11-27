@@ -3364,6 +3364,7 @@ components:
             - UNAUTHENTICATED
             - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
+            - TESTER_ACCESS_DENIED
             - BROKER_ACTION_CONFLICT
             - BROKER_UNAVAILABLE
         message:
@@ -3684,6 +3685,7 @@ components:
             - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - STEP_UP_REQUIRED
+            - TESTER_ACCESS_DENIED
             - BROKER_PROVIDER_UNAVAILABLE
             - BROKER_AUTHORIZATION_INVALID
             - BROKER_CONNECTION_NOT_FOUND
@@ -5390,6 +5392,7 @@ components:
             - TOTP_SETUP_REQUIRED
             - CSRF_FAILED
             - STEP_UP_REQUIRED
+            - TESTER_ACCESS_DENIED
             - TRADE_CONTROLS_OUT_OF_BOUNDS
             - TRADE_CONTROLS_REVISION_CONFLICT
             - TRADE_CONTROLS_ENGINE_RUNNING
@@ -6659,7 +6662,11 @@ components:
         `x-tester-allowed-operations`. Checked before CSRF and before the body
         is read, for every operation that needs a session, so it never depends
         on the request's contents. Any operation outside the allowlist,
-        including any added later, answers this way.
+        including any added later, answers this way. The 403 error schema of
+        every operation that needs a session lists `TESTER_ACCESS_DENIED` in
+        its `code` values (`AuthError`, `BrokerError`, `BrokerConnectionError`
+        and `TradeControlsError`), so the denial is a declared body for each
+        operation outside the allowlist.
       headers:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'

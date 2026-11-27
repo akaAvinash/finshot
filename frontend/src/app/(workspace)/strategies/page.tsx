@@ -5,6 +5,6 @@ import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 export const metadata: Metadata = { title: "Strategies" };
 
 export default async function StrategiesPage() {
-  await requireWorkspaceSession();
-  return <Strategies />;
+  const { mode } = await requireWorkspaceSession();
+  return <Strategies mode={mode} />;
 }

@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { stagingReport, stagingReportCsv } from "./paper-report-fixture.mjs";
 import { stagingCandles, stagingInstruments, stagingOverview } from "./market-fixture.mjs";
 import { createAlertsFixture, isAlertsFixtureRequest } from "./alerts-fixture.mjs";
+import { createWorkspaceFixture } from "./workspace-fixture.mjs";
 
 const publicOrigin = "http://127.0.0.1:3101";
 const sessionName = "__Host-tradeo_session";
@@ -18,6 +19,7 @@ let rejectNextProfileCsrf = false;
 let reportMode = "ready";
 let marketMode = "ready";
 let alerts = createAlertsFixture();
+let workspaceFixture;
 const returningNumber = "+919876543218";
 const registrationNumber = "+919876543219";
 const accountRows = new Map();
@@ -51,10 +53,12 @@ const fixtureAddresses = new Map([
   ["independent", "2001:db8::3"],
 ]);
 
-const workspaceReads = new Set(["/api/v1/brokers/preview", "/api/v1/strategies/preview", "/api/v1/auto-trading/paper"]);
+const workspaceReads = new Set(["/api/v1/brokers/preview", "/api/v1/strategies/preview", "/api/v1/auto-trading/paper",
+  "/api/v1/backtests/preview", "/api/v1/agents", "/api/v1/agents/health", "/api/v1/agents/events"]);
 const workspaceCommands = new Set([
   "/api/v1/brokers/preview/zerodha/actions", "/api/v1/brokers/preview/fyers/actions",
   "/api/v1/strategies/preview/commands", "/api/v1/auto-trading/paper/commands",
+  "/api/v1/backtests/preview/runs",
 ]);
 
 createServer((incoming, response) => {
@@ -116,6 +120,15 @@ createServer(async (request, response) => {
     reportMode = "ready";
     marketMode = "ready";
     alerts = createAlertsFixture();
+    workspaceFixture = undefined;
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/workspace/enable") {
+    workspaceFixture = createWorkspaceFixture();
+    return response.writeHead(204).end();
+  }
+  if (request.method === "POST" && request.url === "/__fixture/workspace/reject-broker") {
+    workspaceFixture?.rejectNextBrokerCommand();
     return response.writeHead(204).end();
   }
   if (request.method === "POST" && request.url === "/__fixture/fail-next-logout") {
@@ -160,7 +173,7 @@ createServer(async (request, response) => {
   const clientIp = request.headers["x-forwarded-for"];
 
   const marketRead = request.method === "GET" && url.pathname.startsWith("/api/v1/market/");
-  const workspaceRead = request.method === "GET" && workspaceReads.has(url.pathname);
+  const workspaceRead = request.method === "GET" && (workspaceReads.has(url.pathname) || url.pathname.startsWith("/api/v1/backtests/preview/runs/"));
   const workspaceCommand = request.method === "POST" && workspaceCommands.has(url.pathname);
   if (marketRead || workspaceRead || workspaceCommand) {
     if (clientIp !== fixtureAddresses.get("primary") || request.headers["x-tradeo-client-ip"] || request.headers["x-tradeo-ingress-token"]) {
@@ -197,6 +210,7 @@ createServer(async (request, response) => {
     if (!session) return error(response, 401, "UNAUTHENTICATED");
     if (!accountRows.get(session.phone).totpEnabled) return error(response, 403, "TOTP_SETUP_REQUIRED");
     if (workspaceRead) {
+      if (workspaceFixture) return json(response, ...workspaceFixture.handle(url, session.phone));
       if (url.pathname === "/api/v1/auto-trading/paper" && reportMode !== "empty") {
         return json(response, 200, { status: "ready", data: {
           source: "demo", environment: "PAPER", asOf: "2026-11-25T10:00:00Z", account: { equityPaise: 2506400 },
@@ -210,7 +224,9 @@ createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     try {
-      return json(response, 200, { received: JSON.parse(Buffer.concat(chunks).toString()) });
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      if (workspaceFixture) return json(response, ...workspaceFixture.handle(url, session.phone, body));
+      return json(response, 200, { received: body });
     } catch {
       return error(response, 400, "INVALID_REQUEST");
     }

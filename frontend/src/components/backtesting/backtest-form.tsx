@@ -10,16 +10,18 @@ import { formatSnapshotDate } from "@/lib/format";
 
 const selectClass = "h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 text-base text-foreground sm:text-sm";
 
-export function BacktestForm({ workspace, canRun, busy, onRun }: {
+export function BacktestForm({ workspace, canRun, busy, onRun, staging }: {
   workspace: BacktestWorkspace;
   canRun: boolean;
   busy: boolean;
   onRun: (config: BacktestConfig) => Promise<void>;
+  staging?: boolean;
 }) {
   const defaults = exampleBacktestConfig;
-  const [strategyId, setStrategyId] = useState(defaults.strategyId);
-  const [instrumentId, setInstrumentId] = useState(defaults.instrumentId);
+  const [strategyId, setStrategyId] = useState(staging ? workspace.strategies[0]?.id ?? "" : defaults.strategyId);
+  const [instrumentId, setInstrumentId] = useState(staging ? workspace.strategies[0]?.instrumentId ?? "" : defaults.instrumentId);
   const [validation, setValidation] = useState<string | null>(null);
+  const enabled = canRun && (!staging || workspace.strategies.length > 0);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -43,8 +45,9 @@ export function BacktestForm({ workspace, canRun, busy, onRun }: {
     <Card aria-labelledby="backtest-setup" className="p-4 sm:p-5">
       <h2 id="backtest-setup" className="flex items-center gap-2 font-semibold tracking-tight"><Settings2 aria-hidden className="size-4 text-accent-foreground" /> Backtest setup</h2>
       <p id="backtest-range" className="mt-1 text-xs leading-relaxed text-muted-foreground">Demo sessions from {formatSnapshotDate(workspace.from)} to {formatSnapshotDate(workspace.to)} IST.</p>
+      {staging && workspace.strategies.length === 0 && <p className="mt-2 text-sm text-muted-foreground">Create a strategy draft before queuing a backtest.</p>}
       <form className="mt-4" onSubmit={submit}>
-        <fieldset disabled={!canRun || busy} className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+        <fieldset disabled={!enabled || busy} className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <div className="min-w-0 space-y-1.5"><Label htmlFor="backtest-strategy">Strategy revision</Label>
             <select id="backtest-strategy" className={selectClass} value={strategyId} onChange={({ target }) => {
               const strategy = workspace.strategies.find(({ id }) => id === target.value);
@@ -87,7 +90,8 @@ export function BacktestForm({ workspace, canRun, busy, onRun }: {
         </fieldset>
         <p className="mt-2 text-xs text-muted-foreground">Applied per fill. 1 bps equals 0.01%.</p>
         {validation && <p role="alert" className="mt-3 text-sm text-negative">{validation}</p>}
-        <Button type="submit" className="mt-4 h-11 w-full" disabled={!canRun || busy}><Play aria-hidden /> {busy ? "Demo run in progress" : "Run demo backtest"}</Button>
+        {staging && enabled && <p className="mt-3 text-xs text-muted-foreground">For activation review, test the current draft on its own instrument with fees of at least 3 bps and slippage of at least 5 bps.</p>}
+        <Button type="submit" className="mt-4 h-11 w-full" disabled={!enabled || busy}><Play aria-hidden /> {busy ? "Demo run in progress" : "Run demo backtest"}</Button>
       </form>
       <details className="mt-4 border-t border-border pt-3">
         <summary className="cursor-pointer text-sm font-medium">Simulation assumptions</summary>

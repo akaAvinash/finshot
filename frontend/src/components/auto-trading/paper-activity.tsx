@@ -15,8 +15,9 @@ export const paperTime = new Intl.DateTimeFormat("en-IN", {
 const orderState = {
   queued: { label: "Queued", tone: "accent" },
   held: { label: "Held", tone: "neutral" },
+  filled: { label: "Filled", tone: "positive" },
   cancelled: { label: "Cancelled", tone: "negative" },
-} as const satisfies Record<PaperOrder["status"], { label: string; tone: "accent" | "neutral" | "negative" }>;
+} as const satisfies Record<PaperOrder["status"], { label: string; tone: "accent" | "neutral" | "negative" | "positive" }>;
 
 const tabs = [
   { value: "queue", label: "Order queue", icon: ClipboardList },
@@ -24,7 +25,7 @@ const tabs = [
   { value: "events", label: "Event log", icon: History },
 ];
 
-export function PaperActivity({ snapshot }: { snapshot: PaperSnapshot }) {
+export function PaperActivity({ snapshot }: { snapshot: Pick<PaperSnapshot, "orders" | "trades" | "events"> }) {
   return (
     <Card aria-label="Paper trading activity" className="overflow-hidden">
       <Tabs.Root defaultValue="queue">

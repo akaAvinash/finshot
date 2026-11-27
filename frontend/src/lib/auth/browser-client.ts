@@ -1,7 +1,7 @@
 const authRoot = "/api/v1/auth";
 
 export class AuthError extends Error {
-  constructor(public readonly status: number, public readonly code?: string, public readonly retryAfter?: number) {
+  constructor(public readonly status: number, public readonly code?: string, public readonly retryAfter?: number, public readonly detail?: string) {
     super("Auth request failed");
   }
 }
@@ -22,7 +22,8 @@ export async function requestAccount(path: string, init?: RequestInit) {
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     const retryAfter = Number(response.headers.get("Retry-After"));
-    throw new AuthError(response.status, error?.code, Number.isSafeInteger(retryAfter) && retryAfter > 0 ? retryAfter : undefined);
+    throw new AuthError(response.status, error?.code, Number.isSafeInteger(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+      typeof error?.message === "string" ? error.message : undefined);
   }
   return response;
 }
@@ -38,11 +39,11 @@ async function readCsrf(context?: CsrfContext) {
 
 type AuthWrite = "otp/request" | "otp/verify" | "login/totp" | "login/recovery" | "totp/enroll" | "totp/confirm" | "totp/recovery-codes" | "step-up" | "logout";
 
-async function writeWithCsrf(path: string, method: "POST" | "PUT" | "DELETE", context?: CsrfContext, body?: Record<string, string>) {
+async function writeWithCsrf(path: string, method: "POST" | "PUT" | "DELETE", context?: CsrfContext, body?: object, signal?: AbortSignal) {
   function send(token: string) {
     const headers = new Headers({ "X-CSRF-Token": token });
     if (body) headers.set("Content-Type", "application/json");
-    return requestAccount(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    return requestAccount(path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal });
   }
 
   const cached = context === "session" ? sessionCsrfToken : undefined;
@@ -60,8 +61,8 @@ function postAuth(path: AuthWrite, context?: CsrfContext, body?: Record<string, 
   return writeWithCsrf(`${authRoot}/${path}`, "POST", context, body);
 }
 
-export function writeAccount(path: string, method: "PUT" | "DELETE", body?: Record<string, string>) {
-  return writeWithCsrf(path, method, "session", body);
+export function writeAccount(path: string, method: "POST" | "PUT" | "DELETE", body?: object, signal?: AbortSignal) {
+  return writeWithCsrf(path, method, "session", body, signal);
 }
 
 export async function requestEmailCode(phone: string): Promise<EmailChallenge> {

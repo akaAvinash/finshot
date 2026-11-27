@@ -9,11 +9,13 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/input";
 import { Status } from "@/components/ui/status";
 import { createTradeoClient } from "@/lib/api/client";
+import { canStartPaper } from "@/lib/api/auto-trading-mock";
 import type { PaperCommand, PaperResult, PaperScenario } from "@/lib/api/auto-trading-types";
 import { formatSnapshotDate } from "@/lib/format";
 import { PaperActivity, paperTime } from "./paper-activity";
 import { PaperControls } from "./paper-controls";
 import { TradeControls } from "./trade-controls";
+import { StagingAutoTrading } from "./staging-auto-trading";
 
 const scenarios = [
   { value: "ready", label: "Sample data" },
@@ -26,7 +28,11 @@ const scenarios = [
 type Request = { scenario: PaperScenario };
 type Result = PaperResult | { status: "error" };
 
-export function AutoTrading() {
+export function AutoTrading({ mode = "preview" }: { mode?: "preview" | "staging" }) {
+  return mode === "staging" ? <StagingAutoTrading /> : <PreviewAutoTrading />;
+}
+
+function PreviewAutoTrading() {
   const [client] = useState(() => createTradeoClient());
   const [request, setRequest] = useState<Request>({ scenario: "ready" });
   const [settled, setSettled] = useState<{ request: Request; result: Result }>();
@@ -115,7 +121,7 @@ export function AutoTrading() {
           )}
           {commandError && <p role="alert" className="text-sm text-negative">{commandError}</p>}
           {pending && <p role="status" className="sr-only">Updating paper controls</p>}
-          <PaperControls snapshot={result.data} stale={result.status === "stale"} pending={pending} onRun={run} />
+          <PaperControls snapshot={result.data} stale={result.status === "stale"} pending={pending} onRun={run} canStart={canStartPaper(result.data)} haltError={commandError} />
           <TradeControls snapshot={result.data} stale={result.status === "stale"} pending={pending} onRun={run} />
           <PaperActivity snapshot={result.data} />
         </>

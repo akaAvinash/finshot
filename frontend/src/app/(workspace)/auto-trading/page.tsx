@@ -5,6 +5,6 @@ import { requireWorkspaceSession } from "@/lib/auth/workspace-session";
 export const metadata: Metadata = { title: "Auto Trading" };
 
 export default async function AutoTradingPage() {
-  await requireWorkspaceSession();
-  return <AutoTrading />;
+  const { mode } = await requireWorkspaceSession();
+  return <AutoTrading mode={mode} />;
 }

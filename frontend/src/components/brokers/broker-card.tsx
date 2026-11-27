@@ -33,12 +33,13 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function BrokerCard({ connection, asOf, disabled, pending, onAction }: {
+export function BrokerCard({ connection, asOf, disabled, pending, onAction, actionError }: {
   connection: BrokerConnection;
   asOf: string;
   disabled: boolean;
   pending: boolean;
   onAction: (provider: BrokerId, action: BrokerAction) => Promise<boolean>;
+  actionError?: { action: BrokerAction; message: string };
 }) {
   const { provider, account } = connection;
   const name = brokerNames[provider];
@@ -133,7 +134,7 @@ export function BrokerCard({ connection, asOf, disabled, pending, onAction }: {
                 ? "This removes the sample connection from this preview. The activity log remains available."
                 : "This creates a simulated connection with read-only demo permissions. No broker sign-in or credentials are needed."}
             </DialogDescription>
-            {failed && <p role="alert" className="mt-3 text-sm text-negative">The demo action did not complete. Try again.</p>}
+            {failed && <p role="alert" className="mt-3 text-sm text-negative">{actionError?.action === intent ? actionError.message : "The demo action did not complete. Try again."}</p>}
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               <Button variant="outline" className="h-11" disabled={pending} onClick={() => setIntent(null)}>Cancel</Button>
               <Button variant={intent === "disconnect" ? "outline" : "default"}

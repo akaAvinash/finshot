@@ -341,6 +341,8 @@ class AlertDeliveryService:
                     )
                     if (used or 0) >= self._s.notify_daily_limit_per_channel:
                         reason = "DAILY_LIMIT"
+                if reason is None and channel == "email" and not provider.simulated:
+                    reason = await self._email_cap_reason(db, row, now, day)
                 if reason is not None:
                     row.status = "skipped"
                     row.status_reason = reason
@@ -354,6 +356,7 @@ class AlertDeliveryService:
                         continue
                     title, body = alert.title, alert.message
                 row.attempts += 1
+                row.last_attempt_at = now
                 row.next_attempt_at = now + _BACKOFF[min(row.attempts, MAX_ATTEMPTS) - 1]
                 row.destination_masked = mask_destination(destination)
                 row.simulated = provider.simulated
@@ -373,6 +376,35 @@ class AlertDeliveryService:
                     )
                 )
         return claimed
+
+    async def _email_cap_reason(
+        self, db: AsyncSession, row: AlertDelivery, now: datetime, day: datetime
+    ) -> str | None:
+        """Hard caps for real email, counted in send attempts (retries included):
+        the whole mailbox per UTC day, then this user per rolling hour."""
+        real = and_(
+            AlertDelivery.channel == "email",
+            AlertDelivery.simulated.is_(False),
+            AlertDelivery.attempts > 0,
+            AlertDelivery.id != row.id,
+        )
+        today = await db.scalar(
+            select(func.coalesce(func.sum(AlertDelivery.attempts), 0)).where(
+                real, AlertDelivery.last_attempt_at >= day
+            )
+        )
+        if int(today or 0) >= self._s.notify_email_daily_cap:
+            return "DAILY_LIMIT"
+        recent = await db.scalar(
+            select(func.coalesce(func.sum(AlertDelivery.attempts), 0)).where(
+                real,
+                AlertDelivery.user_id == row.user_id,
+                AlertDelivery.last_attempt_at >= now - timedelta(hours=1),
+            )
+        )
+        if int(recent or 0) >= self._s.notify_email_per_user_per_hour:
+            return "DAILY_LIMIT"
+        return None
 
     async def send_due(self) -> int:
         """Send every due delivery once. Returns how many were sent."""

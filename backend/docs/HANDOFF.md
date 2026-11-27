@@ -117,6 +117,21 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   SMS in India a DLT-registered sender and template). Add a class implementing
   the protocol and a new `NOTIFY_*_PROVIDER` value; shapes do not change.
 
+### Real email through your own mailbox (SMTP)
+
+- `NOTIFY_EMAIL_PROVIDER=smtp` sends alert email through `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` (server env only, never logged or
+  committed). STARTTLS is required: settings refuse `smtp` without all five values
+  or with `SMTP_STARTTLS=false`. SMS and push stay disabled or simulated.
+- Hard caps, counted in send attempts including retries: `NOTIFY_EMAIL_DAILY_CAP`
+  (50 per UTC day across all users) and `NOTIFY_EMAIL_PER_USER_PER_HOUR` (5). A
+  delivery over either is `skipped` with `DAILY_LIMIT` and nothing is sent.
+- A send failure shows as `PROVIDER_ERROR` (retries 1, 5, 15 min), then `failed`.
+  Logs carry only the exception class, never the server reply, credentials or address.
+- Default stays `disabled`. Owner actions: create the mailbox, set the `SMTP_*`
+  values and `NOTIFY_EMAIL_PROVIDER=smtp` in the server env yourself, restart the API
+  (migration 0019 adds `alert_deliveries.last_attempt_at`).
+
 ## Data retention notes (contract 0.13.0)
 
 - `GET`/`PUT /api/v1/settings/data-retention` (`app/retention/`, migration 0017).

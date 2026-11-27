@@ -216,8 +216,10 @@ class Settings(BaseSettings):
 
     # --- Alert delivery by email, SMS and push (contract 0.13.0) -------------
     # `log` is a simulated provider: it writes a masked log line and sends
-    # nothing. It is refused in production. No real provider exists yet.
-    notify_email_provider: Literal["disabled", "log"] = "disabled"
+    # nothing. It is refused in production. `smtp` (email only) sends real mail
+    # through the SMTP_* mailbox; it stays off until the owner sets it and the
+    # credentials in the server environment.
+    notify_email_provider: Literal["disabled", "log", "smtp"] = "disabled"
     notify_sms_provider: Literal["disabled", "log"] = "disabled"
     notify_push_provider: Literal["disabled", "log"] = "disabled"
     notify_worker_enabled: bool = True
@@ -226,6 +228,11 @@ class Settings(BaseSettings):
     notify_lookback_seconds: int = Field(default=3600, ge=60, le=86_400)
     notify_daily_limit_per_channel: int = Field(default=20, ge=1, le=1000)
     notify_test_per_hour: int = Field(default=3, ge=1, le=60)
+    # Real email only: a hard cap on messages sent per UTC day across all users,
+    # and a per-user cap per rolling hour. Over either, the delivery is skipped
+    # with DAILY_LIMIT (the daily one) and nothing is sent.
+    notify_email_daily_cap: int = Field(default=50, ge=1, le=10_000)
+    notify_email_per_user_per_hour: int = Field(default=5, ge=1, le=100)
 
     # --- Data retention (contract 0.13.0) -------------------------------------
     # Bounds and default for the user's retention period, in days. The purge
@@ -327,6 +334,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "the simulated (log) notification provider is not allowed in production"
             )
+        if self.notify_email_provider == "smtp":
+            missing = [
+                name
+                for name, value in (
+                    ("SMTP_HOST", self.smtp_host),
+                    ("SMTP_FROM", self.smtp_from),
+                    ("SMTP_USERNAME", self.smtp_username),
+                    ("SMTP_PASSWORD", self.smtp_password),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(f"NOTIFY_EMAIL_PROVIDER=smtp needs {', '.join(missing)}")
+            if not self.smtp_starttls:
+                raise ValueError("NOTIFY_EMAIL_PROVIDER=smtp requires SMTP_STARTTLS=true")
         return self
 
     @model_validator(mode="after")

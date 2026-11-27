@@ -143,6 +143,11 @@ class AlertDelivery(Base):
             "next_attempt_at",
             postgresql_where=text("status = 'pending'"),
         ),
+        Index(
+            "ix_alert_deliveries_last_attempt_at",
+            "last_attempt_at",
+            postgresql_where=text("last_attempt_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -160,3 +165,4 @@ class AlertDelivery(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

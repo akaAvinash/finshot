@@ -208,6 +208,10 @@ async def purge_credentials(db: AsyncSession, phone: str, now: datetime) -> bool
     """Delete every invite (and with them the sessions) of the tester. The
     identity row stays, marked purged, and so do the audit events."""
     _validate_phone(phone)
+    # Same lock as issue_invite, so the two take their row locks one at a time.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended(f"tester:{phone}", 0)))
+    )
     user_id = await _identity(db, phone)
     if user_id is None:
         return False

@@ -593,3 +593,19 @@ def test_a_failed_startup_cleanup_is_retried(
     assert calls["n"] >= 2
     # Re-enabled: the earlier session stays dead.
     assert browser.get("/api/v1/auth/me").status_code == 401
+
+
+def test_concurrent_issue_and_purge_do_not_deadlock(client: TestClient, clock: FakeClock) -> None:
+    for _ in range(5):
+        issue(client, clock)  # leaves an unused invite for both operations to touch
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            issuing = pool.submit(issue, client, clock)
+            purging = pool.submit(
+                operator, client, lambda s, k: tester.purge_credentials(s, TESTER_PHONE, clock.now)
+            )
+            assert purging.result(30) is True
+            assert issuing.result(30)
+        live = db_rows(
+            db(), "SELECT 1 FROM tester_invites WHERE used_at IS NULL AND revoked_at IS NULL"
+        )
+        assert len(live) <= 1

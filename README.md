@@ -1,4 +1,9 @@
-<h1 align="center"><em>FinShot</em></h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/brand/finshot-wordmark-dark.png">
+    <img src="./docs/brand/finshot-wordmark-light.png" alt="FinShot" width="280">
+  </picture>
+</h1>
 
 <p align="center">A personal trading workspace for Indian markets.</p>
 

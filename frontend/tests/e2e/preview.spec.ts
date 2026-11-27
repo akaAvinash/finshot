@@ -7,6 +7,11 @@ test("protects routes and supports demo OTP validation, change number, and sign-
   await expect(page.getByRole("heading", { name: "Preview sign-in" })).toBeVisible();
   await expect(page).toHaveTitle(/FinShot/);
   await expect(page.getByRole("img", { name: "FinShot", exact: true }).filter({ visible: true })).toBeVisible();
+  const favicon = page.locator('head link[rel="icon"]');
+  await expect(favicon).toHaveAttribute("href", /^\/favicon\.ico(?:\?|$)/);
+  const icon = await page.request.get(await favicon.getAttribute("href") ?? "/favicon.ico");
+  expect(icon.ok()).toBeTruthy();
+  expect(icon.headers()["content-type"]).toMatch(/^image\/(?:x-icon|vnd\.microsoft\.icon)\b/);
   await capture(page, "login-desktop-dark");
 
   await page.getByLabel("Mobile number").fill("1234567890");

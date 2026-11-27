@@ -1,0 +1,168 @@
+openapi: 3.1.0
+info:
+  title: FinShot Tester Sign-in Proposal
+  version: 0.1.0
+  description: |
+    Proposed invite-only sign-in on the FinShot website for designated testers.
+    The active API contract remains in openapi.yaml. Add this operation to that
+    contract when the backend implements it and its authorization tests pass.
+
+    An owner-only operator command issues one invite for a dedicated tester
+    identity and synthetic phone number. It rejects numbers belonging to regular
+    accounts. Tester identities cannot sign in through the regular OTP,
+    authenticator, or recovery endpoints. Generate `inviteCode` from 16 random
+    bytes, show it once to the operator, and store only a keyed digest. Codes
+    expire within 15 minutes.
+    Issuing, redeeming, and revoking invites create audit events without codes,
+    full phone numbers, cookies, or session tokens. There is no public issuance
+    or reissue endpoint.
+
+    The server binds each resulting session to the invite and tester identity.
+    Resolve that scope from server-side session state on every request. Allow
+    only the operations in `x-tester-allowed-operations`, with the usual CSRF
+    checks on writes and per-identity ownership checks on every resource.
+    Tester strategies, fills, reports, and alerts use only the dedicated tester
+    identity and the simulation engine. Broker reads may return only demo data.
+    Account security changes, real broker access, live order operations, and
+    any future operation outside the allowlist are denied for tester sessions
+    with `403 TESTER_ACCESS_DENIED`. Tester invites never confer step-up access.
+
+    An owner can revoke access at any time. Revocation invalidates unused codes
+    and immediately ends sessions issued by the invite. The operator can purge
+    all credentials for a tester identity without removing audit records.
+    Serialize revocation and redemption for the same invite. Keep the feature
+    off by default. Disabling it also invalidates all tester sessions for the
+    deployment.
+
+    The frontend shows Tester sign-in only when the deployment enables it. A
+    successful redemption and subsequent `getCurrentUser` (`GET /api/v1/auth/me`)
+    return `session.access: tester`. The frontend uses that server-reported
+    access to route to the demo and paper workspace without authenticator setup.
+    `user.totpEnabled` remains false. Regular account sign-in, cookies, and
+    authenticator requirements continue to follow openapi.yaml.
+
+x-tester-allowed-operations:
+  - getCsrfToken
+  - getCurrentUser
+  - logout
+  - getMarketInstruments
+  - getMarketOverview
+  - getMarketCandles
+  - getBrokerConnections
+  - getBrokerPortfolio
+  - getStrategies
+  - sendStrategyCommand
+  - getBacktestWorkspace
+  - startBacktest
+  - getBacktestRun
+  - getPaperTrading
+  - sendPaperCommand
+  - getTradeControls
+  - getTradeControlsHistory
+  - getPaperReport
+  - exportPaperTrades
+  - listAgents
+  - getAgentHealth
+  - listAgentEvents
+  - listAlerts
+  - acknowledgeAlert
+  - getAlertPreferences
+  - updateAlertPreferences
+
+paths:
+  /api/v1/auth/login/tester:
+    post:
+      operationId: redeemTesterInvite
+      summary: Redeem an invite for a demo and paper trading session
+      description: |
+        Require the same origin check and `pre_login` CSRF proof as normal
+        sign-in. Throttle by IP and normalized phone, including unknown phones.
+        Match the code against the dedicated tester identity. Consume the invite
+        code and create one scoped session in the same transaction. A concurrent
+        or subsequent redemption cannot reuse the code. Expired, revoked, used,
+        mismatched, and unknown credentials all return the same 401 response.
+
+        Set the regular session and CSRF cookies as separate Set-Cookie fields
+        and return the new session-bound CSRF token. The tester session expires
+        within two hours of redemption, and its idle deadline cannot extend
+        past that expiry. Return the sign-in response with `Cache-Control: no-store`.
+      parameters:
+        - $ref: './openapi.yaml#/components/parameters/RequestIdHeader'
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TesterInviteRedemption'
+      responses:
+        '200':
+          description: Tester session created with session and CSRF cookies.
+          headers:
+            X-Request-ID:
+              $ref: './openapi.yaml#/components/headers/XRequestId'
+            Set-Cookie:
+              $ref: './openapi.yaml#/components/headers/SetCookieLogin'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TesterSignInResponse'
+        '400': { $ref: './openapi.yaml#/components/responses/AuthInvalidRequest' }
+        '401':
+          description: The phone number or invite code is not valid.
+          headers:
+            X-Request-ID:
+              $ref: './openapi.yaml#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './openapi.yaml#/components/schemas/AuthError'
+                  - properties:
+                      code: { const: INVALID_CREDENTIALS }
+        '403': { $ref: './openapi.yaml#/components/responses/AuthCsrfFailed' }
+        '404':
+          description: Tester sign-in is disabled. Return the usual NOT_FOUND envelope.
+          headers:
+            X-Request-ID:
+              $ref: './openapi.yaml#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: './openapi.yaml#/components/schemas/ApiRoutingError'
+        '429': { $ref: './openapi.yaml#/components/responses/AuthRateLimited' }
+        '500': { $ref: './openapi.yaml#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    csrfHeader:
+      $ref: './openapi.yaml#/components/securitySchemes/csrfHeader'
+  schemas:
+    TesterInviteRedemption:
+      type: object
+      required: [phone, inviteCode]
+      additionalProperties: false
+      properties:
+        phone:
+          $ref: './openapi.yaml#/components/schemas/Phone'
+        inviteCode:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{22}$'
+          description: An unpadded base64url code. Send only in the request body.
+    TesterSession:
+      allOf:
+        - $ref: './openapi.yaml#/components/schemas/AuthSession'
+        - properties:
+            user:
+              properties:
+                totpEnabled: { const: false }
+            session:
+              required: [access]
+              properties:
+                access: { const: tester }
+                stepUpUntil: { type: 'null' }
+    TesterSignInResponse:
+      allOf:
+        - $ref: './openapi.yaml#/components/schemas/OtpVerifyResponse'
+        - $ref: '#/components/schemas/TesterSession'

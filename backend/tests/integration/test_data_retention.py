@@ -252,6 +252,38 @@ def test_one_failing_user_does_not_stop_the_others(
     assert count("alerts", second) == before[second] - 1
 
 
+def test_a_failure_part_way_through_a_purge_changes_nothing(
+    client: TestClient, user: Browser, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deletes, watermark, last purge and audit are one transaction: a failure after
+    the deletes rolls all of them back, and the next pass succeeds."""
+    from app.retention import service as module
+
+    me = uid(user)
+    add_alert(me, clock.now - timedelta(days=400))
+    add_agent_event(me, clock.now - timedelta(days=400))
+    before = (count("alerts", me), count("agent_events", me))
+    real = module._delete_older
+
+    async def fail_after_deleting(*args: Any, **kwargs: Any) -> Any:
+        await real(*args, **kwargs)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(module, "_delete_older", fail_after_deleting)
+    service: RetentionService = client.app.state.retention  # type: ignore[attr-defined]
+    assert client.portal is not None
+    totals, failed = client.portal.call(service.purge_pass)
+    assert failed >= 1 and not any(totals.values())
+    assert (count("alerts", me), count("agent_events", me)) == before
+    assert db_rows(db(), "SELECT 1 FROM data_retention") == []
+    assert db_rows(db(), "SELECT 1 FROM audit_events WHERE action = 'retention.purged'") == []
+
+    monkeypatch.setattr(module, "_delete_older", real)
+    totals, failed = client.portal.call(service.purge_pass)
+    assert failed == 0 and totals["alerts"] >= 1
+    assert count("alerts", me) < before[0]
+
+
 @pytest.mark.parametrize(("took", "slept"), [(0.0, 100.0), (60.0, 40.0), (250.0, 0.0)])
 def test_the_worker_counts_the_purge_time_in_its_interval(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, took: float, slept: float

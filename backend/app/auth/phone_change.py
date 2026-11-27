@@ -228,13 +228,17 @@ class PhoneChangeService:
                 # The initiating session must still be live and stepped up: another
                 # session may have ended it while this request waited.
                 live = await db.scalar(
-                    select(SessionRow.id).where(
+                    select(SessionRow.id)
+                    .where(
                         SessionRow.id == session.session_id,
                         SessionRow.user_id == session.user_id,
                         SessionRow.revoked_at.is_(None),
                         SessionRow.expires_at > now,
                         SessionRow.step_up_until > now,
                     )
+                    # Lock it: a logout already revoking this session finishes first
+                    # and is seen here; one that arrives later waits for this commit.
+                    .with_for_update(read=True)
                 )
                 if live is None:
                     raise code_invalid()

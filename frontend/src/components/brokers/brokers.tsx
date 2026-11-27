@@ -10,8 +10,6 @@ import { Label } from "@/components/ui/input";
 import { useNotification } from "@/components/ui/notifications";
 import { Status } from "@/components/ui/status";
 import { createTradeoClient } from "@/lib/api/client";
-import { stagingBrokers } from "@/lib/api/staging-brokers";
-import { stagingError } from "@/lib/api/staging-client";
 import type { BrokerAction, BrokerId, BrokerResult, BrokerScenario, BrokerStatus } from "@/lib/api/broker-types";
 import { brokerNames, formatBrokerTime, getBrokerStatus } from "@/lib/brokers";
 import { cn } from "@/lib/utils";
@@ -47,9 +45,8 @@ const actionLabel: Record<BrokerAction, string> = {
 type Request = { scenario: BrokerScenario };
 type Result = BrokerResult | { status: "error"; message: string };
 
-export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) {
-  const staging = mode === "staging";
-  const [client] = useState(() => staging ? stagingBrokers : createTradeoClient());
+export function Brokers() {
+  const [client] = useState(() => createTradeoClient());
   const [request, setRequest] = useState<Request>({ scenario: "ready" });
   const [settled, setSettled] = useState<{ request: Request; result: Result }>();
   const [filter, setFilter] = useState<"all" | BrokerStatus>("all");
@@ -65,12 +62,11 @@ export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) 
       .then((result) => {
         if (!controller.signal.aborted) setSettled({ request, result });
       })
-      .catch((error) => {
-        const message = staging ? stagingError(error, "The staging broker API could not load.") : "The simulated broker request failed.";
-        if (!controller.signal.aborted) setSettled({ request, result: { status: "error", message } });
+      .catch(() => {
+        if (!controller.signal.aborted) setSettled({ request, result: { status: "error", message: "The simulated broker request failed." } });
       });
     return () => controller.abort();
-  }, [client, request, staging]);
+  }, [client, request]);
 
   useEffect(() => () => command.current?.abort(), []);
 
@@ -94,9 +90,9 @@ export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) 
       if (action !== "sync") setFilter("all");
       notify(`${brokerNames[provider]} ${actionLabel[action]}`);
       return true;
-    } catch (error) {
+    } catch {
       const fallback = action === "sync" ? "Demo account sync failed. Try again." : "The demo action did not complete. Try again.";
-      if (!controller.signal.aborted) setActionError({ provider, action, message: staging ? stagingError(error, fallback) : fallback });
+      if (!controller.signal.aborted) setActionError({ provider, action, message: fallback });
       return false;
     } finally {
       command.current = null;
@@ -116,7 +112,6 @@ export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) 
       <PageHeading title="Brokers" description="Manage sample connections, check session health and review account syncs." actions={
         <div className="flex flex-wrap items-center gap-2">
           <Status tone="accent" dot>Demo connections</Status>
-          {staging ? <Button variant="outline" disabled={pending !== null || !result} onClick={() => load("ready")}>Refresh brokers</Button> : <>
           <Label htmlFor="broker-response" className="sr-only">Broker preview data</Label>
           <select id="broker-response" value={request.scenario} disabled={pending !== null}
             onChange={({ target }) => {
@@ -125,7 +120,6 @@ export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) 
             }} className="h-10 rounded-lg border border-border bg-card px-3 text-sm text-foreground">
             {scenarios.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
-          </>}
         </div>
       } />
 
@@ -140,7 +134,7 @@ export function Brokers({ mode = "preview" }: { mode?: "preview" | "staging" }) 
       {snapshot && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>{staging ? "Account-scoped staging demo · No live broker access" : "Simulated, read-only broker access"}</span>
+            <span>Simulated, read-only broker access</span>
             <time dateTime={snapshot.asOf}>Demo snapshot · {formatBrokerTime(snapshot.asOf)}</time>
           </div>
           {result?.status === "stale" && (

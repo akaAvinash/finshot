@@ -99,7 +99,7 @@ export function Markets({ mode = "preview" }: { mode?: MarketMode }) {
               onSelect={selectInstrument} onToggle={toggleWatchlist} onFind={openSearch} />
           </div>
           {instrument && selectedQuote && <InstrumentDetails instrument={instrument} quote={selectedQuote} />}
-          <InstrumentSearch open={searchOpen} onOpenChange={setSearchOpen} instruments={instruments} watchlist={watchlist}
+          <InstrumentSearch open={searchOpen} onOpenChange={setSearchOpen} instruments={instruments} source={snapshot.data.catalogSource} watchlist={watchlist}
             onSelect={selectInstrument} onToggle={toggleWatchlist} onClose={() => searchOpener.current?.focus()} />
         </>
       )}

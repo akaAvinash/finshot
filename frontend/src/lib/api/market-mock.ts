@@ -16,7 +16,7 @@ export function createMarketMock(scenario: MarketChartScenario = "ready"): Marke
   return {
     async getInstruments({ query = "", signal } = {}) {
       await waitForMock(signal, 180);
-      return { instruments: structuredClone(searchInstruments(demoInstruments, query)) };
+      return { source: "demo", instruments: structuredClone(searchInstruments(demoInstruments, query)) };
     },
     async getMarketOverview({ signal } = {}) {
       await waitForMock(signal, 180);

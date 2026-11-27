@@ -1,25 +1,22 @@
 import type { NextRequest } from "next/server";
 import { readBoundedBody } from "@/lib/api/bounded-body";
+import { apiProxyResponse } from "@/lib/api/proxy-response";
 import { readAuthConfig } from "@/lib/auth/config";
 import { getTrustedClientIp } from "@/lib/auth/ingress";
 import { authCookieHeader, sessionCookie } from "@/lib/auth/upstream";
 
-const responseHeaders = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
-
-function fail(status: number, code: string, message: string) {
-  return Response.json({ code, message }, { status, headers: responseHeaders });
-}
-
 async function proxy(request: NextRequest) {
+  const { fail, requestId, wrongMethod, relay } = apiProxyResponse(request);
   const config = readAuthConfig();
   if (config.mode === "preview") return fail(404, "NOT_FOUND", "Account settings are unavailable in preview.");
+  if (request.method !== "GET" && request.method !== "PUT") return wrongMethod(["GET", "PUT"]);
   if (config.mode === "unavailable") return fail(503, "SETTINGS_UNAVAILABLE", "Account settings are temporarily unavailable.");
   const clientIp = getTrustedClientIp(request.headers, config.ingressToken);
   if (!clientIp) return fail(403, "UNTRUSTED_INGRESS", "Account settings require the staging ingress.");
   if (!request.cookies.get(sessionCookie)?.value) return fail(401, "UNAUTHENTICATED", "Sign in to continue.");
   const saving = request.method === "PUT";
   const cookie = authCookieHeader((name) => saving || name === sessionCookie ? request.cookies.get(name)?.value : undefined);
-  const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp, Cookie: cookie });
+  const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp, "X-Request-ID": requestId, Cookie: cookie });
 
   try {
     let body: string | undefined;
@@ -42,13 +39,10 @@ async function proxy(request: NextRequest) {
       await response.body?.cancel();
       return fail(502, "SETTINGS_UNAVAILABLE", "Account settings are temporarily unavailable.");
     }
-    const outputHeaders = new Headers({ ...responseHeaders, "Content-Type": "application/json" });
-    const retryAfter = response.headers.get("retry-after");
-    if (retryAfter) outputHeaders.set("Retry-After", retryAfter);
-    return new Response(response.body, { status: response.status, headers: outputHeaders });
+    return await relay(response);
   } catch {
     return fail(503, "SETTINGS_UNAVAILABLE", "Account settings are temporarily unavailable.");
   }
 }
 
-export { proxy as GET, proxy as PUT };
+export { proxy as GET, proxy as HEAD, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE, proxy as OPTIONS };

@@ -13,7 +13,7 @@ const quotes = [23123.45, 503, 2712].map((price, index) => ({
 
 export function stagingInstruments(query) {
   const term = query?.toLowerCase();
-  return { instruments: term ? instruments.filter((row) =>
+  return { source: "demo", instruments: term ? instruments.filter((row) =>
     [row.id, row.symbol, row.name, ...row.aliases].some((value) => value.toLowerCase().includes(term))) : instruments };
 }
 

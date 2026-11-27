@@ -15,10 +15,11 @@ export function stagingError(error: unknown, fallback: string) {
   if (!(error instanceof AuthError)) return fallback;
   if (error.status === 401) return "Your session expired. Sign in and try again.";
   if (error.status === 403) return "This action could not be authorized. Reload the page and try again.";
+  if (error.status === 429 && error.retryAfter) return `Too many requests. Try again in ${error.retryAfter} seconds.`;
   if ([400, 404, 409, 422].includes(error.status) && error.detail && error.detail.length <= 240) {
     return error.detail;
   }
-  return fallback;
+  return error.requestId && error.status >= 500 ? `${fallback} Request ID ${error.requestId}.` : fallback;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

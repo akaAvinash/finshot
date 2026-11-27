@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { marketDataClient, type MarketMode } from "@/lib/api/market-client";
 import type { MarketChartScenario } from "@/lib/api/market-mock";
-import type { Instrument, MarketCandles, MarketOverview, MarketTimeframe } from "@/lib/api/market-types";
+import type { Instrument, MarketCandles, MarketOverview, MarketSource, MarketTimeframe } from "@/lib/api/market-types";
 
 type Result<T> = { status: "loading" } | { status: "error" } | { status: "ready"; data: T };
-export type MarketSnapshot = { instruments: Instrument[]; overview: MarketOverview };
+export type MarketSnapshot = { instruments: Instrument[]; catalogSource: MarketSource; overview: MarketOverview };
 
 export type ChartRequest = { instrumentId: string; timeframe: MarketTimeframe; scenario: MarketChartScenario };
 
@@ -20,8 +20,8 @@ export function useMarketSnapshot(mode: MarketMode) {
     const client = marketDataClient(mode);
 
     Promise.all([client.getInstruments(options), client.getMarketOverview(options)])
-      .then(([{ instruments }, overview]) => {
-        if (!options.signal.aborted) setSnapshot({ status: "ready", data: { instruments, overview } });
+      .then(([{ instruments, source }, overview]) => {
+        if (!options.signal.aborted) setSnapshot({ status: "ready", data: { instruments, catalogSource: source, overview } });
       })
       .catch(() => {
         if (!options.signal.aborted) setSnapshot({ status: "error" });

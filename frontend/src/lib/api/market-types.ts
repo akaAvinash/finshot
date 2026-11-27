@@ -61,7 +61,7 @@ export type MarketCandles = {
 type RequestOptions = { signal?: AbortSignal };
 
 export interface MarketDataClient {
-  getInstruments(options?: RequestOptions & { query?: string }): Promise<{ instruments: Instrument[] }>;
+  getInstruments(options?: RequestOptions & { query?: string }): Promise<{ source: MarketSource; instruments: Instrument[] }>;
   getMarketOverview(options?: RequestOptions): Promise<MarketOverview>;
   getMarketCandles(instrumentId: string, timeframe: MarketTimeframe, options?: RequestOptions): Promise<MarketCandles>;
 }

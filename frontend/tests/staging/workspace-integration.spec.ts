@@ -16,28 +16,43 @@ test.beforeEach(async ({ request }) => {
   expect((await request.post(`${fixture}/workspace/enable`)).status()).toBe(204);
 });
 
-test("persists broker actions and shows the server rejection in the confirmation dialog", async ({ page, request }) => {
+test("authorizes two same-provider accounts, persists actions by connection ID and shows the stored portfolio", async ({ page, request }) => {
   await signInStaging(page);
+  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
   await page.goto("/brokers");
-  const broker = page.getByRole("region", { name: "Zerodha" });
+  const broker = page.getByRole("region", { name: "Sample Broker" });
   await broker.getByRole("button", { name: "Connect demo" }).click();
-  const dialog = page.getByRole("dialog", { name: "Connect Zerodha demo?" });
-  await request.post(`${fixture}/workspace/reject-broker`);
-  await dialog.getByRole("button", { name: "Connect demo account" }).click();
-  await expect(dialog.getByRole("alert")).toContainText("The broker connection changed.");
-  await dialog.getByRole("button", { name: "Connect demo account" }).click();
-  await expect(broker.getByText("•••• 0248")).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Authorize Sample Broker?" });
+  await dialog.getByRole("button", { name: "Authorize demo account" }).click();
+  await dialog.getByLabel("Authenticator code").fill("645721");
+  await dialog.getByRole("button", { name: "Verify and continue" }).click();
+  await expect(page).toHaveURL(/\/brokers\/callback\?state=/);
+  await page.getByRole("button", { name: "Complete demo authorization" }).click();
+  await expect(page).toHaveURL(/\/brokers$/);
+  await expect(broker.getByText("•••• 0248")).toHaveCount(1);
 
+  await broker.getByRole("button", { name: "Connect demo" }).click();
+  await dialog.getByRole("button", { name: "Authorize demo account" }).click();
+  await page.getByRole("button", { name: "Complete demo authorization" }).click();
+  await expect(broker.getByText("•••• 0248")).toHaveCount(2);
+  await expect(broker.getByRole("button", { name: "Connect demo" })).toBeDisabled();
   await page.reload();
-  await expect(broker.getByText("•••• 0248")).toBeVisible();
-  await broker.getByRole("button", { name: "Sync demo account" }).click();
-  await expect(page.getByText("Zerodha demo account synced")).toBeVisible();
-  await broker.getByRole("button", { name: "Disconnect" }).click();
+  await expect(broker.getByText("•••• 0248")).toHaveCount(2);
+
+  await broker.getByRole("listitem").first().getByRole("button", { name: "Sync demo" }).click();
+  const sync = page.getByRole("dialog", { name: "Sync •••• 0248?" });
+  await request.post(`${fixture}/workspace/reject-broker`);
+  await sync.getByRole("button", { name: "Sync demo account" }).click();
+  await expect(sync.getByRole("alert")).toContainText("The broker connection changed.");
+  await sync.getByRole("button", { name: "Sync demo account" }).click();
+  await expect(sync).toHaveCount(0);
+  await broker.getByRole("listitem").first().getByRole("button", { name: "View portfolio" }).click();
+  await expect(page.getByRole("region", { name: "Stored portfolio · •••• 0248" })).toContainText("535.123456");
+  await broker.getByRole("listitem").last().getByRole("button", { name: "Disconnect" }).click();
   await page.getByRole("button", { name: "Disconnect demo account" }).click();
-  await expect(broker.getByRole("button", { name: "Connect demo" })).toBeVisible();
+  await expect(broker.getByText("•••• 0248")).toHaveCount(1);
   await page.reload();
-  await expect(broker.getByRole("button", { name: "Connect demo" })).toBeVisible();
-  await expect(page.getByLabel("Broker preview data")).toHaveCount(0);
+  await expect(broker.getByText("•••• 0248")).toHaveCount(1);
 });
 
 test("recovers a pending backtest after reload and runs an approved strategy to a paper fill", async ({ page }) => {
@@ -73,11 +88,10 @@ test("recovers a pending backtest after reload and runs an approved strategy to 
   await page.getByRole("tab", { name: "Trade log" }).click();
   await expect(page.getByRole("rowheader", { name: "NIFTY 50" })).toBeVisible({ timeout: 12_000 });
 
-  const limits = page.getByRole("region", { name: "Trade Controls" });
+  const limits = page.getByRole("region", { name: "Paper risk status" });
   await expect(limits).toContainText("₹1,800");
   await expect(limits).toContainText("1 / 8");
-  await expect(limits).toContainText("unavailable in staging");
-  await expect(limits.getByRole("button")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save paper limits" })).toBeDisabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
   await page.getByRole("button", { name: "Pause paper engine" }).click();
@@ -98,6 +112,42 @@ test("recovers a pending backtest after reload and runs an approved strategy to 
   await expect(page.getByRole("button", { name: "Start paper engine" })).toBeEnabled();
   await page.getByRole("tab", { name: "Trade log" }).click();
   await expect(page.getByRole("rowheader", { name: "NIFTY 50" })).toBeVisible();
+});
+
+test("saves bounded paper limits with authenticator confirmation and displays server history", async ({ page, context, request }) => {
+  await signInStaging(page);
+  expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
+  await page.goto("/auto-trading");
+  const panel = page.getByRole("region", { name: "Trade Controls", exact: true });
+  const profit = panel.getByLabel("Daily profit cap (₹)");
+  const maxTrades = panel.getByLabel("Maximum trades per session");
+  await maxTrades.fill("9");
+  await panel.getByRole("button", { name: "Save paper limits" }).click();
+  await expect(maxTrades).toHaveAttribute("aria-invalid", "true");
+  await maxTrades.fill("6");
+  await profit.fill("1234.56");
+  await panel.getByRole("button", { name: "Save paper limits" }).click();
+  await panel.getByLabel("Authenticator code").fill("645721");
+  await panel.getByRole("button", { name: "Verify and save" }).click();
+  await expect(panel.getByText("Revision 1", { exact: false }).first()).toBeVisible();
+  await panel.getByText("Trade Controls history", { exact: true }).click();
+  await expect(panel.getByText("Daily profit cap (₹) · Off → 1234.56", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(profit).toHaveValue("1234.56");
+  await expect(maxTrades).toHaveValue("6");
+
+  const { csrfToken } = await (await context.request.get("/api/v1/auth/csrf")).json();
+  const { revision, controls } = await (await context.request.get("/api/v1/settings/trade-controls")).json();
+  expect((await context.request.put("/api/v1/settings/trade-controls", {
+    headers: { Origin: "http://127.0.0.1:3101", "X-CSRF-Token": csrfToken },
+    data: { expectedRevision: revision, controls: { ...controls, tradeLimit: 5 } },
+  })).status()).toBe(200);
+  await maxTrades.fill("4");
+  await panel.getByRole("button", { name: "Save paper limits" }).click();
+  await expect(panel.getByRole("alert")).toContainText("The saved limits have changed.");
+  await expect(maxTrades).toHaveValue("4");
+  await panel.getByRole("button", { name: "Load latest saved limits" }).click();
+  await expect(maxTrades).toHaveValue("5");
 });
 
 test("an older backtest cannot approve a draft changed while the run was queued", async ({ page, context }) => {

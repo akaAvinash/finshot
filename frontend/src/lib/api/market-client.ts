@@ -68,8 +68,10 @@ const stagingMarketClient: MarketDataClient = {
   async getInstruments({ query, signal } = {}) {
     const search = query ? `?${new URLSearchParams({ query })}` : "";
     const data = await read(`instruments${search}`, signal);
-    if (object(data) && Array.isArray(data.instruments) && data.instruments.every(instrument)
-      && new Set(data.instruments.map(({ id }) => id)).size === data.instruments.length) return { instruments: data.instruments };
+    if (object(data) && (data.source === "demo" || data.source === "market") && Array.isArray(data.instruments) &&
+      data.instruments.every(instrument) && new Set(data.instruments.map(({ id }) => id)).size === data.instruments.length) {
+      return { source: data.source, instruments: data.instruments };
+    }
     throw new Error("The instrument catalog response was invalid.");
   },
   async getMarketOverview({ signal } = {}) {

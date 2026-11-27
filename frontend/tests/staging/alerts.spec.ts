@@ -59,12 +59,12 @@ test("persists optional warning and info settings while critical alerts remain a
     headers: { Cookie: cookie, Origin: "https://example.com", "X-CSRF-Token": csrf.csrfToken }, data,
   });
   expect(forged.status()).toBe(403);
-  expect(await forged.json()).toEqual({ code: "CSRF_FAILED", message: "The request could not be verified." });
+  expect(await forged.json()).toEqual({ code: "CSRF_FAILED", message: "The request could not be verified.", requestId: forged.headers()["x-request-id"] });
   const invalidCsrf = await context.request.put(`${api}/preferences`, {
     headers: { Cookie: cookie, Origin: "http://127.0.0.1:3101", "X-CSRF-Token": "invalid" }, data,
   });
   expect(invalidCsrf.status()).toBe(403);
-  expect(await invalidCsrf.json()).toEqual({ code: "CSRF_FAILED", message: "Auth fixture error" });
+  expect(await invalidCsrf.json()).toEqual({ code: "CSRF_FAILED", message: "Auth fixture error", requestId: invalidCsrf.headers()["x-request-id"] });
 
   await page.getByRole("button", { name: "Next alerts page" }).click();
   await expect(page.getByText("Page 2")).toBeVisible();

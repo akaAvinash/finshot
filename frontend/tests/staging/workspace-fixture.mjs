@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createContractWorkspaceFixture } from "./contract-workspace-fixture.mjs";
 
 const api = "/api/v1";
 const asOf = "2026-11-23T10:00:00Z";
@@ -13,16 +14,20 @@ const agents = [
   { id: "risk-explainer", name: "Risk Explainer" },
   { id: "execution-monitor", name: "Execution Monitor" },
 ].map((agent) => ({ ...agent, role: "advisory", description: "Observes the paper replay." }));
-const risk = { status: "approved", dailyLossPaise: 15000, lossLimitPaise: 180000, tradesToday: 0, tradeLimit: 8 };
+const risk = { dailyLossPaise: 15000, tradesToday: 0, consecutiveLosses: 0 };
 const account = { capitalPaise: 2500000, cashPaise: 2500000, equityPaise: 2500000, positionQuantity: 0, perTradeRiskPaise: 75000 };
 
 export function createWorkspaceFixture() {
   const accounts = new Map();
+  const contract = createContractWorkspaceFixture();
   let rejectBroker = false;
 
-  function handle(url, owner, body) {
+  function handle(url, owner, body, steppedUp) {
     if (!accounts.has(owner)) accounts.set(owner, { connections: [], brokerEvents: [], strategies: [], runs: [], testedDrafts: new Map(), paperState: null });
     const state = accounts.get(owner);
+    const path = url.pathname.slice(api.length + 1);
+    const newContract = contract.handle(path, owner, body, steppedUp, state.paperState?.engine);
+    if (newContract) return newContract;
     const brokers = () => ({ ...demo, events: state.brokerEvents, connections: ["zerodha", "fyers"].map((provider) => ({
       provider, account: state.connections.find((row) => row.provider === provider)?.account ?? null,
     })) });
@@ -31,10 +36,14 @@ export function createWorkspaceFixture() {
       const latest = versions.at(-1);
       return { id, name: latest.parameters.name, instrument: latest.parameters.instrument, version: latest.number };
     });
+    const settings = contract.settings(owner);
+    const halted = state.paperState?.engine === "halted";
     const paperSnapshot = () => ({ ...paper, strategies: active(), agent: { name: "Paper execution agent", ready: !!state.paperState?.strategyId },
-      account, risk: { ...risk, tradesToday: state.paperState?.trades.length ?? 0 }, engine: "idle", strategyId: null,
+      account: { ...account, perTradeRiskPaise: settings.controls.maxRiskPerTradePaise }, risk: { ...risk,
+        status: halted ? "blocked" : "approved", blockedReason: halted ? "HALTED" : null,
+        tradeLimit: settings.controls.tradeLimit, lossLimitPaise: settings.controls.lossLimitPaise,
+        controlsRevision: settings.revision, tradesToday: state.paperState?.trades.length ?? 0 }, engine: "idle", strategyId: null,
       replay: { sessionDate: null, sessionsDone: 0, sessionsTotal: 0, finished: false }, orders: [], trades: [], events: [], ...state.paperState });
-    const path = url.pathname.slice(api.length + 1);
 
     if (path === "brokers/preview") return ready(brokers());
     const broker = /^brokers\/preview\/(zerodha|fyers)\/actions$/.exec(path)?.[1];
@@ -139,5 +148,5 @@ export function createWorkspaceFixture() {
     return [404, { code: "NOT_FOUND", message: "Fixture endpoint unavailable." }];
   }
 
-  return { handle, rejectNextBrokerCommand: () => { rejectBroker = true; } };
+  return { handle, rejectNextBrokerCommand: () => { rejectBroker = true; contract.rejectNextAction(); } };
 }

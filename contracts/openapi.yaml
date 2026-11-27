@@ -1,28 +1,126 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.10.0
-  description: >
+  version: 0.11.0
+  description: |
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
     strategy versions with automatic backtest and risk checks, demo backtest
     jobs (simulated data only), a paper trading engine (simulated fills
     over demo data, no broker), read-only reports over the paper ledger and
     deterministic advisory agents that watch it (no language model), and an
-    in-app alert inbox over that activity (no email, SMS or push). The
+    in-app alert inbox over that activity (no email, SMS or push), and
+    per-user paper Trade Controls that can only tighten the server's paper
+    risk limits. The
     frontend uses deterministic demo responses in
     development. This contract describes future endpoints and does not declare
     a deployed backend. No endpoint here places, modifies or cancels a real
     order; paper orders exist only in the server's paper ledger.
+
+    **Request IDs (every operation).** A client may send `X-Request-ID`
+    (1 to 64 characters from `A-Z a-z 0-9 . _ -`). The server uses a
+    well-formed value as the request's ID and otherwise generates one; any
+    other value is ignored, never rejected. Every response, success or error,
+    carries the ID in the `X-Request-ID` header (see
+    `components.headers.XRequestId`). Every JSON error body also carries it as
+    `requestId`, the same value. Quote it when reporting a problem; it is not
+    a secret and identifies nothing about the user.
+
+    **Unexpected errors (every operation).** Any operation can answer
+    `500 INTERNAL_ERROR` when the server fails unexpectedly (for example the
+    database or Redis is unreachable). The body is `InternalError`; it never
+    contains a stack trace or internal detail, and the request changed
+    nothing it had not committed. It is not a fallback: a client must show an
+    error state and must not substitute demo or cached data, because that
+    would hide the failure. Operations list it as their `500` response.
+
+    **Unknown routes and methods.** A path under `/api/v1/` that no
+    operation here declares returns `404 NOT_FOUND`, and a declared path
+    called with an undeclared method returns `405 METHOD_NOT_ALLOWED`, both
+    with an `ApiRoutingError` body and the `X-Request-ID` header. A `405`
+    also sends `Allow` listing the path's declared methods
+    ([RFC 9110 section 15.5.6](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.6)),
+    whether the API or the proxy produced it; the proxy forwards an API
+    `405` with its `Allow` unchanged. These are not listed per operation.
+
+    **Same envelope through the proxy.** Errors that the same-origin Next.js
+    proxy produces itself (for example a `401` before forwarding, a CSRF
+    `403`, or an unknown route) use the same body, `{code, message,
+    requestId}` with a code from this contract, and send `X-Request-ID`. A
+    proxy error is never a bare `{message}` and never falls back to demo
+    data.
+
+    **Demo data.** Every successful Markets payload states its origin in
+    `source` (`demo` or `market`); error bodies carry no `source`. Paper, report, backtest and broker data are always
+    demo or paper and say so in their own `source` or `environment` fields.
 tags:
   - name: Markets
     description: NSE instrument reference data, quotes and historical candles.
   - name: Brokers
     description: >
+      **Deprecated** in 0.11.0: use the Broker connections tag. Still served,
+      unchanged, until the frontend has moved.
       Demo broker connections stored per user on the server. No provider
       requests, OAuth flows or broker credentials. Promoted from
       `contracts/brokers.openapi.yaml` with the same paths and shapes, plus
       session, CSRF and error semantics.
+  - name: Broker connections
+    description: |
+      Provider-neutral broker connections, replacing the Brokers tag's fixed
+      two-provider shape (broker audit `backend/docs/BROKER_ABSTRACTION_AUDIT.md`,
+      findings F1 to F8, F10 and F12). **Demo only for now:** every provider
+      listed has `environment: DEMO`, no real broker is contacted, and no
+      credential or token reaches the browser. A real provider needs its own
+      owner approval (roadmap T26, T27) and does not change these shapes.
+      Read-only: no endpoint places, modifies or cancels a broker order.
+
+      **Providers.** `providers` lists what the server can connect, from its
+      provider registry, with a display name, capabilities and how many
+      connections one user may hold (`maxConnections`). A provider id is an
+      opaque lowercase string; clients must not hard-code the list or assume
+      its order, and must show `displayName`, not the id.
+
+      **Connections.** Each connection has a server-issued `connectionId`
+      (UUID). Actions, events, alert links and portfolio reads use it; the
+      provider is an attribute. One user may hold several connections to the
+      same provider, up to `maxConnections` (the pilot configuration allows
+      1). Authorizing the same provider account again updates its existing
+      connection (same `connectionId`) instead of adding one.
+
+      **Authorization (two steps).**
+      1. `startBrokerAuthorization` (step-up required) records a single-use,
+         server-held `state` bound to the caller's session and returns the
+         `authorizeUrl` to send the browser to. It expires within 10 minutes.
+         For a demo provider the URL is the app's own callback page with a
+         demo code: no external site is involved.
+      2. The provider returns the browser to the app's callback page, which
+         posts the returned query parameters to
+         `completeBrokerAuthorization` with a `session` CSRF token. The server
+         checks the `state` (same session, unused, unexpired), exchanges the
+         parameters with the provider server-side and stores any credential
+         encrypted on the server. A bad, used, expired or foreign `state`
+         returns `400 BROKER_AUTHORIZATION_INVALID` and changes nothing.
+
+      **Status.** `connected` until `expiresAt`, or until the provider
+      reports the authorization invalid (`statusReason`), then `expired`.
+      An expired connection can be authorized again (start with its
+      `connectionId`) or disconnected. `disconnect` removes the connection
+      at once and asks the provider to revoke the credential on a best-effort
+      basis; a failed revoke is logged and never blocks the disconnect.
+
+      **Capabilities.** A provider declares which read capabilities it
+      supports; a connection lists the ones granted. A portfolio section
+      whose capability is not granted is `null`. Asking a provider for
+      something it cannot do returns `409 BROKER_CAPABILITY_UNSUPPORTED`.
+
+      **Ownership.** Every endpoint reads and changes only the caller's
+      connections. Another user's `connectionId` is indistinguishable from
+      one that does not exist (`404 BROKER_CONNECTION_NOT_FOUND`).
+
+      **Migration.** `/api/v1/brokers/preview` stays served, unchanged and
+      deprecated, until the frontend has moved to these endpoints; it is then
+      removed in its own contract change. Both read and write the same
+      stored connections.
   - name: Strategies
     description: >
       Per-user strategy drafts and immutable activated versions, stored on the
@@ -77,7 +175,7 @@ tags:
       | `kind` | `source` | `severity` | Recorded | When |
       |---|---|---|---|---|
       | `PAPER_ENGINE_HALTED` | `paper` | `critical` | In transaction | The caller halted the paper engine (kill switch). |
-      | `PAPER_RISK_LIMIT_REACHED` | `paper` | `critical` | In transaction | The risk engine blocked a buy signal because a session limit (loss or trade count) was reached. At most once per replayed session. |
+      | `PAPER_RISK_LIMIT_REACHED` | `paper` | `critical` | In transaction | The risk engine blocked a buy signal because a session limit was reached: loss or trade count, or a Trade Controls profit cap or consecutive-loss limit. At most once per replayed session. |
       | `PAPER_ORDER_CANCELLED` | `paper` | `warning` | In transaction | The engine cancelled a queued buy because cash did not cover the open price. Orders cancelled by a halt are covered by `PAPER_ENGINE_HALTED` instead. |
       | `PAPER_STOP_LOSS_EXIT` | `paper` | `warning` | In transaction | The engine sold the position at its stop-loss. |
       | `PAPER_STRATEGY_INACTIVE` | `paper` | `warning` | In transaction | The engine paused because its assigned strategy is no longer active. |
@@ -117,10 +215,81 @@ tags:
       alert preferences (`/api/v1/alerts/preferences`), and ending another
       session (`DELETE /api/v1/auth/sessions/{sessionId}`, which needs step-up).
 
-      **Still preview only.** Phone changes, data retention and risk limits are
-      not served by the API. The frontend preview's sample confirmation code is
-      never accepted by any endpoint; a sensitive change will use step-up (see
-      the Auth tag) when its own contract lands.
+      **Trade Controls.** The paper risk limits (daily loss, trades per
+      session and the per-trade controls) are served by
+      `/api/v1/settings/trade-controls`, described in the Trade controls tag.
+      Saving them needs step-up.
+
+      **Still preview only.** Phone changes, data retention and notification
+      channels are not served by the API. The frontend preview's sample
+      confirmation code is never accepted by any endpoint; a sensitive change
+      will use step-up (see the Auth tag) when its own contract lands.
+  - name: Trade controls
+    description: |
+      Per-user limits for the caller's **paper** engine, stored on the server.
+      They exist only for paper trading over demo data: nothing here reaches a
+      broker, a real account or a live order, and no endpoint applies them to
+      one.
+
+      **Tighten only.** The server has fixed paper ceilings (server
+      configuration, reported in `bounds`). A user can save values inside
+      those bounds and never past them, so Trade Controls can make the paper
+      risk engine stricter than the server's configuration but never looser.
+      Values outside `bounds` return `400 TRADE_CONTROLS_OUT_OF_BOUNDS` with
+      one `fieldErrors` entry per offending field and change nothing.
+
+      **Defaults.** A user who never saved has `revision: 0` and the
+      `defaults`, which reproduce the paper engine's behaviour before Trade
+      Controls existed: the ceilings for the limits, `null` (off) for the
+      optional controls and `0` (off) for `maxConsecutiveLosses`.
+
+      **How the paper engine applies them** (see `sendPaperCommand` for the
+      rest of the engine):
+
+      | Control | Effect on the paper engine |
+      |---|---|
+      | `lossLimitPaise` | Replaces the daily loss limit. A buy is queued only while the session's realised loss is below it. |
+      | `tradeLimit` | Replaces the fills-per-session limit. A buy is queued only while the session's fills are below it. |
+      | `profitLimitPaise` | When not `null`: once the session's realised P&L (sum of its fills' `pnlPaise`) has reached it at any point in the session, no further buy is queued that session. Open positions and their exits are unaffected. |
+      | `maxConsecutiveLosses` | When above `0`: once that many of the session's exits in a row have negative `pnlPaise`, no further buy is queued that session. An exit with `pnlPaise >= 0` resets the run; entries (buy fills) neither count nor reset it. |
+      | `stopLossBps` | When not `null`: the stop uses the smaller of this and the pinned version's `stopLossBps`. `null` uses the version's stop unchanged. |
+      | `takeProfitBps` | When not `null`: if a position is open and the session's high reaches the target (entry price plus `takeProfitBps`, rounded up to whole paise), the position is sold at the higher of the open and the target, less slippage, with `reason: take-profit`. The stop is checked first; if both are reached in one session the stop applies. `null` turns it off. |
+      | `maxRiskPerTradePaise` | Replaces the per-trade risk limit used for sizing. |
+      | `maxPositionSizeBps` | Sizing uses the smaller of this and the pinned version's `positionSizeBps`. |
+
+      A buy that a control blocks is recorded as an event instead of an order
+      and raises `PAPER_RISK_LIMIT_REACHED` at most once per replayed session,
+      as the loss and trade limits already do. `PaperRisk.blockedReason` says
+      which limit blocked.
+
+      **When a save applies.** A save needs the paper engine not `running`
+      (`idle`, `halted`, or no engine yet), otherwise
+      `409 TRADE_CONTROLS_ENGINE_RUNNING`. The saved values apply to every
+      later decision of the engine, including the rest of the current session;
+      `PaperRisk` reports the new limits and recomputes `status` at once.
+      Strategy versions are immutable and are not changed: a control only
+      narrows what the engine does with them.
+
+      **Concurrency.** `updateTradeControls` carries the `revision` the client
+      last read as `expectedRevision`. If another save happened since, the
+      server returns `409 TRADE_CONTROLS_REVISION_CONFLICT` and changes
+      nothing; the client reads again and asks the user. Saving values equal
+      to the current ones succeeds without a new revision or audit entry.
+
+      **Security.** Reading needs a session. Saving needs a session, a
+      `session` CSRF token and step-up (see the Step-up tag). Checks run in
+      this order and stop at the first failure: `401 UNAUTHENTICATED`,
+      `403 TOTP_SETUP_REQUIRED`, `403 CSRF_FAILED`, `403 STEP_UP_REQUIRED`,
+      then validation (`400`) and state (`409`).
+
+      **Audit.** Each applied save increments `revision` by one and is
+      recorded in the account's audit log as `settings.trade_controls_updated`
+      with the names of the changed fields, and in the caller's
+      Trade Controls history (`getTradeControlsHistory`) with the old and new
+      values. No device detail or secret is recorded.
+
+      **Ownership.** Controls and history belong to one user. Every endpoint
+      reads or writes only the caller's own; there is no user id in any path.
   - name: Auth
     description: |
       Invite-only sign-in with server-side sessions. There are two ways in.
@@ -303,16 +472,48 @@ paths:
       operationId: getMarketInstruments
       tags: [Markets]
       summary: List or search the instrument catalog
+      description: |
+        Returns the catalog, or the instruments that match `query`, with the
+        catalog's `source`.
+
+        **Matching.** The query and every candidate field are normalised the
+        same way: upper-cased, then every character other than `A-Z` and
+        `0-9` is removed. So `nifty 50`, `NIFTY50` and `nse:nifty50` all
+        find `NSE:NIFTY50`. Candidate fields are the symbol, the instrument
+        `id`, each alias and the name.
+
+        **Ranking.** Each instrument gets the best (lowest) rank it matches:
+        0 the normalised query equals the symbol, the `id` or an alias;
+        1 it is a prefix of the symbol, the `id` or an alias; 2 it is a prefix
+        of the name; 3 it occurs anywhere in any candidate field. Instruments
+        that match nothing are left out. Results are ordered by rank, and
+        instruments with the same rank keep catalog order.
+
+        **Edge cases.** The length limit is checked first, on the raw query
+        as received: over 100 characters returns `400 INVALID_REQUEST`, even
+        if it is only whitespace. Then: no `query`, or one that is empty or
+        only whitespace, returns the whole catalog in catalog order; a query
+        with no letter or digit after normalising returns an empty list, not
+        an error. Examples: 101 spaces gives `400`; `"   "` gives the whole
+        catalog; `!!` gives `{"source": "demo", "instruments": []}` with `200`.
+
+        **Catalog order** is the server's fixed listing order, the same order
+        as `getMarketOverview` quotes. It is stable between calls but carries
+        no meaning; clients must not sort by it.
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: query
           in: query
-          description: Case-insensitive search by symbol, instrument ID, name or alias.
+          description: Case-insensitive search by symbol, instrument ID, name or alias. See the operation description for the exact rules.
           schema:
             type: string
             maxLength: 100
       responses:
         '200':
-          description: Matching instruments. An empty array indicates no matches.
+          description: Matching instruments, ranked as described. An empty array indicates no matches.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -321,26 +522,36 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '503':
           $ref: '#/components/responses/MarketDataUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/market/overview:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getMarketOverview
       tags: [Markets]
       summary: Get a dated quote and exchange-session snapshot
       responses:
         '200':
           description: Latest market snapshot for the available instrument catalog.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarketOverview'
         '503':
           $ref: '#/components/responses/MarketDataUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/market/instruments/{instrumentId}/candles:
     get:
       operationId: getMarketCandles
       tags: [Markets]
       summary: Get recent OHLC candles for one instrument and timeframe
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: instrumentId
           in: path
           required: true
@@ -357,6 +568,9 @@ paths:
           description: >
             Candles in ascending order with distinct timestamps. A valid selection
             with no available history returns an empty array.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -367,8 +581,12 @@ paths:
           $ref: '#/components/responses/UnknownInstrument'
         '503':
           $ref: '#/components/responses/MarketDataUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/csrf:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getCsrfToken
       tags: [Auth]
       summary: Get the CSRF token for state-changing requests
@@ -392,6 +610,8 @@ paths:
             `pre_login` when there is no valid session, including after the
             stale session cookie was cleared.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieCsrf'
           content:
@@ -400,8 +620,12 @@ paths:
                 $ref: '#/components/schemas/CsrfToken'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/otp/request:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: requestOtp
       tags: [Auth]
       summary: Send a one-time code to a phone number
@@ -437,6 +661,9 @@ paths:
       responses:
         '202':
           description: A challenge was created and delivery was requested.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -449,8 +676,12 @@ paths:
           $ref: '#/components/responses/AuthRateLimited'
         '503':
           $ref: '#/components/responses/AuthOtpDeliveryUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/otp/verify:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: verifyOtp
       tags: [Auth]
       summary: Verify a one-time code and start a session
@@ -476,6 +707,8 @@ paths:
         '200':
           description: Signed in. Two `Set-Cookie` fields are sent.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieLogin'
           content:
@@ -486,6 +719,9 @@ paths:
           $ref: '#/components/responses/AuthInvalidRequest'
         '401':
           description: The code is not valid for this challenge.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -493,12 +729,17 @@ paths:
               example:
                 code: INVALID_OTP
                 message: The code is invalid or has expired.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/login/totp:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: loginWithTotp
       tags: [Auth]
       summary: Sign in with an authenticator code
@@ -529,6 +770,8 @@ paths:
         '200':
           description: Signed in. Two `Set-Cookie` fields are sent.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieLogin'
           content:
@@ -539,6 +782,9 @@ paths:
           $ref: '#/components/responses/AuthInvalidRequest'
         '401':
           description: The phone number and code do not match an account that can sign in this way.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -546,12 +792,17 @@ paths:
               example:
                 code: INVALID_CREDENTIALS
                 message: The phone number or code is not valid.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/login/recovery:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: loginWithRecoveryCode
       tags: [Auth]
       summary: Sign in with a recovery code
@@ -585,6 +836,8 @@ paths:
         '200':
           description: Signed in. Two `Set-Cookie` fields are sent.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieLogin'
           content:
@@ -595,6 +848,9 @@ paths:
           $ref: '#/components/responses/AuthInvalidRequest'
         '401':
           description: The phone number and code do not match an account that can sign in this way.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -602,12 +858,17 @@ paths:
               example:
                 code: INVALID_CREDENTIALS
                 message: The phone number or code is not valid.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/totp/enroll:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: enrollTotp
       tags: [Step-up]
       summary: Start authenticator-app enrolment
@@ -627,6 +888,9 @@ paths:
       responses:
         '200':
           description: A pending secret.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -639,8 +903,12 @@ paths:
           $ref: '#/components/responses/AuthTotpAlreadyEnrolled'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/totp/confirm:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: confirmTotp
       tags: [Step-up]
       summary: Activate authenticator-app enrolment
@@ -660,6 +928,9 @@ paths:
       responses:
         '200':
           description: TOTP is active.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -676,8 +947,12 @@ paths:
           $ref: '#/components/responses/AuthInvalidTotp'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/step-up:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: stepUp
       tags: [Step-up]
       summary: Prove a current authenticator code on this session
@@ -697,6 +972,9 @@ paths:
       responses:
         '200':
           description: The step-up window is open.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -713,8 +991,12 @@ paths:
           $ref: '#/components/responses/AuthInvalidTotp'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/totp/recovery-codes:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: regenerateRecoveryCodes
       tags: [Step-up]
       summary: Create a new set of recovery codes
@@ -734,6 +1016,9 @@ paths:
       responses:
         '200':
           description: The new codes. They are not shown again.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -746,8 +1031,12 @@ paths:
           $ref: '#/components/responses/AuthTotpNotEnrolled'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/totp/disable:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: disableTotp
       tags: [Step-up]
       summary: Remove the authenticator
@@ -769,6 +1058,9 @@ paths:
       responses:
         '204':
           description: TOTP was removed.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
         '400':
           $ref: '#/components/responses/AuthInvalidRequest'
         '401':
@@ -781,8 +1073,12 @@ paths:
           $ref: '#/components/responses/AuthInvalidTotp'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/me:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getCurrentUser
       tags: [Auth]
       summary: Get the signed-in user
@@ -791,14 +1087,21 @@ paths:
       responses:
         '200':
           description: The user and session expiry. Activity extends the idle expiry.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthSession'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/logout:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: logout
       tags: [Auth]
       summary: End the current session
@@ -813,12 +1116,18 @@ paths:
         '204':
           description: Signed out. Two `Set-Cookie` fields clear both cookies.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieLogout'
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/logout-all:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: logoutAll
       tags: [Auth]
       summary: End every session for the signed-in user
@@ -829,14 +1138,20 @@ paths:
         '204':
           description: All sessions revoked. Two `Set-Cookie` fields clear both cookies.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Set-Cookie:
               $ref: '#/components/headers/SetCookieLogout'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/sessions:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: listSessions
       tags: [Auth]
       summary: List the signed-in user's active sessions
@@ -846,6 +1161,9 @@ paths:
       responses:
         '200':
           description: Active sessions, most recently used first.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -854,6 +1172,8 @@ paths:
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
           $ref: '#/components/responses/AuthSetupRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auth/sessions/{sessionId}:
     delete:
       operationId: revokeSession
@@ -870,6 +1190,7 @@ paths:
         - sessionCookie: []
           csrfHeader: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: sessionId
           in: path
           required: true
@@ -880,6 +1201,9 @@ paths:
       responses:
         '204':
           description: The session is revoked and can no longer authenticate.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
         '401':
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
@@ -890,8 +1214,12 @@ paths:
           $ref: '#/components/responses/AuthCurrentSession'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/settings/profile:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getSettingsProfile
       tags: [Settings]
       summary: Read the caller's profile settings
@@ -903,6 +1231,9 @@ paths:
       responses:
         '200':
           description: The caller's profile settings.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -911,7 +1242,11 @@ paths:
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
           $ref: '#/components/responses/AuthSetupRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
     put:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: updateSettingsProfile
       tags: [Settings]
       summary: Replace the caller's profile settings
@@ -934,6 +1269,9 @@ paths:
       responses:
         '200':
           description: The saved profile settings.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -944,12 +1282,122 @@ paths:
           $ref: '#/components/responses/AuthUnauthenticated'
         '403':
           $ref: '#/components/responses/AuthCsrfOrSetupRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/settings/trade-controls:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: getTradeControls
+      tags: [Trade controls]
+      summary: Read the caller's paper Trade Controls
+      description: >
+        Returns the caller's saved controls (or the defaults with
+        `revision: 0` if they never saved), the defaults and the server's
+        bounds. Paper only.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's Trade Controls.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeControlsSettings'
+        '401':
+          $ref: '#/components/responses/TradeControlsUnauthenticated'
+        '403':
+          $ref: '#/components/responses/TradeControlsSetupRequired'
+        '503':
+          $ref: '#/components/responses/TradeControlsUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: updateTradeControls
+      tags: [Trade controls]
+      summary: Replace the caller's paper Trade Controls
+      description: >
+        Replaces every control at once (no partial update) and returns the
+        result. Needs the paper engine not `running`, the current `revision`
+        as `expectedRevision`, and step-up. Every value must be inside
+        `bounds`. Validation, conflict and audit rules are in the Trade
+        controls tag.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TradeControlsUpdate'
+      responses:
+        '200':
+          description: The saved Trade Controls.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeControlsSettings'
+        '400':
+          $ref: '#/components/responses/TradeControlsInvalid'
+        '401':
+          $ref: '#/components/responses/TradeControlsUnauthenticated'
+        '403':
+          $ref: '#/components/responses/TradeControlsForbidden'
+        '409':
+          $ref: '#/components/responses/TradeControlsConflict'
+        '503':
+          $ref: '#/components/responses/TradeControlsUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/settings/trade-controls/history:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: getTradeControlsHistory
+      tags: [Trade controls]
+      summary: List recent changes to the caller's Trade Controls
+      description: >
+        The caller's 50 most recent applied saves, newest first, each with the
+        old and new value of every changed field. Empty until the first save.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Recent changes.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeControlsHistory'
+        '401':
+          $ref: '#/components/responses/TradeControlsUnauthenticated'
+        '403':
+          $ref: '#/components/responses/TradeControlsSetupRequired'
+        '503':
+          $ref: '#/components/responses/TradeControlsUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/brokers/preview:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getBrokers
       tags: [Brokers]
+      deprecated: true
       summary: Read the signed-in user's demo broker connections
       description: >
+        Deprecated: use `getBrokerConnections`.
         Returns one entry per supported provider, in the order `zerodha`,
         `fyers`. A provider the user has never connected, or has disconnected,
         has `account: null`. A new user starts with every provider
@@ -961,6 +1409,9 @@ paths:
       responses:
         '200':
           description: The caller's broker snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -971,12 +1422,16 @@ paths:
           $ref: '#/components/responses/BrokerSetupRequired'
         '503':
           $ref: '#/components/responses/BrokerUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/brokers/preview/{provider}/actions:
     post:
       operationId: sendBrokerAction
       tags: [Brokers]
+      deprecated: true
       summary: Apply a simulated broker account action
       description: >
+        Deprecated: use the Broker connections operations.
         Applies one action to the caller's demo connection for `provider` and
         returns the updated snapshot. `connect` requires a disconnected
         account, `reconnect` requires an expired account, and `sync` and
@@ -993,6 +1448,7 @@ paths:
         - sessionCookie: []
           csrfHeader: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: provider
           in: path
           required: true
@@ -1007,6 +1463,9 @@ paths:
       responses:
         '200':
           description: Updated broker snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1021,8 +1480,222 @@ paths:
           $ref: '#/components/responses/BrokerActionConflict'
         '503':
           $ref: '#/components/responses/BrokerUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/broker-connections:
+    get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: getBrokerConnections
+      tags: [Broker connections]
+      summary: Read the caller's broker providers, connections and events
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The caller's broker connections.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerConnectionsSnapshot'
+        '401':
+          $ref: '#/components/responses/BrokerConnUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerConnSetupRequired'
+        '503':
+          $ref: '#/components/responses/BrokerConnUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/broker-connections/authorizations:
+    post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: startBrokerAuthorization
+      tags: [Broker connections]
+      summary: Start authorizing a broker connection
+      description: >
+        Starts step 1 of the authorization flow for `providerId`, or for the
+        existing connection `connectionId` (re-authorizing an expired or
+        connected one). Requires step-up. Starting a new connection when the
+        caller already holds `maxConnections` for that provider returns
+        `409 BROKER_CONNECTION_LIMIT`. Records nothing but the pending state.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrokerAuthorizationStart'
+      responses:
+        '201':
+          description: The pending authorization.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerAuthorization'
+        '400':
+          $ref: '#/components/responses/BrokerConnInvalidRequest'
+        '401':
+          $ref: '#/components/responses/BrokerConnUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerConnStepUpCsrfOrSetupRequired'
+        '404':
+          $ref: '#/components/responses/BrokerConnNotFound'
+        '409':
+          $ref: '#/components/responses/BrokerConnConflict'
+        '429':
+          $ref: '#/components/responses/BrokerConnRateLimited'
+        '503':
+          $ref: '#/components/responses/BrokerConnUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/broker-connections/authorizations/callback:
+    post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: completeBrokerAuthorization
+      tags: [Broker connections]
+      summary: Complete a broker authorization from the provider's redirect
+      description: >
+        Step 2. The callback page posts the `state` and the other query
+        parameters the provider returned. On success the connection exists
+        (or is renewed) and appends a `connect` or `reconnect` event. The
+        provider exchange happens outside any database transaction; the
+        server then re-checks the state and writes.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrokerAuthorizationCallback'
+      responses:
+        '200':
+          description: The new or renewed connection and the updated snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerAuthorizationResult'
+        '400':
+          $ref: '#/components/responses/BrokerConnInvalidRequest'
+        '401':
+          $ref: '#/components/responses/BrokerConnUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerConnCsrfOrSetupRequired'
+        '409':
+          $ref: '#/components/responses/BrokerConnConflict'
+        '429':
+          $ref: '#/components/responses/BrokerConnRateLimited'
+        '502':
+          $ref: '#/components/responses/BrokerConnBadProviderResponse'
+        '503':
+          $ref: '#/components/responses/BrokerConnUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/broker-connections/{connectionId}/actions:
+    post:
+      operationId: sendBrokerConnectionAction
+      tags: [Broker connections]
+      summary: Sync or disconnect one broker connection
+      description: >
+        `sync` needs a `connected` connection and refreshes `lastSyncedAt`
+        and the stored portfolio. If the provider reports the authorization
+        invalid, the connection becomes `expired`, the response is
+        `409 BROKER_AUTH_EXPIRED`, and that status change is kept.
+        `disconnect` needs a `connected` or `expired` connection; see the tag
+        for revocation. Each applied action appends one event.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/BrokerConnectionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrokerConnectionActionRequest'
+      responses:
+        '200':
+          description: The updated snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerConnectionsSnapshot'
+        '400':
+          $ref: '#/components/responses/BrokerConnInvalidRequest'
+        '401':
+          $ref: '#/components/responses/BrokerConnUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerConnCsrfOrSetupRequired'
+        '404':
+          $ref: '#/components/responses/BrokerConnNotFound'
+        '409':
+          $ref: '#/components/responses/BrokerConnConflict'
+        '429':
+          $ref: '#/components/responses/BrokerConnRateLimited'
+        '502':
+          $ref: '#/components/responses/BrokerConnBadProviderResponse'
+        '503':
+          $ref: '#/components/responses/BrokerConnUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/broker-connections/{connectionId}/portfolio:
+    get:
+      operationId: getBrokerPortfolio
+      tags: [Broker connections]
+      summary: Read the stored portfolio of one broker connection
+      description: >
+        Returns what the last successful `sync` stored, in Tradeo's canonical
+        shapes; it does not call the provider. Before the first sync every
+        section is empty or null. A section is `null` when its capability is
+        not granted. Read-only: orders are reported, never placed.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+        - $ref: '#/components/parameters/BrokerConnectionId'
+      responses:
+        '200':
+          description: The stored portfolio.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerPortfolio'
+        '401':
+          $ref: '#/components/responses/BrokerConnUnauthenticated'
+        '403':
+          $ref: '#/components/responses/BrokerConnSetupRequired'
+        '404':
+          $ref: '#/components/responses/BrokerConnNotFound'
+        '503':
+          $ref: '#/components/responses/BrokerConnUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/strategies/preview:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getStrategies
       tags: [Strategies]
       summary: Read the signed-in user's strategies
@@ -1037,6 +1710,9 @@ paths:
       responses:
         '200':
           description: The caller's strategy snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1047,8 +1723,12 @@ paths:
           $ref: '#/components/responses/StrategySetupRequired'
         '503':
           $ref: '#/components/responses/StrategyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/strategies/preview/commands:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: sendStrategyCommand
       tags: [Strategies]
       summary: Apply a strategy command
@@ -1113,6 +1793,9 @@ paths:
       responses:
         '200':
           description: Updated strategy snapshot.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1129,8 +1812,12 @@ paths:
           $ref: '#/components/responses/StrategyConflict'
         '503':
           $ref: '#/components/responses/StrategyUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/backtests/preview:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getBacktestWorkspace
       tags: [Backtests]
       summary: Read the demo backtest workspace
@@ -1153,6 +1840,9 @@ paths:
       responses:
         '200':
           description: The caller's backtest workspace.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1163,8 +1853,12 @@ paths:
           $ref: '#/components/responses/BacktestSetupRequired'
         '503':
           $ref: '#/components/responses/BacktestUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/backtests/preview/runs:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: startBacktest
       tags: [Backtests]
       summary: Queue a demo backtest
@@ -1231,6 +1925,9 @@ paths:
       responses:
         '202':
           description: The queued run. Its status is always `queued`.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1251,6 +1948,8 @@ paths:
           $ref: '#/components/responses/BacktestConflict'
         '503':
           $ref: '#/components/responses/BacktestUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/backtests/preview/runs/{runId}:
     get:
       operationId: getBacktestRun
@@ -1264,6 +1963,7 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: runId
           in: path
           required: true
@@ -1274,6 +1974,9 @@ paths:
       responses:
         '200':
           description: The run.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1286,8 +1989,12 @@ paths:
           $ref: '#/components/responses/BacktestNotFound'
         '503':
           $ref: '#/components/responses/BacktestUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auto-trading/paper:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getPaperTrading
       tags: [Paper trading]
       summary: Read the paper trading workspace
@@ -1310,6 +2017,9 @@ paths:
       responses:
         '200':
           description: The caller's paper workspace.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1320,8 +2030,12 @@ paths:
           $ref: '#/components/responses/PaperSetupRequired'
         '503':
           $ref: '#/components/responses/PaperUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/auto-trading/paper/commands:
     post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: sendPaperCommand
       tags: [Paper trading]
       summary: Apply a paper engine command
@@ -1352,9 +2066,11 @@ paths:
            paise, with `slippageBps` against the order (buys round up, sells
            round down). Fees are `feeBps` of notional, rounded up.
         2. If a position is open and the session's low reaches the stop price
-           (entry price less the version's `stopLossBps`, rounded down), the
+           (entry price less the effective `stopLossBps`, rounded down), the
            position is sold at the lower of the open and the stop price, less
-           slippage.
+           slippage. Otherwise, if a Trade Controls take-profit is set and the
+           session's high reaches its target, the position is sold at the
+           higher of the open and the target, less slippage.
         3. At the close the signal is evaluated as in backtests: long when this
            session's close is above the average of the last three closes
            (this one included). No signal is evaluated until the replay has
@@ -1367,8 +2083,10 @@ paths:
            finished and the engine becomes `idle`.
 
         Risk engine (deterministic, server-side): a buy is queued only while
-        the session's realised loss is below `lossLimitPaise` and its fills are
-        below `tradeLimit`. The session's realised loss is the negated sum of
+        the session's realised loss is below `lossLimitPaise`, its fills are
+        below `tradeLimit` and no Trade Controls limit (profit cap,
+        consecutive losses) has been reached; the controls are described in
+        the Trade controls tag. The session's realised loss is the negated sum of
         its fills' `pnlPaise`, floored at zero. Quantity is sized at the
         decision close plus slippage: the smaller of the largest quantity
         whose notional plus entry fee fits `positionSizeBps` of cash (rounded
@@ -1379,7 +2097,11 @@ paths:
         recorded as an event instead of an order. Paper limits are fixed configuration
         examples, not recommendations: capital ₹10,00,000, daily loss ₹25,000,
         10 fills per session, per-trade risk 1% of capital, 3 bps fees and
-        5 bps slippage. The capital is large enough for a low-tier size limit
+        5 bps slippage. The daily loss, fills per session and per-trade risk
+        are ceilings: each user's Trade Controls can lower them, never raise
+        them, and the user's effective values are the ones `PaperRisk`
+        reports. The position size and stop loss come from the pinned
+        strategy version, narrowed by Trade Controls when set. The capital is large enough for a low-tier size limit
         (6%) to buy at least one unit of every demo instrument.
 
         Every applied command and every fill writes an event. Requires a valid
@@ -1397,6 +2119,9 @@ paths:
       responses:
         '200':
           description: The updated paper workspace.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1411,6 +2136,8 @@ paths:
           $ref: '#/components/responses/PaperConflict'
         '503':
           $ref: '#/components/responses/PaperUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/reports/paper:
     get:
       operationId: getPaperReport
@@ -1457,11 +2184,15 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - $ref: '#/components/parameters/ReportFrom'
         - $ref: '#/components/parameters/ReportTo'
       responses:
         '200':
           description: The caller's paper report.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1474,6 +2205,8 @@ paths:
           $ref: '#/components/responses/ReportSetupRequired'
         '503':
           $ref: '#/components/responses/ReportUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/reports/paper/trades.csv:
     get:
       operationId: exportPaperTrades
@@ -1502,12 +2235,15 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - $ref: '#/components/parameters/ReportFrom'
         - $ref: '#/components/parameters/ReportTo'
       responses:
         '200':
           description: The period's paper fills as CSV.
           headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
             Content-Disposition:
               schema:
                 type: string
@@ -1523,8 +2259,12 @@ paths:
           $ref: '#/components/responses/ReportSetupRequired'
         '503':
           $ref: '#/components/responses/ReportUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/agents:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: listAgents
       tags: [Agents]
       summary: List the advisory agents
@@ -1557,6 +2297,9 @@ paths:
       responses:
         '200':
           description: The agent roster.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1567,8 +2310,12 @@ paths:
           $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/agents/health:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getAgentHealth
       tags: [Agents]
       summary: Read the caller's agent health
@@ -1607,6 +2354,9 @@ paths:
       responses:
         '200':
           description: The caller's agent health.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1617,6 +2367,8 @@ paths:
           $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/agents/events:
     get:
       operationId: listAgentEvents
@@ -1646,12 +2398,16 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - $ref: '#/components/parameters/AgentIdFilter'
         - $ref: '#/components/parameters/AgentCursor'
         - $ref: '#/components/parameters/AgentLimit'
       responses:
         '200':
           description: One page of the caller's advisory events.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1664,6 +2420,8 @@ paths:
           $ref: '#/components/responses/AgentSetupRequired'
         '503':
           $ref: '#/components/responses/AgentUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/alerts:
     get:
       operationId: listAlerts
@@ -1697,6 +2455,7 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - $ref: '#/components/parameters/AlertSeverityFilter'
         - $ref: '#/components/parameters/AlertSourceFilter'
         - $ref: '#/components/parameters/AlertStatusFilter'
@@ -1705,6 +2464,9 @@ paths:
       responses:
         '200':
           description: One page of the caller's alerts.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1717,6 +2479,8 @@ paths:
           $ref: '#/components/responses/AlertSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/alerts/{alertId}/ack:
     post:
       operationId: acknowledgeAlert
@@ -1739,6 +2503,7 @@ paths:
         - sessionCookie: []
           csrfHeader: []
       parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
         - name: alertId
           in: path
           required: true
@@ -1750,6 +2515,9 @@ paths:
       responses:
         '200':
           description: The acknowledged alert.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1762,8 +2530,12 @@ paths:
           $ref: '#/components/responses/AlertNotFound'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/alerts/preferences:
     get:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: getAlertPreferences
       tags: [Alerts]
       summary: Read the caller's alert preferences
@@ -1776,6 +2548,9 @@ paths:
       responses:
         '200':
           description: The caller's alert preferences.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1786,7 +2561,11 @@ paths:
           $ref: '#/components/responses/AlertSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
     put:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
       operationId: updateAlertPreferences
       tags: [Alerts]
       summary: Replace the caller's optional alert preferences
@@ -1808,6 +2587,9 @@ paths:
       responses:
         '200':
           description: The saved preferences.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
               schema:
@@ -1820,8 +2602,29 @@ paths:
           $ref: '#/components/responses/AlertCsrfOrSetupRequired'
         '503':
           $ref: '#/components/responses/AlertUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   parameters:
+    RequestIdHeader:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: >
+        Optional client request ID. A value matching
+        `^[A-Za-z0-9._-]{1,64}$` becomes the request's ID; any other value is
+        ignored (a new ID is generated), never rejected. No schema pattern is
+        set for that reason.
+      schema:
+        type: string
+    BrokerConnectionId:
+      name: connectionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: The `connectionId` from `getBrokerConnections`.
     ReportFrom:
       name: from
       in: query
@@ -1932,6 +2735,15 @@ components:
         the `__Host-tradeo_csrf` cookie value and pass the checks in the Auth
         tag. Required on state-changing auth requests.
   headers:
+    XRequestId:
+      description: >
+        The request's ID: the client's well-formed `X-Request-ID`, or one the
+        server generated. Sent on every response. Error bodies repeat it as
+        `requestId`.
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._-]{1,64}$'
     SetCookieCsrf:
       description: >
         Zero to two separate `Set-Cookie` fields, in this order. Field 1 clears
@@ -2241,7 +3053,7 @@ components:
             $ref: '#/components/schemas/SessionSummary'
     AuthError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       properties:
         code:
           enum:
@@ -2393,7 +3205,7 @@ components:
           format: date-time
     BrokerError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -2410,6 +3222,338 @@ components:
         requestId:
           type: string
           description: Same value as the `X-Request-ID` response header.
+    BrokerProviderId:
+      type: string
+      pattern: '^[a-z][a-z0-9_-]{1,31}$'
+      description: Opaque provider id from the server's registry. Not a closed list.
+      examples: [zerodha, fyers]
+    BrokerCapability:
+      type: string
+      enum: [profile_read, holdings_read, positions_read, orders_read, funds_read]
+    BrokerProvider:
+      type: object
+      required: [id, displayName, environment, capabilities, maxConnections, available]
+      additionalProperties: false
+      properties:
+        id:
+          $ref: '#/components/schemas/BrokerProviderId'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 64
+        environment:
+          enum: [DEMO]
+          description: Only demo providers exist. A live value needs its own contract change and owner approval.
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/BrokerCapability'
+        maxConnections:
+          type: integer
+          minimum: 1
+        available:
+          type: boolean
+          description: False while the provider is disabled on the server; it cannot be started then.
+    BrokerConnectionRecord:
+      type: object
+      required: [connectionId, providerId, status, statusReason, maskedAccountId, capabilities, connectedAt, expiresAt, lastSyncedAt]
+      additionalProperties: false
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        providerId:
+          $ref: '#/components/schemas/BrokerProviderId'
+        status:
+          enum: [connected, expired]
+        statusReason:
+          type: [string, 'null']
+          enum: [EXPIRED, AUTH_INVALIDATED, null]
+          description: >
+            Null while connected. `EXPIRED`: `expiresAt` passed.
+            `AUTH_INVALIDATED`: the provider reported the authorization
+            invalid before `expiresAt` (for example a provider-side logout).
+        maskedAccountId:
+          type: string
+          pattern: '^•••• [A-Za-z0-9]{2,6}$'
+          examples: ['•••• 4821', '•••• 1234']
+          description: >
+            Display only, derived on the server from the stored account
+            reference. Not unique and never an identifier; use `connectionId`.
+        capabilities:
+          type: array
+          uniqueItems: true
+          description: Capabilities granted for this connection.
+          items:
+            $ref: '#/components/schemas/BrokerCapability'
+        connectedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        lastSyncedAt:
+          type: [string, 'null']
+          format: date-time
+    BrokerConnectionEvent:
+      type: object
+      required: [id, connectionId, providerId, action, at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        connectionId:
+          type: string
+          format: uuid
+        providerId:
+          $ref: '#/components/schemas/BrokerProviderId'
+        action:
+          enum: [connect, reconnect, sync, disconnect, expire]
+        at:
+          type: string
+          format: date-time
+    BrokerConnectionsSnapshot:
+      type: object
+      required: [source, environment, asOf, providers, connections, events]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        asOf:
+          type: string
+          format: date-time
+        providers:
+          type: array
+          description: Registry order, which carries no meaning.
+          items:
+            $ref: '#/components/schemas/BrokerProvider'
+        connections:
+          type: array
+          description: The caller's connections, oldest `connectedAt` first. Empty for a new user.
+          items:
+            $ref: '#/components/schemas/BrokerConnectionRecord'
+        events:
+          type: array
+          maxItems: 50
+          description: The caller's 50 most recent events, oldest first.
+          items:
+            $ref: '#/components/schemas/BrokerConnectionEvent'
+    BrokerAuthorizationStart:
+      type: object
+      additionalProperties: false
+      description: Exactly one of `providerId` (new connection) or `connectionId` (re-authorize).
+      oneOf:
+        - required: [providerId]
+          not: { required: [connectionId] }
+        - required: [connectionId]
+          not: { required: [providerId] }
+      properties:
+        providerId:
+          $ref: '#/components/schemas/BrokerProviderId'
+        connectionId:
+          type: string
+          format: uuid
+    BrokerAuthorization:
+      type: object
+      required: [authorizationId, providerId, authorizeUrl, expiresAt]
+      additionalProperties: false
+      properties:
+        authorizationId:
+          type: string
+          format: uuid
+        providerId:
+          $ref: '#/components/schemas/BrokerProviderId'
+        authorizeUrl:
+          type: string
+          format: uri-reference
+          description: >
+            Where to send the browser. For a demo provider, a same-origin
+            path to the app's callback page. Contains the `state`.
+        expiresAt:
+          type: string
+          format: date-time
+    BrokerAuthorizationCallback:
+      type: object
+      required: [state, params]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          minLength: 16
+          maxLength: 256
+        params:
+          type: object
+          description: The other query parameters the provider returned, as received. Never logged.
+          maxProperties: 10
+          additionalProperties:
+            type: string
+            maxLength: 512
+    BrokerAuthorizationResult:
+      type: object
+      required: [connectionId, snapshot]
+      additionalProperties: false
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        snapshot:
+          $ref: '#/components/schemas/BrokerConnectionsSnapshot'
+    BrokerConnectionActionRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          enum: [sync, disconnect]
+    DecimalString:
+      type: string
+      pattern: '^-?[0-9]{1,15}(\.[0-9]{1,6})?$'
+      description: Exact decimal as a string, so no precision is lost. INR unless stated.
+    BrokerPortfolio:
+      type: object
+      required: [source, environment, connectionId, asOf, holdings, positions, orders, funds]
+      additionalProperties: false
+      properties:
+        source:
+          const: demo
+        environment:
+          const: DEMO
+        connectionId:
+          type: string
+          format: uuid
+        asOf:
+          type: [string, 'null']
+          format: date-time
+          description: The last successful sync, or null before it.
+        holdings:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/BrokerHolding'
+        positions:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/BrokerPosition'
+        orders:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/BrokerOrderRecord'
+        funds:
+          oneOf:
+            - $ref: '#/components/schemas/BrokerFunds'
+            - type: 'null'
+    BrokerInstrumentRef:
+      type: object
+      required: [instrumentId, providerSymbol]
+      additionalProperties: false
+      description: >
+        The adapter maps the provider's symbol to a Tradeo instrument.
+        `instrumentId` is null when the instrument is not in Tradeo's catalog.
+      properties:
+        instrumentId:
+          oneOf:
+            - $ref: '#/components/schemas/InstrumentId'
+            - type: 'null'
+        providerSymbol:
+          type: string
+          minLength: 1
+          maxLength: 64
+    BrokerHolding:
+      type: object
+      required: [instrument, quantity, averagePrice, lastPrice]
+      additionalProperties: false
+      properties:
+        instrument: { $ref: '#/components/schemas/BrokerInstrumentRef' }
+        quantity: { $ref: '#/components/schemas/DecimalString' }
+        averagePrice: { $ref: '#/components/schemas/DecimalString' }
+        lastPrice:
+          oneOf:
+            - $ref: '#/components/schemas/DecimalString'
+            - type: 'null'
+    BrokerPosition:
+      type: object
+      required: [instrument, product, quantity, averagePrice, realisedPnl, unrealisedPnl]
+      additionalProperties: false
+      properties:
+        instrument: { $ref: '#/components/schemas/BrokerInstrumentRef' }
+        product:
+          enum: [intraday, delivery, other]
+        quantity:
+          $ref: '#/components/schemas/DecimalString'
+          description: Signed; negative is short.
+        averagePrice: { $ref: '#/components/schemas/DecimalString' }
+        realisedPnl: { $ref: '#/components/schemas/DecimalString' }
+        unrealisedPnl: { $ref: '#/components/schemas/DecimalString' }
+    BrokerOrderRecord:
+      type: object
+      required: [providerOrderId, instrument, side, orderType, quantity, filledQuantity, price, status, placedAt]
+      additionalProperties: false
+      description: An order as the provider reports it. Read-only.
+      properties:
+        providerOrderId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        instrument: { $ref: '#/components/schemas/BrokerInstrumentRef' }
+        side:
+          enum: [buy, sell]
+        orderType:
+          enum: [market, limit, stop, stop_limit, other]
+        quantity: { $ref: '#/components/schemas/DecimalString' }
+        filledQuantity: { $ref: '#/components/schemas/DecimalString' }
+        price:
+          oneOf:
+            - $ref: '#/components/schemas/DecimalString'
+            - type: 'null'
+        status:
+          enum: [open, filled, cancelled, rejected, other]
+        placedAt:
+          type: string
+          format: date-time
+    BrokerFunds:
+      type: object
+      required: [available, used, total]
+      additionalProperties: false
+      properties:
+        available: { $ref: '#/components/schemas/DecimalString' }
+        used: { $ref: '#/components/schemas/DecimalString' }
+        total: { $ref: '#/components/schemas/DecimalString' }
+    BrokerConnectionError:
+      type: object
+      required: [code, message, requestId]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
+            - CSRF_FAILED
+            - STEP_UP_REQUIRED
+            - BROKER_PROVIDER_UNAVAILABLE
+            - BROKER_AUTHORIZATION_INVALID
+            - BROKER_CONNECTION_NOT_FOUND
+            - BROKER_CONNECTION_LIMIT
+            - BROKER_ACTION_CONFLICT
+            - BROKER_AUTH_EXPIRED
+            - BROKER_CAPABILITY_UNSUPPORTED
+            - BROKER_RATE_LIMITED
+            - BROKER_MALFORMED_RESPONSE
+            - BROKER_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user. Never contains a provider token or raw provider error.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          description: Only with `BROKER_RATE_LIMITED`. Matches the `Retry-After` header.
     StrategyResult:
       oneOf:
         - type: object
@@ -2599,7 +3743,7 @@ components:
               minLength: 1
     StrategyError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -2852,7 +3996,7 @@ components:
           type: integer
     BacktestError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -2896,8 +4040,10 @@ components:
             type: string
     InstrumentList:
       type: object
-      required: [instruments]
+      required: [source, instruments]
       properties:
+        source:
+          $ref: '#/components/schemas/Source'
         instruments:
           type: array
           items:
@@ -3023,12 +4169,15 @@ components:
             $ref: '#/components/schemas/MarketCandle'
     MarketError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       properties:
         code:
           enum: [INVALID_REQUEST, UNKNOWN_INSTRUMENT, MARKET_DATA_UNAVAILABLE]
         message:
           type: string
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     PaperResult:
       oneOf:
         - type: object
@@ -3125,7 +4274,7 @@ components:
             keeps the version pinned when it was assigned.
     PaperRisk:
       type: object
-      required: [status, dailyLossPaise, lossLimitPaise, tradesToday, tradeLimit]
+      required: [status, blockedReason, dailyLossPaise, lossLimitPaise, tradesToday, tradeLimit, consecutiveLosses, controlsRevision]
       additionalProperties: false
       properties:
         status:
@@ -3133,22 +4282,39 @@ components:
           description: >
             `blocked` while the engine is halted, or the current session's
             realised loss has reached `lossLimitPaise`, or its fills have
-            reached `tradeLimit`. The current session is the last replayed
+            reached `tradeLimit`, or a Trade Controls profit cap or
+            consecutive-loss limit has been reached this session. The current session is the last replayed
             one; `dailyLossPaise` and `tradesToday` count only its fills and
             start from zero when the next session is replayed. `halt`,
             `reset` and `pause` do not clear them; `assign` starts a fresh
             replay with no current session, so both are zero. `blocked` only
             stops new buys from being queued; it never blocks a command.
+        blockedReason:
+          type: [string, 'null']
+          enum: [HALTED, LOSS_LIMIT, TRADE_LIMIT, PROFIT_CAP, CONSECUTIVE_LOSSES, null]
+          description: >
+            Null when `status` is `approved`. Otherwise the first that applies,
+            in this order.
         dailyLossPaise:
           $ref: '#/components/schemas/NonnegativePaise'
         lossLimitPaise:
           $ref: '#/components/schemas/NonnegativePaise'
+          description: The caller's effective limit (Trade Controls, or the server ceiling).
         tradesToday:
           type: integer
           minimum: 0
         tradeLimit:
           type: integer
           minimum: 1
+          description: The caller's effective limit (Trade Controls, or the server ceiling).
+        consecutiveLosses:
+          type: integer
+          minimum: 0
+          description: Losing exits in a row at the end of the current session, counted as in the Trade controls tag.
+        controlsRevision:
+          type: integer
+          minimum: 0
+          description: The Trade Controls `revision` in effect.
     PaperAccount:
       type: object
       required: [capitalPaise, cashPaise, equityPaise, positionQuantity, perTradeRiskPaise]
@@ -3241,7 +4407,7 @@ components:
           format: date-time
           description: The demo session's time.
         reason:
-          enum: [entry, signal-exit, stop-loss, end-of-replay]
+          enum: [entry, signal-exit, stop-loss, take-profit, end-of-replay]
     PaperEvent:
       type: object
       required: [id, at, message]
@@ -3289,7 +4455,7 @@ components:
       description: Nonnegative amount in INR minor units (paise).
     PaperError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -3693,7 +4859,7 @@ components:
           maxLength: 64
     AgentError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -3822,11 +4988,13 @@ components:
       description: >
         `paper-trade` and `paper-order` ids are the ids in `getPaperTrading`;
         a `paper-replay` id is the replay number, as in the CSV export; a
-        `broker` id is the `BrokerId`; a `session` id is the id in
-        `listSessions`.
+        `broker-connection` id is the `connectionId`; a `session` id is the
+        id in `listSessions`. `broker` (id = the `BrokerId`) is deprecated:
+        it appears only on alerts recorded before broker connections had
+        ids, and new alerts use `broker-connection`.
       properties:
         kind:
-          enum: [paper-trade, paper-order, paper-replay, broker, session]
+          enum: [paper-trade, paper-order, paper-replay, broker, broker-connection, session]
         id:
           type: string
           minLength: 1
@@ -3889,7 +5057,7 @@ components:
               type: boolean
     AlertError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -3906,9 +5074,223 @@ components:
         requestId:
           type: string
           description: Same value as the `X-Request-ID` response header.
+    TradeControls:
+      type: object
+      description: >
+        One user's paper Trade Controls. The `minimum`/`maximum` here are
+        structural; the server's current limits are in `TradeControlsBounds`
+        and are enforced on save. Amounts are paise, ratios are basis points.
+      required: [lossLimitPaise, tradeLimit, profitLimitPaise, maxConsecutiveLosses, stopLossBps, takeProfitBps, maxRiskPerTradePaise, maxPositionSizeBps]
+      additionalProperties: false
+      properties:
+        lossLimitPaise:
+          type: integer
+          minimum: 1
+          description: Daily (per replayed session) realised loss limit.
+        tradeLimit:
+          type: integer
+          minimum: 1
+          description: Fills per replayed session.
+        profitLimitPaise:
+          type: [integer, 'null']
+          minimum: 1
+          description: Session profit cap after which no buy is queued. `null` is off.
+        maxConsecutiveLosses:
+          type: integer
+          minimum: 0
+          description: Losing exits in a row after which no buy is queued that session. `0` is off.
+        stopLossBps:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 9999
+          description: Upper cap on the stop distance. `null` uses the strategy version's stop.
+        takeProfitBps:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 10000
+          description: Take-profit distance above the entry price. `null` is off.
+        maxRiskPerTradePaise:
+          type: integer
+          minimum: 1
+          description: Largest loss from entry to stop allowed when sizing a buy.
+        maxPositionSizeBps:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Upper cap on position size as a share of paper cash.
+    TradeControlBound:
+      type: object
+      required: [minimum, maximum, nullable]
+      additionalProperties: false
+      properties:
+        minimum:
+          type: integer
+          minimum: 0
+        maximum:
+          type: integer
+          minimum: 0
+          description: The server ceiling. Always at least `minimum`.
+        nullable:
+          type: boolean
+          description: True when `null` (off) is accepted for this field.
+    TradeControlsBounds:
+      type: object
+      description: >
+        Inclusive bounds the server enforces on save, from its paper
+        configuration. Today: `lossLimitPaise` 1 to 2500000 (₹25,000),
+        `tradeLimit` 1 to 10, `profitLimitPaise` 1 to 100000000 or null,
+        `maxConsecutiveLosses` 0 to 10, `stopLossBps` 1 to 9999 or null,
+        `takeProfitBps` 1 to 10000 or null, `maxRiskPerTradePaise` 1 to
+        1000000 (₹10,000, 1% of paper capital), `maxPositionSizeBps` 1 to
+        10000. These numbers are configuration, not part of the contract;
+        clients read them from here.
+      required: [lossLimitPaise, tradeLimit, profitLimitPaise, maxConsecutiveLosses, stopLossBps, takeProfitBps, maxRiskPerTradePaise, maxPositionSizeBps]
+      additionalProperties: false
+      properties:
+        lossLimitPaise: { $ref: '#/components/schemas/TradeControlBound' }
+        tradeLimit: { $ref: '#/components/schemas/TradeControlBound' }
+        profitLimitPaise: { $ref: '#/components/schemas/TradeControlBound' }
+        maxConsecutiveLosses: { $ref: '#/components/schemas/TradeControlBound' }
+        stopLossBps: { $ref: '#/components/schemas/TradeControlBound' }
+        takeProfitBps: { $ref: '#/components/schemas/TradeControlBound' }
+        maxRiskPerTradePaise: { $ref: '#/components/schemas/TradeControlBound' }
+        maxPositionSizeBps: { $ref: '#/components/schemas/TradeControlBound' }
+    TradeControlsSettings:
+      type: object
+      required: [environment, revision, updatedAt, controls, defaults, bounds]
+      additionalProperties: false
+      properties:
+        environment:
+          const: PAPER
+          description: Trade Controls apply to the paper engine only.
+        revision:
+          type: integer
+          minimum: 0
+          description: >
+            `0` until the first applied save, then increased by one on each
+            applied save. Send it back as `expectedRevision`.
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Time of the last applied save; null at revision 0.
+        controls:
+          $ref: '#/components/schemas/TradeControls'
+        defaults:
+          $ref: '#/components/schemas/TradeControls'
+        bounds:
+          $ref: '#/components/schemas/TradeControlsBounds'
+    TradeControlsUpdate:
+      type: object
+      required: [expectedRevision, controls]
+      additionalProperties: false
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+        controls:
+          $ref: '#/components/schemas/TradeControls'
+    TradeControlField:
+      enum: [lossLimitPaise, tradeLimit, profitLimitPaise, maxConsecutiveLosses, stopLossBps, takeProfitBps, maxRiskPerTradePaise, maxPositionSizeBps]
+    TradeControlsHistory:
+      type: object
+      required: [changes]
+      additionalProperties: false
+      properties:
+        changes:
+          type: array
+          maxItems: 50
+          description: Newest first.
+          items:
+            $ref: '#/components/schemas/TradeControlsChange'
+    TradeControlsChange:
+      type: object
+      required: [revision, changedAt, fields]
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+          description: The revision this save created.
+        changedAt:
+          type: string
+          format: date-time
+        fields:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [field, from, to]
+            additionalProperties: false
+            properties:
+              field:
+                $ref: '#/components/schemas/TradeControlField'
+              from:
+                type: [integer, 'null']
+              to:
+                type: [integer, 'null']
+    TradeControlsError:
+      type: object
+      required: [code, message, requestId]
+      additionalProperties: false
+      properties:
+        code:
+          enum:
+            - INVALID_REQUEST
+            - UNAUTHENTICATED
+            - TOTP_SETUP_REQUIRED
+            - CSRF_FAILED
+            - STEP_UP_REQUIRED
+            - TRADE_CONTROLS_OUT_OF_BOUNDS
+            - TRADE_CONTROLS_REVISION_CONFLICT
+            - TRADE_CONTROLS_ENGINE_RUNNING
+            - TRADE_CONTROLS_UNAVAILABLE
+        message:
+          type: string
+          description: Safe to show to the user.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
+        fieldErrors:
+          type: array
+          minItems: 1
+          description: Only with `TRADE_CONTROLS_OUT_OF_BOUNDS`. One entry per field outside its bound.
+          items:
+            type: object
+            required: [field, bound]
+            additionalProperties: false
+            properties:
+              field:
+                $ref: '#/components/schemas/TradeControlField'
+              bound:
+                $ref: '#/components/schemas/TradeControlBound'
+    ApiRoutingError:
+      type: object
+      required: [code, message, requestId]
+      additionalProperties: false
+      properties:
+        code:
+          enum: [NOT_FOUND, METHOD_NOT_ALLOWED]
+        message:
+          type: string
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
+    InternalError:
+      type: object
+      required: [code, message, requestId]
+      additionalProperties: false
+      properties:
+        code:
+          const: INTERNAL_ERROR
+        message:
+          type: string
+          description: Generic and safe to show. Never contains internal detail.
+        requestId:
+          type: string
+          description: Same value as the `X-Request-ID` response header.
     ReportError:
       type: object
-      required: [code, message]
+      required: [code, message, requestId]
       additionalProperties: false
       properties:
         code:
@@ -3924,8 +5306,146 @@ components:
           type: string
           description: Same value as the `X-Request-ID` response header.
   responses:
+    InternalError:
+      description: >
+        Unexpected server failure. Nothing uncommitted changed. Show an error
+        state; never substitute demo or cached data.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/InternalError'
+          example:
+            code: INTERNAL_ERROR
+            message: Internal server error
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TradeControlsInvalid:
+      description: >
+        `INVALID_REQUEST`: the body is malformed or a field has the wrong type
+        or is outside its structural range. `TRADE_CONTROLS_OUT_OF_BOUNDS`:
+        well-formed, but at least one value is outside the server's `bounds`;
+        `fieldErrors` lists each one. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          examples:
+            invalid:
+              value:
+                code: INVALID_REQUEST
+                message: The request parameters are invalid.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            outOfBounds:
+              value:
+                code: TRADE_CONTROLS_OUT_OF_BOUNDS
+                message: Some limits are above what paper trading allows.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+                fieldErrors:
+                  - field: lossLimitPaise
+                    bound: { minimum: 1, maximum: 2500000, nullable: false }
+    TradeControlsUnauthenticated:
+      description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TradeControlsSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set
+        one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TradeControlsForbidden:
+      description: >
+        Checked in this order: `TOTP_SETUP_REQUIRED` (no active
+        authenticator), `CSRF_FAILED` (token missing or wrong, or the Origin
+        header does not match), `STEP_UP_REQUIRED` (the session's step-up
+        window is closed). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          examples:
+            setupRequired:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            csrf:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            stepUp:
+              value:
+                code: STEP_UP_REQUIRED
+                message: Confirm with your authenticator, or sign in again, to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TradeControlsConflict:
+      description: >
+        `TRADE_CONTROLS_ENGINE_RUNNING`: the paper engine is `running`; pause
+        or halt it first. `TRADE_CONTROLS_REVISION_CONFLICT`: the controls
+        were saved since `expectedRevision`; read them again. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          examples:
+            engineRunning:
+              value:
+                code: TRADE_CONTROLS_ENGINE_RUNNING
+                message: Pause the paper engine before changing trade controls.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            revision:
+              value:
+                code: TRADE_CONTROLS_REVISION_CONFLICT
+                message: These controls changed since you opened them. Reload to see the latest.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TradeControlsUnavailable:
+      description: Trade Controls are temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TradeControlsError'
+          example:
+            code: TRADE_CONTROLS_UNAVAILABLE
+            message: Trade controls are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthInvalidRequest:
       description: The request body is missing, malformed or has an invalid field.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -3933,8 +5453,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -3942,10 +5466,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -3953,8 +5481,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -3964,12 +5496,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -3979,13 +5515,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthRateLimited:
       description: Too many requests for this phone number, IP address or device.
       headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
         Retry-After:
           description: Seconds to wait before retrying.
           schema:
@@ -3998,6 +5538,7 @@ components:
           example:
             code: RATE_LIMITED
             message: Too many attempts. Try again later.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             retryAfterSeconds: 60
     AuthOtpDeliveryUnavailable:
       description: >
@@ -4006,6 +5547,9 @@ components:
         retry. Availability is decided before invitation, so a missing
         provider or a reached limit answers every well-formed number with
         this same response; it never depends on whether the number is invited.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4013,26 +5557,39 @@ components:
           example:
             code: OTP_DELIVERY_UNAVAILABLE
             message: We could not send a code right now. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     InvalidRequest:
       description: The request parameters are invalid.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/MarketError'
     UnknownInstrument:
       description: The identifier is valid but absent from the catalog.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/MarketError'
     MarketDataUnavailable:
       description: The requested market data is temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/MarketError'
     BrokerInvalidRequest:
       description: Unknown provider, or a missing or invalid action.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4040,8 +5597,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4049,10 +5610,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4060,8 +5625,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4071,12 +5640,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4086,12 +5659,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerActionConflict:
       description: The action does not apply to the connection's current state, for example `sync` on an expired connection.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4099,8 +5677,12 @@ components:
           example:
             code: BROKER_ACTION_CONFLICT
             message: This broker account is not ready for that action.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BrokerUnavailable:
       description: The broker workspace is disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4108,8 +5690,205 @@ components:
           example:
             code: BROKER_UNAVAILABLE
             message: Broker accounts are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnInvalidRequest:
+      description: >
+        `INVALID_REQUEST`: malformed body or unknown field. `BROKER_PROVIDER_UNAVAILABLE`: the provider is unknown or disabled. `BROKER_AUTHORIZATION_INVALID`: the `state` is wrong, used, expired or from another session. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          examples:
+            invalid_request:
+              value:
+                code: INVALID_REQUEST
+                message: The request parameters are invalid.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            broker_provider_unavailable:
+              value:
+                code: BROKER_PROVIDER_UNAVAILABLE
+                message: This broker is not available.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            broker_authorization_invalid:
+              value:
+                code: BROKER_AUTHORIZATION_INVALID
+                message: This broker sign-in has expired. Start again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnUnauthenticated:
+      description: >
+        There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: UNAUTHENTICATED
+            message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnSetupRequired:
+      description: >
+        The account has no active authenticator, so this session may only set one up. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: TOTP_SETUP_REQUIRED
+            message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnCsrfOrSetupRequired:
+      description: >
+        `TOTP_SETUP_REQUIRED` (checked first), then `CSRF_FAILED`. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          examples:
+            totp_setup_required:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            csrf_failed:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnStepUpCsrfOrSetupRequired:
+      description: >
+        Checked in this order: `TOTP_SETUP_REQUIRED`, `CSRF_FAILED`, `STEP_UP_REQUIRED`. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          examples:
+            totp_setup_required:
+              value:
+                code: TOTP_SETUP_REQUIRED
+                message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            csrf_failed:
+              value:
+                code: CSRF_FAILED
+                message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            step_up_required:
+              value:
+                code: STEP_UP_REQUIRED
+                message: Confirm with your authenticator, or sign in again, to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnNotFound:
+      description: >
+        No connection with this id belongs to the caller.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: BROKER_CONNECTION_NOT_FOUND
+            message: This broker connection no longer exists.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnConflict:
+      description: >
+        `BROKER_ACTION_CONFLICT`: the action does not fit the connection's status. `BROKER_CONNECTION_LIMIT`: the caller already holds `maxConnections` for the provider. `BROKER_AUTH_EXPIRED`: the provider reported the authorization invalid; the connection is now `expired`. `BROKER_CAPABILITY_UNSUPPORTED`: the provider cannot do what was asked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          examples:
+            broker_action_conflict:
+              value:
+                code: BROKER_ACTION_CONFLICT
+                message: This broker account is not ready for that action.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            broker_connection_limit:
+              value:
+                code: BROKER_CONNECTION_LIMIT
+                message: You already have the maximum number of connections for this broker.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            broker_auth_expired:
+              value:
+                code: BROKER_AUTH_EXPIRED
+                message: This broker sign-in has expired. Reconnect to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+            broker_capability_unsupported:
+              value:
+                code: BROKER_CAPABILITY_UNSUPPORTED
+                message: This broker does not support that.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnRateLimited:
+      description: >
+        The provider or the server rate limit was reached. Sends a `Retry-After` header matching `retryAfterSeconds`. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: BROKER_RATE_LIMITED
+            message: The broker is busy. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnBadProviderResponse:
+      description: >
+        The provider answered with something the adapter could not read. Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: BROKER_MALFORMED_RESPONSE
+            message: The broker sent an unexpected response. Try again later.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    BrokerConnUnavailable:
+      description: >
+        The provider or the broker service is disabled, timed out or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BrokerConnectionError'
+          example:
+            code: BROKER_UNAVAILABLE
+            message: Broker accounts are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyInvalidRequest:
       description: Malformed command or invalid parameters.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4117,8 +5896,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4126,10 +5909,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategySetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4137,8 +5924,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4148,12 +5939,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4163,12 +5958,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyNotFound:
       description: No strategy with this id belongs to the caller.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4176,12 +5976,16 @@ components:
           example:
             code: STRATEGY_NOT_FOUND
             message: This strategy is not available.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyConflict:
       description: >
         The command does not fit the strategy's state: activating an active
         strategy, activating without a passing backtest and approved risk
         review, pausing a strategy that is not active, or creating beyond the
         per-user limit.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4189,8 +5993,12 @@ components:
           example:
             code: STRATEGY_CONFLICT
             message: A passing backtest and an approved risk review are required.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     StrategyUnavailable:
       description: The strategy workspace is disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4198,11 +6006,15 @@ components:
           example:
             code: STRATEGY_UNAVAILABLE
             message: Strategies are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestInvalidRequest:
       description: >
         Malformed body, or a configuration the server cannot replay: an
         unknown strategy revision or instrument, dates out of order or outside
         the demo history, or too few warm-up or out-of-sample sessions.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4210,8 +6022,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: Choose at least three warm-up sessions and two out-of-sample sessions.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4219,10 +6035,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4230,8 +6050,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4241,12 +6065,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4256,12 +6084,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestNotFound:
       description: No run with this id belongs to the caller.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4269,8 +6102,12 @@ components:
           example:
             code: BACKTEST_NOT_FOUND
             message: This backtest is not available.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestConflict:
       description: The caller already has three runs queued or running.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4278,8 +6115,12 @@ components:
           example:
             code: BACKTEST_CONFLICT
             message: Wait for a running backtest to finish before starting another.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     BacktestUnavailable:
       description: Backtests are disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4287,8 +6128,12 @@ components:
           example:
             code: BACKTEST_UNAVAILABLE
             message: Backtests are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperInvalidRequest:
       description: Malformed command body.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4296,8 +6141,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4305,10 +6154,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4316,8 +6169,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4327,12 +6184,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4342,12 +6203,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperConflict:
       description: The command does not fit the engine's state, or the strategy cannot be assigned.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4355,8 +6221,12 @@ components:
           example:
             code: PAPER_CONFLICT
             message: Pause or reset the paper engine before assigning a strategy.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     PaperUnavailable:
       description: Paper trading is disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4364,8 +6234,12 @@ components:
           example:
             code: PAPER_UNAVAILABLE
             message: Paper trading is temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     ReportInvalidRequest:
       description: A date is malformed, or `from` is after `to`.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4373,8 +6247,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     ReportUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4382,10 +6260,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     ReportSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4393,8 +6275,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     ReportUnavailable:
       description: Reports are disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4402,8 +6288,12 @@ components:
           example:
             code: REPORTS_UNAVAILABLE
             message: Reports are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AgentInvalidRequest:
       description: An unknown `agentId`, a `limit` out of range, or a malformed or mismatched `cursor`.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4411,8 +6301,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AgentUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4420,10 +6314,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AgentSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4431,8 +6329,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AgentUnavailable:
       description: Agents are disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4440,10 +6342,14 @@ components:
           example:
             code: AGENTS_UNAVAILABLE
             message: Agents are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertInvalidRequest:
       description: >
         A filter or `limit` out of range, a malformed cursor or one used with
         different filters or preferences, or a malformed preferences body.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4451,8 +6357,12 @@ components:
           example:
             code: INVALID_REQUEST
             message: The request parameters are invalid.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertUnauthenticated:
       description: There is no valid session. It may be missing, expired or revoked.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4460,10 +6370,14 @@ components:
           example:
             code: UNAUTHENTICATED
             message: Sign in to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertSetupRequired:
       description: >
         The account has no active authenticator, so this session may only set
         one up (`TOTP_SETUP_REQUIRED`). Nothing changed.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4471,8 +6385,12 @@ components:
           example:
             code: TOTP_SETUP_REQUIRED
             message: Set up your authenticator app to continue.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertCsrfFailed:
       description: The CSRF token is missing or wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4482,12 +6400,16 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertCsrfOrSetupRequired:
       description: >
         `CSRF_FAILED`: the CSRF token is missing or wrong, or the Origin header
         does not match. `TOTP_SETUP_REQUIRED`: the account has no active
         authenticator, so this session may only set one up; this is checked
         before CSRF and nothing changes.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4497,12 +6419,17 @@ components:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertNotFound:
       description: No alert with this id belongs to the caller.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4510,8 +6437,12 @@ components:
           example:
             code: ALERT_NOT_FOUND
             message: This alert was not found.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AlertUnavailable:
       description: Alerts are disabled or temporarily unavailable.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4519,11 +6450,15 @@ components:
           example:
             code: ALERTS_UNAVAILABLE
             message: Alerts are temporarily unavailable. Try again shortly.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthStepUpOrCsrf:
       description: >
         `STEP_UP_REQUIRED`: the session did not sign in recently enough, or the
         step-up window is closed. `CSRF_FAILED`: the CSRF token is missing or
         wrong, or the Origin header does not match.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4533,16 +6468,21 @@ components:
               value:
                 code: STEP_UP_REQUIRED
                 message: Confirm with your authenticator, or sign in again, to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             csrf:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthStepUpCsrfOrSetupRequired:
       description: >
         `STEP_UP_REQUIRED`: the session did not sign in recently enough, or the
         step-up window is closed. `CSRF_FAILED`: the CSRF token is missing or
         wrong, or the Origin header does not match. `TOTP_SETUP_REQUIRED`: the
         account has no active authenticator; checked before CSRF.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4552,16 +6492,22 @@ components:
               value:
                 code: STEP_UP_REQUIRED
                 message: Confirm with your authenticator, or sign in again, to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             csrf:
               value:
                 code: CSRF_FAILED
                 message: The request could not be verified. Reload and try again.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
             setupRequired:
               value:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthSessionNotFound:
       description: No active session with this id belongs to the caller.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4569,8 +6515,12 @@ components:
           example:
             code: SESSION_NOT_FOUND
             message: This session was not found.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthCurrentSession:
       description: The caller's own session cannot be ended here. Use `logout`.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4578,8 +6528,12 @@ components:
           example:
             code: CURRENT_SESSION
             message: Sign out to end this session.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthTotpAlreadyEnrolled:
       description: An authenticator is already active. Remove it first.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4587,8 +6541,12 @@ components:
           example:
             code: TOTP_ALREADY_ENROLLED
             message: An authenticator is already set up.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthTotpNotPending:
       description: There is no pending enrolment, or it has expired. Start again.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4596,8 +6554,12 @@ components:
           example:
             code: TOTP_NOT_PENDING
             message: Start the authenticator setup again.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthTotpNotEnrolled:
       description: No authenticator is active for this account.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4605,8 +6567,12 @@ components:
           example:
             code: TOTP_NOT_ENROLLED
             message: Set up an authenticator first.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthInvalidTotp:
       description: The code is wrong, expired or already used.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
       content:
         application/json:
           schema:
@@ -4614,3 +6580,4 @@ components:
           example:
             code: INVALID_TOTP
             message: The code is invalid or has expired.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3

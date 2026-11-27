@@ -3,6 +3,10 @@ info:
   title: Tradeo Broker Preview API Proposal
   version: 0.4.0
   description: >
+    SUPERSEDED. Kept for history only; do not build against it. The served
+    contract is `contracts/openapi.yaml`: the Broker connections tag
+    (`/api/v1/broker-connections`) replaces this shape, and the deprecated
+    Brokers tag there documents `/api/v1/brokers/preview` until it is removed.
     Proposed interface for the demo broker workspace. The frontend responds
     locally. A real integration would use a separate server-side provider
     authorization flow and server-held credentials.

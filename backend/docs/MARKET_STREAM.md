@@ -40,13 +40,15 @@ One upstream connection serves all owner connections. The REST market routes
 | 4401 | Session ended (checked every `MARKET_STREAM_SESSION_RECHECK_SECONDS`, 30) | Stop. Sign in again. |
 | 4403 | Account no longer eligible (for example, its authenticator was removed) | Stop. |
 | 1008 | The client sent a message | Stop. |
-| 1013 | The client fell behind (`MARKET_STREAM_QUEUE_SIZE`, 256 ticks) | Reconnect with backoff. |
+| 1013 | The client fell behind (`MARKET_STREAM_QUEUE_SIZE`, 256 ticks), a send stalled past `MARKET_STREAM_SEND_TIMEOUT_SECONDS` (10), or the session check could not reach the database | Reconnect with backoff. |
 | 1012 | Server restart (sent by the server process) | Reconnect with backoff. |
 
-Each periodic session check renews the session (owner decision, 2026-11-27): an
+The session is checked again just before the snapshot is sent, and then
+every 30 seconds before any other frame. A passing check renews the session (owner decision, 2026-11-27): an
 open chart keeps the session alive, so it is not signed out by the idle timeout.
 The absolute expiry (`SESSION_ABSOLUTE_TTL_SECONDS`, 12 hours) still ends it with
-4401, as do sign-out and revocation.
+4401, as do sign-out and revocation. A refused check never renews. The settings
+refuse a recheck interval above half of `SESSION_IDLE_TTL_SECONDS`.
 
 ## Configuration (server environment only)
 

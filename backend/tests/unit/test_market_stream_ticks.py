@@ -137,3 +137,20 @@ def test_index_bars_have_no_volume() -> None:
     builder = CandleBuilder("5m", None)
     candle = builder.apply(tick(1, 24000.0, volume=None))
     assert candle is not None and candle.volume is None
+
+
+def test_rejected_old_tick_does_not_spoil_the_history_volume_seed() -> None:
+    seed = MarketCandle(time=at(5), open=98.0, high=103.0, low=97.0, close=100.0, volume=700)
+    builder = CandleBuilder("5m", seed)
+    assert builder.apply(tick(2, 99.0, volume=9_000)) is None  # before the history bar
+    candle = builder.apply(tick(6, 101.0, volume=10_000))
+    assert candle is not None and candle.volume == 700
+
+
+def test_new_session_restarts_the_volume_baseline() -> None:
+    builder = CandleBuilder("1m", None)
+    builder.apply(tick(370, 100.0, volume=1_000_000))  # Friday 15:25 IST
+    monday = OPEN + timedelta(days=3, seconds=30)
+    candle = builder.apply(Tick("NSE:RELIANCE", 101.0, 101.0, 101.0, 101.0, 100.0, 100, monday))
+    assert candle is not None and candle.time == OPEN + timedelta(days=3)
+    assert candle.volume == 100

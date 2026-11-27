@@ -103,6 +103,8 @@ class MarketStreamHub:
 
     def _emit(self, tick: Tick) -> None:
         self._heartbeat()
+        if not self._subscribers.get(tick.instrument_id):
+            return  # nobody wants it: a late tick must not be cached for later
         previous = self._latest.get(tick.instrument_id)
         if previous is not None and tick.exchange_time < previous.exchange_time:
             return  # older than what subscribers already have

@@ -263,3 +263,24 @@ def test_idle_feed_sends_periodic_status(
         frames = [ws.receive_json() for _ in range(3)]
         assert [frame["type"] for frame in frames] == ["status"] * 3
         assert {frame["state"] for frame in frames} == {"live"}
+
+
+def test_refused_upgrade_does_not_renew_the_session(
+    owner_stream: Callable[..., tuple[TestClient, Browser]], db_url: str, clock: FakeClock
+) -> None:
+    client, _ = owner_stream(phone=OTHER_PHONE, owner_phone=PHONE)
+    before = db_rows(
+        db_url,
+        "SELECT s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id"
+        " WHERE u.phone_e164 = :p",
+        p=OTHER_PHONE,
+    )[0]["last_seen_at"]
+    clock.advance(120)
+    assert denial(client).status_code == 403
+    after = db_rows(
+        db_url,
+        "SELECT s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id"
+        " WHERE u.phone_e164 = :p",
+        p=OTHER_PHONE,
+    )[0]["last_seen_at"]
+    assert after == before

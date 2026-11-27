@@ -350,3 +350,106 @@ def test_snapshot_history_must_be_market_data() -> None:
                 candles=[],
             ),
         )
+
+
+async def test_late_tick_after_unsubscribe_is_not_cached() -> None:
+    source = ScriptedSource()
+    hub = MarketStreamHub(source, clock=Clock())
+    await started(hub, source)
+    assert source.emit is not None
+    async with hub.subscribe("NSE:RELIANCE"):
+        source.emit(make_tick(price=100))
+    source.emit(make_tick(seconds=1, price=55))  # arrives after the last subscriber left
+    async with hub.subscribe("NSE:RELIANCE"):
+        assert await hub.wait_for_tick("NSE:RELIANCE", wait_seconds=0.01) is None
+    await hub.stop()
+
+
+def test_blank_template_values_are_unset(make_settings: SettingsFactory) -> None:
+    settings = make_settings(
+        market_stream_owner_user_id="", kite_api_key="", kite_access_token_file=" "
+    )
+    assert settings.market_stream_owner_user_id is None
+    assert settings.kite_api_key is None and settings.kite_access_token_file is None
+
+
+def test_env_example_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Copying .env.example must not break startup with the stream off."""
+    from app.core.config import Settings
+
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+    monkeypatch.setenv("AUTH_SECRET_KEY", "test-secret-0123456789abcdef0123456789abcdef")
+    settings = Settings(_env_file=str(example))  # type: ignore[call-arg]
+    assert settings.market_stream_enabled is False
+    assert settings.market_stream_owner_user_id is None
+
+
+def test_recheck_must_stay_well_inside_the_idle_timeout(make_settings: SettingsFactory) -> None:
+    owner = uuid.uuid4()
+    with pytest.raises(ValidationError, match="at most half"):
+        make_settings(
+            market_stream_enabled=True,
+            market_stream_owner_user_id=owner,
+            session_idle_ttl_seconds=60,
+            market_stream_session_recheck_seconds=31,
+        )
+    make_settings(
+        market_stream_enabled=True,
+        market_stream_owner_user_id=owner,
+        session_idle_ttl_seconds=60,
+        market_stream_session_recheck_seconds=30,
+    )
+
+
+def test_websockets_debug_records_are_suppressed(make_settings: SettingsFactory) -> None:
+    import logging
+
+    from app.core.logging import configure_logging
+
+    configure_logging(make_settings(log_level="DEBUG", log_format="console"))
+    assert logging.getLogger("websockets").getEffectiveLevel() >= logging.INFO
+
+
+async def test_stalled_send_ends_the_stream(make_settings: SettingsFactory) -> None:
+    from app.api.routes.market_stream import _serve
+
+    class StalledSocket:
+        async def send_json(self, data: Any) -> None:
+            await asyncio.Event().wait()
+
+        async def receive(self) -> dict[str, Any]:
+            await asyncio.Event().wait()
+            return {}
+
+    settings = make_settings(market_stream_send_timeout_seconds=0.05)
+    source = ScriptedSource()
+    hub = MarketStreamHub(source, clock=Clock())
+    tick = make_tick()
+    snapshot = MarketSnapshotFrame(
+        as_of=NOW,
+        quote=quote_from_tick(tick),
+        history=MarketCandles(
+            instrument_id="NSE:RELIANCE",
+            timeframe="5m",
+            source="market",
+            as_of=NOW,
+            freshness="fresh",
+            candles=[],
+        ),
+    )
+    async with hub.subscribe("NSE:RELIANCE") as subscriber:
+        started_at = asyncio.get_running_loop().time()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(2):  # a backstop; the stream's deadline fires first
+                await _serve(
+                    StalledSocket(),  # type: ignore[arg-type]
+                    hub,
+                    subscriber,
+                    settings,
+                    None,  # type: ignore[arg-type]
+                    "token",
+                    snapshot,
+                    tick,
+                    "5m",
+                )
+        assert asyncio.get_running_loop().time() - started_at < 1

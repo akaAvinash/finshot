@@ -126,9 +126,12 @@ class CandleBuilder:
     def apply(self, tick: Tick) -> MarketCandle | None:
         if self._last_time is not None and tick.exchange_time < self._last_time:
             return None
-        first_tick = self._last_time is None
-        self._last_time = tick.exchange_time
         start = bucket_start(tick.exchange_time, self.timeframe)
+        if self.timeframe != "1D" and self._candle is not None and self._candle.time > start:
+            return None  # the history already has a later bar; nothing changes
+        first_tick = self._last_time is None
+        previous_day = None if self._last_time is None else session_day(self._last_time)
+        self._last_time = tick.exchange_time
         if self.timeframe == "1D":
             quote = quote_from_tick(tick)
             self._candle = MarketCandle(
@@ -142,8 +145,6 @@ class CandleBuilder:
             return self._candle
 
         current = self._candle
-        if current is not None and current.time > start:
-            return None  # the history already has a later bar than this tick
         if current is not None and current.time == start:
             if first_tick and self._seeded and tick.volume is not None:
                 self._volume_base = tick.volume - (current.volume or 0)
@@ -157,11 +158,16 @@ class CandleBuilder:
             )
         else:
             # A new bar: its volume counts from the last cumulative value
-            # seen before it, or from this tick when there is none.
+            # seen earlier in the same session, from zero in a new session
+            # (the day's volume restarts), or from this tick when nothing
+            # was seen before.
             if tick.volume is not None:
-                self._volume_base = (
-                    self._last_volume if self._last_volume is not None else tick.volume
-                )
+                if previous_day is not None and previous_day != session_day(tick.exchange_time):
+                    self._volume_base = 0
+                elif self._last_volume is not None:
+                    self._volume_base = self._last_volume
+                else:
+                    self._volume_base = tick.volume
             candle = MarketCandle(
                 time=start,
                 open=tick.price,

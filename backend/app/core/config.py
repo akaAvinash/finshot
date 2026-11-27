@@ -169,6 +169,9 @@ class Settings(BaseSettings):
     market_stream_session_recheck_seconds: float = Field(default=30.0, ge=1, le=300)
     market_stream_stale_after_seconds: float = Field(default=30.0, ge=2, le=600)
     market_stream_snapshot_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # A send that waits longer than this (a client that stopped reading) ends
+    # the stream with 1013 and frees its connection slot.
+    market_stream_send_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     market_stream_mock_tick_seconds: float = Field(default=1.0, ge=0.05, le=60)
     # Kite Connect. The access token lives in a file (mode 0600) so the daily
     # token can be replaced without a restart; KITE_API_SECRET is needed only
@@ -267,6 +270,20 @@ class Settings(BaseSettings):
     data_retention_default_days: int = Field(default=365, ge=1, le=36500)
     retention_worker_enabled: bool = True
     retention_purge_interval_seconds: float = Field(default=3600.0, ge=60, le=86_400)
+
+    @field_validator(
+        "market_stream_owner_user_id",
+        "kite_api_key",
+        "kite_api_secret",
+        "kite_access_token_file",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # A copied .env template leaves these as empty strings: treat as unset.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("otp_staging_allowlist", mode="before")
     @classmethod
@@ -379,6 +396,16 @@ class Settings(BaseSettings):
     def _enforce_market_stream_rules(self) -> Self:
         if self.market_stream_enabled and self.market_stream_owner_user_id is None:
             raise ValueError("MARKET_STREAM_ENABLED=true needs MARKET_STREAM_OWNER_USER_ID")
+        # Each recheck renews the session, so it must come well inside the idle
+        # timeout (the renewal write is throttled by up to a quarter of it).
+        if (
+            self.market_stream_enabled
+            and self.market_stream_session_recheck_seconds * 2 > self.session_idle_ttl_seconds
+        ):
+            raise ValueError(
+                "MARKET_STREAM_SESSION_RECHECK_SECONDS must be at most half of"
+                " SESSION_IDLE_TTL_SECONDS"
+            )
         if (
             self.market_stream_enabled
             and self.market_stream_provider == "mock"

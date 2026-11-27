@@ -9,13 +9,18 @@ sessions pending authenticator setup included), 400 for invalid selection
 parameters, 503 when the feed cannot serve a snapshot or the connection cap
 is reached, or the session cannot be checked (database down).
 
+The session is checked once more after the snapshot is prepared and before
+the upgrade, so no market data leaves for a session that ended meanwhile.
+
 After the upgrade the server sends a snapshot, then updates and status
-frames. The session is checked again every MARKET_STREAM_SESSION_RECHECK_SECONDS, and
-each check renews it (owner decision: an open chart keeps the session alive
-until its absolute expiry): 4401 when it has ended,
-4403 when the account is no longer eligible. A client that falls behind, or a
-recheck that cannot reach the database, is closed with 1013, and a client
-that sends any message with 1008."""
+frames. The session is checked again every
+MARKET_STREAM_SESSION_RECHECK_SECONDS, before anything else is sent, and a
+passing check renews it (owner decision: an open chart keeps the session
+alive until its absolute expiry). A check never renews a session it refuses.
+Closes: 4401 session ended, 4403 account no longer eligible, 1013 for a
+client that falls behind, a send that stalls past
+MARKET_STREAM_SEND_TIMEOUT_SECONDS or a check that cannot reach the
+database, 1008 for a client that sends any message."""
 
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ import asyncio
 import contextlib
 import re
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import structlog
@@ -113,24 +119,44 @@ async def _deny(websocket: WebSocket, denied: _Denied) -> None:
         await websocket.close(code=CLOSE_POLICY)
 
 
-async def _authorize(
-    websocket: WebSocket, settings: Settings, auth: AuthService
-) -> tuple[str, SessionInfo]:
+async def _authorize(websocket: WebSocket, settings: Settings, auth: AuthService) -> str:
     if websocket.headers.get("origin") != settings.public_origin:
         raise _Denied(403, "ORIGIN_NOT_ALLOWED", "This origin may not open the market stream.")
     token = websocket.cookies.get(SESSION_COOKIE)
-    try:
-        session = await auth.resolve_session(token)
-    except Exception as exc:  # database or cache down: fail closed, as unavailable
-        logger.warning("market_stream_session_check_failed", error_type=type(exc).__name__)
-        raise _unavailable() from exc
-    if token is None or session is None:
+    if token is None:
         raise _Denied(401, "UNAUTHENTICATED", "Sign in to continue.")
-    if not _eligible(settings, session):
-        raise _Denied(
-            403, "MARKET_STREAM_FORBIDDEN", "This account may not open the market stream."
-        )
-    return token, session
+    code = await _check_session(auth, settings, token)
+    if code is not None:
+        raise _UPGRADE_DENIALS[code]()
+    return token
+
+
+async def _check_session(auth: AuthService, settings: Settings, token: str) -> int | None:
+    """None when the session is valid and eligible (and then renews it: an
+    open stream keeps the session alive). Otherwise the close code: 4401
+    session ended, 4403 not eligible, 1013 the check itself failed. Checks
+    without renewing first, so a refused session is never extended."""
+    try:
+        session = await auth.resolve_session(token, renew=False)
+        if session is None:
+            return CLOSE_SESSION_ENDED
+        if not settings.market_stream_enabled or not _eligible(settings, session):
+            return CLOSE_FORBIDDEN
+        if await auth.resolve_session(token) is None:
+            return CLOSE_SESSION_ENDED  # ended between the two reads
+    except Exception as exc:  # database or cache down: fail closed
+        logger.warning("market_stream_session_check_failed", error_type=type(exc).__name__)
+        return CLOSE_OVERLOADED
+    return None
+
+
+_UPGRADE_DENIALS: dict[int, Any] = {
+    CLOSE_SESSION_ENDED: lambda: _Denied(401, "UNAUTHENTICATED", "Sign in to continue."),
+    CLOSE_FORBIDDEN: lambda: _Denied(
+        403, "MARKET_STREAM_FORBIDDEN", "This account may not open the market stream."
+    ),
+    CLOSE_OVERLOADED: lambda: _unavailable(),
+}
 
 
 async def _snapshot(
@@ -169,7 +195,7 @@ async def market_stream(websocket: WebSocket) -> None:
     try:
         if not settings.market_stream_enabled or hub is None:
             raise _Denied(404, "NOT_FOUND", "API endpoint not found.")
-        token, _ = await _authorize(websocket, settings, auth)
+        token = await _authorize(websocket, settings, auth)
         instrument_id, timeframe = _selection(websocket, hub)
     except _Denied as denied:
         await _deny(websocket, denied)
@@ -180,6 +206,11 @@ async def market_stream(websocket: WebSocket) -> None:
             if hub.connection_count > settings.market_stream_max_connections:
                 raise _unavailable()
             frame, tick = await _snapshot(hub, settings, instrument_id, timeframe)
+            # Preparing the snapshot can take seconds: check the session again
+            # right before any market data leaves the server.
+            code = await _check_session(auth, settings, token)
+            if code is not None:
+                raise _UPGRADE_DENIALS[code]()
         except _Denied as denied:
             await _deny(websocket, denied)
             return
@@ -192,6 +223,10 @@ async def market_stream(websocket: WebSocket) -> None:
             )
         except (WebSocketDisconnect, OSError):
             code = 1006
+        except TimeoutError:
+            # A send stalled past MARKET_STREAM_SEND_TIMEOUT_SECONDS: the client
+            # is not reading. Drop it and free its slot.
+            code = CLOSE_OVERLOADED
         finally:
             logger.info("market_stream_closed", instrument_id=instrument_id, code=code)
 
@@ -209,13 +244,27 @@ async def _serve(
 ) -> int:
     """Send frames until the client leaves or the server closes. Returns the
     close code."""
+    deadline = settings.market_stream_send_timeout_seconds
+
+    async def send(frame: Any) -> None:
+        # A client that stops reading stalls the send; the deadline turns that
+        # into TimeoutError, which ends the stream (1013) and frees the slot.
+        async with asyncio.timeout(deadline):
+            await websocket.send_json(wire(frame))
+
+    async def close(code: int) -> int:
+        with contextlib.suppress(TimeoutError, RuntimeError, OSError, WebSocketDisconnect):
+            async with asyncio.timeout(deadline):
+                await websocket.close(code=code)
+        return code
+
     history = snapshot.history.candles
     builder = CandleBuilder(timeframe, history[-1] if history else None)
     builder.apply(first_tick)
-    await websocket.send_json(wire(snapshot))
+    await send(snapshot)
 
     last_state: FeedState = hub.state()
-    await websocket.send_json(wire(MarketStatusFrame(state=last_state, sent_at=hub.now())))
+    await send(MarketStatusFrame(state=last_state, sent_at=hub.now()))
     last_sent = time.monotonic()
     next_recheck = time.monotonic() + settings.market_stream_session_recheck_seconds
 
@@ -233,11 +282,17 @@ async def _serve(
                 if message["type"] == "websocket.disconnect":
                     return int(message.get("code", 1000))
                 # The browser sends no application messages.
-                await websocket.close(code=CLOSE_POLICY)
-                return CLOSE_POLICY
+                return await close(CLOSE_POLICY)
             if overflow in done:
-                await websocket.close(code=CLOSE_OVERLOADED)
-                return CLOSE_OVERLOADED
+                return await close(CLOSE_OVERLOADED)
+
+            # Session first: nothing is sent once a due check would fail.
+            now = time.monotonic()
+            if now >= next_recheck:
+                next_recheck = now + settings.market_stream_session_recheck_seconds
+                code = await _check_session(auth, settings, token)
+                if code is not None:
+                    return await close(code)
 
             ticks: list[Tick] = []
             if getter in done:
@@ -247,33 +302,14 @@ async def _serve(
                     ticks.append(subscriber.queue.get_nowait())
                 # The snapshot's own tick may also be queued; it is not news.
                 ticks = [tick for tick in ticks if tick != first_tick]
-            if ticks and await _send_updates(websocket, builder, timeframe, ticks):
+            if ticks and await _send_updates(send, builder, timeframe, ticks):
                 last_sent = time.monotonic()
 
             state = hub.state()
             now = time.monotonic()
             if state != last_state or now - last_sent >= settings.market_stream_heartbeat_seconds:
-                await websocket.send_json(wire(MarketStatusFrame(state=state, sent_at=hub.now())))
+                await send(MarketStatusFrame(state=state, sent_at=hub.now()))
                 last_state, last_sent = state, now
-
-            if now >= next_recheck:
-                next_recheck = now + settings.market_stream_session_recheck_seconds
-                try:
-                    session = await auth.resolve_session(token)
-                except Exception as exc:
-                    # Cannot confirm the session: close, and let the client
-                    # retry with backoff (the next upgrade checks it again).
-                    logger.warning(
-                        "market_stream_session_check_failed", error_type=type(exc).__name__
-                    )
-                    await websocket.close(code=CLOSE_OVERLOADED)
-                    return CLOSE_OVERLOADED
-                if session is None:
-                    await websocket.close(code=CLOSE_SESSION_ENDED)
-                    return CLOSE_SESSION_ENDED
-                if not settings.market_stream_enabled or not _eligible(settings, session):
-                    await websocket.close(code=CLOSE_FORBIDDEN)
-                    return CLOSE_FORBIDDEN
     finally:
         for task in (receiver, overflow, getter):
             if task is not None:
@@ -283,7 +319,10 @@ async def _serve(
 
 
 async def _send_updates(
-    websocket: WebSocket, builder: CandleBuilder, timeframe: Any, ticks: list[Tick]
+    send: Callable[[Any], Awaitable[None]],
+    builder: CandleBuilder,
+    timeframe: Any,
+    ticks: list[Tick],
 ) -> bool:
     """Apply queued ticks and send the latest quote and candle. When the
     ticks cross into a new bar, the finished bar is sent first so the
@@ -295,19 +334,16 @@ async def _send_updates(
         if candle is None:
             continue
         if pending is not None and pending[1].time != candle.time:
-            await _send_update(websocket, timeframe, *pending)
+            await send(_update_frame(timeframe, *pending))
             sent = True
         pending = (tick, candle)
     if pending is not None:
-        await _send_update(websocket, timeframe, *pending)
+        await send(_update_frame(timeframe, *pending))
         sent = True
     return sent
 
 
-async def _send_update(
-    websocket: WebSocket, timeframe: Any, tick: Tick, candle: MarketCandle
-) -> None:
-    frame = MarketUpdateFrame(
+def _update_frame(timeframe: Any, tick: Tick, candle: MarketCandle) -> MarketUpdateFrame:
+    return MarketUpdateFrame(
         timeframe=timeframe, as_of=tick.exchange_time, quote=quote_from_tick(tick), candle=candle
     )
-    await websocket.send_json(wire(frame))

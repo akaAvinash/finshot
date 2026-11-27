@@ -40,5 +40,5 @@ export function formatReportTime(value: string) {
 }
 
 export const fillReason: Record<ReportTrade["reason"], string> = {
-  entry: "Entry", "signal-exit": "Signal exit", "stop-loss": "Stop loss", "end-of-replay": "Replay ended",
+  entry: "Entry", "signal-exit": "Signal exit", "stop-loss": "Stop loss", "take-profit": "Take profit", "end-of-replay": "Replay ended",
 };

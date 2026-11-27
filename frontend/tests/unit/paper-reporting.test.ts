@@ -1,7 +1,37 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { samplePaperCsv, samplePaperReport } from "@/lib/api/paper-report-preview";
 import { dashboardDate, dashboardLedger } from "@/lib/dashboard-ledger";
 import { isReportDate, parseReportPeriod, reportQuery } from "@/lib/paper-reporting";
+import { parsePaperReportResult } from "@/lib/api/paper-report-response";
+import { getStagingPaper } from "@/lib/api/staging-paper";
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("paper API response compatibility", () => {
+  it("keeps the report ready when the ledger includes a take-profit fill", () => {
+    const report = samplePaperReport({ from: "2026-11-11", to: "2026-11-12" });
+    if (report.status !== "ready") throw new Error("Expected ready paper report fixture");
+    const journal = report.data.journal.map((row) => row.side === "Sell" ? { ...row, reason: "take-profit" } : row);
+    const withTakeProfit = { ...report, data: { ...report.data, journal } };
+    expect(parsePaperReportResult(withTakeProfit)).toEqual(withTakeProfit);
+  });
+
+  it.each([
+    {},
+    { blockedReason: "PROFIT_CAP", consecutiveLosses: 2, controlsRevision: 7 },
+  ])("accepts both rollout versions of paper risk (%j)", async (newRisk) => {
+    const risk = { status: "blocked", dailyLossPaise: 0, lossLimitPaise: 180_000, tradesToday: 4, tradeLimit: 8, ...newRisk };
+    const payload = { status: "ready", data: {
+      source: "demo", environment: "PAPER", asOf: "2026-11-23T10:00:00Z", engine: "idle",
+      strategyId: null, agent: { name: "Paper execution agent", ready: false }, risk,
+      account: { capitalPaise: 2_500_000, cashPaise: 2_500_000, equityPaise: 2_500_000, positionQuantity: 0, perTradeRiskPaise: 75_000 },
+      replay: { sessionDate: null, sessionsDone: 0, sessionsTotal: 0, finished: false },
+      strategies: [], orders: [], trades: [], events: [],
+    } };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(payload)));
+    await expect(getStagingPaper()).resolves.toEqual(payload);
+  });
+});
 
 describe("paper report periods", () => {
   it("accepts inclusive or open IST dates and rejects invalid, reversed or repeated values", () => {

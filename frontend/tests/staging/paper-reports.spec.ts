@@ -23,6 +23,7 @@ test("loads authenticated paper ledger totals and downloads server CSV for the s
   const journal = page.getByRole("region", { name: "Trade journal table" });
   await expect(journal.getByRole("row")).toHaveCount(2);
   await expect(journal).toContainText("Sell");
+  await expect(journal).toContainText("Take profit");
 
   const responsePromise = page.waitForResponse((response) => response.url().includes(`${csvPath}?from=2026-11-13`));
   const downloadPromise = page.waitForEvent("download");
@@ -31,7 +32,7 @@ test("loads authenticated paper ledger totals and downloads server CSV for the s
   const response = await responsePromise;
   expect(response.headers()["cache-control"]).toContain("no-store");
   const csv = await response.text();
-  expect(csv).toContain("64.00,signal-exit,staging-sell");
+  expect(csv).toContain("64.00,take-profit,staging-sell");
   expect(csv).not.toContain("staging-buy");
 
   await page.getByRole("button", { name: "Sign out", exact: true }).click();

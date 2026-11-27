@@ -37,7 +37,7 @@ function isPaperReport(data: unknown): data is PaperReport {
     Array.isArray(strategies) && strategies.every((row) => object(row) && strategy(row.strategy) && integers(row, ["realisedPaise", "feesPaise", "fills", "closedTrades"])) &&
     Array.isArray(journal) && journal.every((row) => object(row) && date(row.date) && timestamp(row.filledAt) &&
       typeof row.id === "string" && typeof row.instrument === "string" && strategy(row.strategy) && (row.side === "Buy" || row.side === "Sell") &&
-      typeof row.reason === "string" && ["entry", "signal-exit", "stop-loss", "end-of-replay"].includes(row.reason) &&
+      typeof row.reason === "string" && ["entry", "signal-exit", "stop-loss", "take-profit", "end-of-replay"].includes(row.reason) &&
       integers(row, ["replay", "quantity", "fillPaise", "feesPaise", "pnlPaise"]));
 }
 

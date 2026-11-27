@@ -33,7 +33,7 @@ export type ReportTrade = {
   feesPaise: number;
   pnlPaise: number;
   filledAt: string;
-  reason: "entry" | "signal-exit" | "stop-loss" | "end-of-replay";
+  reason: "entry" | "signal-exit" | "stop-loss" | "take-profit" | "end-of-replay";
 };
 
 export type PaperReport = {

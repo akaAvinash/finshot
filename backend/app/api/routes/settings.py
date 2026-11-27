@@ -7,12 +7,20 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, status
 
 from app.api.routes.auth import Auth, RequiredSession, ensure_stepped_up
 from app.api.routes.brokers import csrf_session
 from app.auth.otp import mask_phone
-from app.auth.schemas import SettingsProfileIn, SettingsProfileOut, Timezone
+from app.auth.phone_change import PhoneChangeService
+from app.auth.schemas import (
+    PhoneChangeChallengeOut,
+    PhoneChangeConfirmIn,
+    PhoneChangeIn,
+    SettingsProfileIn,
+    SettingsProfileOut,
+    Timezone,
+)
 from app.auth.service import SessionInfo
 from app.paper import controls as tc
 from app.paper.service import PaperService
@@ -54,7 +62,7 @@ def get_paper(request: Request) -> PaperService:
 Paper = Annotated[PaperService, Depends(get_paper)]
 
 
-async def trade_controls_save_session(
+async def stepped_up_write_session(
     request: Request, auth: Auth, session: RequiredSession
 ) -> SessionInfo:
     """401, 403 TOTP_SETUP_REQUIRED, 403 CSRF_FAILED, 403 STEP_UP_REQUIRED, in
@@ -64,7 +72,8 @@ async def trade_controls_save_session(
     return session
 
 
-TradeControlsSaveSession = Annotated[SessionInfo, Depends(trade_controls_save_session)]
+TradeControlsSaveSession = Annotated[SessionInfo, Depends(stepped_up_write_session)]
+SteppedUpWriteSession = TradeControlsSaveSession
 
 
 @router.get(
@@ -96,3 +105,54 @@ async def get_trade_controls_history(
     session: RequiredSession, paper: Paper
 ) -> tc.TradeControlsHistoryOut:
     return await paper.trade_controls_history(session.user_id)
+
+
+def get_phone_change(request: Request) -> PhoneChangeService:
+    service: PhoneChangeService = request.app.state.phone_change
+    return service
+
+
+PhoneChange = Annotated[PhoneChangeService, Depends(get_phone_change)]
+
+
+@router.post(
+    "/phone/change",
+    response_model=PhoneChangeChallengeOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    operation_id="requestPhoneChange",
+)
+async def request_phone_change(
+    body: PhoneChangeIn, request: Request, session: SteppedUpWriteSession, service: PhoneChange
+) -> PhoneChangeChallengeOut:
+    challenge_id, expires_at, resend_at, masked = await service.request(
+        request=request, session=session, new_phone=body.new_phone
+    )
+    return PhoneChangeChallengeOut(
+        challenge_id=challenge_id,
+        expires_at=expires_at,
+        resend_available_at=resend_at,
+        destination_masked=masked,
+    )
+
+
+@router.post(
+    "/phone/change/confirm",
+    response_model=SettingsProfileOut,
+    operation_id="confirmPhoneChange",
+)
+async def confirm_phone_change(
+    body: PhoneChangeConfirmIn,
+    request: Request,
+    session: SteppedUpWriteSession,
+    service: PhoneChange,
+    auth: Auth,
+) -> SettingsProfileOut:
+    await service.confirm(
+        request=request, session=session, challenge_id=body.challenge_id, code=body.code
+    )
+    name, timezone = await auth.get_profile(session)
+    return SettingsProfileOut(
+        display_name=name,
+        timezone=cast(Timezone, timezone),
+        phone_masked=mask_phone(await auth.current_phone(session.user_id)),
+    )

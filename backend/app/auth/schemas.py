@@ -164,3 +164,19 @@ class TesterLogin(_Strict):
 class TotpLogin(_Strict):
     phone: str = Field(pattern=PHONE_PATTERN)
     code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class PhoneChangeIn(_Strict):
+    new_phone: str = Field(pattern=PHONE_PATTERN)
+
+
+class PhoneChangeChallengeOut(_Wire):
+    challenge_id: uuid.UUID
+    expires_at: datetime
+    resend_available_at: datetime
+    destination_masked: str
+
+
+class PhoneChangeConfirmIn(_Strict):
+    challenge_id: uuid.UUID
+    code: str = Field(pattern=r"^[0-9]{6}$")

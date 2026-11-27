@@ -24,6 +24,7 @@ Kind = Literal[
     "RECONCILIATION_MISMATCH",
     "NEW_SIGN_IN",
     "SIGNED_OUT_EVERYWHERE",
+    "PHONE_CHANGED",
 ]
 
 SEVERITIES: tuple[Severity, ...] = ("critical", "warning", "info")
@@ -66,4 +67,5 @@ CATALOG: dict[Kind, KindInfo] = {
     ),
     "NEW_SIGN_IN": KindInfo("security", "info", None, "New sign-in"),
     "SIGNED_OUT_EVERYWHERE": KindInfo("security", "warning", None, "Signed out everywhere"),
+    "PHONE_CHANGED": KindInfo("security", "critical", None, "Phone number changed"),
 }

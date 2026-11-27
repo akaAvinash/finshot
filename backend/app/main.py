@@ -22,6 +22,7 @@ from app.api.router import api_router
 from app.api.routes import health
 from app.auth.crypto import Keys
 from app.auth.otp import OtpProvider
+from app.auth.phone_change import PhoneChangeService
 from app.auth.providers import build_email_provider, build_sms_provider
 from app.auth.ratelimit import RateLimiter
 from app.auth.service import AuthService, Clock, utc_now
@@ -96,6 +97,7 @@ def create_app(
             clock=clock,
             stepup=app.state.stepup,
         )
+        app.state.phone_change = PhoneChangeService(app.state.auth)
         app.state.brokers = BrokerService(
             session_factory=app.state.session_factory,
             adapter=(

@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -211,3 +212,33 @@ class TesterInvite(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PhoneChangeChallenge(Base):
+    """A pending change of one account's phone number. The code was sent to
+    `new_phone_e164` and only a keyed digest is stored (under a label of its
+    own, so it can never verify a sign-in challenge or the reverse). It works
+    only for the session and account that requested it. `suppressed` is true
+    when the number could not be taken at request time: nothing was sent and
+    the challenge can never be confirmed."""
+
+    __tablename__ = "phone_change_challenges"
+    __table_args__ = (
+        CheckConstraint("attempts >= 0", name="attempts_non_negative"),
+        CheckConstraint(r"new_phone_e164 ~ '^\+91[6-9][0-9]{9}$'", name="phone_format"),
+        Index("ix_phone_change_challenges_user_id", "user_id"),
+        Index("ix_phone_change_challenges_expires_at", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4, server_default=_UUID_DEFAULT
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"))
+    new_phone_e164: Mapped[str] = mapped_column(String(16))
+    code_digest: Mapped[str] = mapped_column(String(64))
+    suppressed: Mapped[bool] = mapped_column(Boolean)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

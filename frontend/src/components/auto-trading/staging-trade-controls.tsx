@@ -7,7 +7,7 @@ import { Input, Label } from "@/components/ui/input";
 import { useNotification } from "@/components/ui/notifications";
 import { Status } from "@/components/ui/status";
 import { AuthError, verifyAccountStepUp } from "@/lib/auth/browser-client";
-import { stagingError } from "@/lib/api/staging-client";
+import { isUnconfirmedStagingWrite, stagingError } from "@/lib/api/staging-client";
 import {
   getTradeControlHistory, getTradeControlSettings, saveTradeControlSettings, tradeControlFieldErrors, tradeControlFields,
   type TradeControlBound, type TradeControlChange, type TradeControlField, type TradeControlSettings, type TradeControlValues,
@@ -153,14 +153,33 @@ function TradeControlForm({ settings, engineRunning, onReload, onSave }: {
     writing.current = controller;
     setBusy(true);
     setError("");
+    let saveStarted = false;
     try {
       if (pendingValues) await verifyAccountStepUp(code);
       if (controller.signal.aborted) return;
+      saveStarted = true;
       const saved = await saveTradeControlSettings(settings.revision, draft.values, controller.signal);
       if (!controller.signal.aborted) { setPendingValues(undefined); setCode(""); onSave(saved); }
     } catch (reason) {
       if (controller.signal.aborted) return;
       setCode("");
+      if (saveStarted && isUnconfirmedStagingWrite(reason)) {
+        setPendingValues(undefined);
+        try {
+          const latest = await getTradeControlSettings(controller.signal);
+          if (controller.signal.aborted) return;
+          if (latest.revision >= settings.revision && tradeControlFields.every((field) => latest.controls[field] === draft.values[field])) {
+            onSave(latest);
+            return;
+          }
+          setError("The save could not be confirmed. Load the latest saved limits before trying again.");
+        } catch {
+          if (controller.signal.aborted) return;
+          setError("The save could not be confirmed and the server limits could not be checked. Load the latest saved limits before trying again.");
+        }
+        setRevisionConflict(true);
+        return;
+      }
       if (reason instanceof AuthError && reason.code === "STEP_UP_REQUIRED") {
         setPendingValues(draft.values);
         return;

@@ -11,6 +11,9 @@ describe("demo broker authorization", () => {
     expect(demoAuthorizationPath(`${origin}${callback}`, origin)).toBe(callback);
     expect(demoAuthorizationPath(`https://other.example${callback}`, origin)).toBeUndefined();
     expect(demoAuthorizationPath(`/other?state=${state}`, origin)).toBeUndefined();
+    expect(demoAuthorizationPath(`https://user@demo.example${callback}`, origin)).toBeUndefined();
+    expect(demoAuthorizationPath(`${origin}${callback}#fragment`, origin)).toBeUndefined();
+    expect(demoAuthorizationPath(`http://demo.example${callback}`, origin)).toBeUndefined();
   });
 
   it("preserves provider values and rejects duplicate callback parameters", () => {

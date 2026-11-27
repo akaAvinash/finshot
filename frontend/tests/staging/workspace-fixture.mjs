@@ -37,13 +37,15 @@ export function createWorkspaceFixture() {
       return { id, name: latest.parameters.name, instrument: latest.parameters.instrument, version: latest.number };
     });
     const settings = contract.settings(owner);
-    const halted = state.paperState?.engine === "halted";
-    const paperSnapshot = () => ({ ...paper, strategies: active(), agent: { name: "Paper execution agent", ready: !!state.paperState?.strategyId },
-      account: { ...account, perTradeRiskPaise: settings.controls.maxRiskPerTradePaise }, risk: { ...risk,
-        status: halted ? "blocked" : "approved", blockedReason: halted ? "HALTED" : null,
-        tradeLimit: settings.controls.tradeLimit, lossLimitPaise: settings.controls.lossLimitPaise,
-        controlsRevision: settings.revision, tradesToday: state.paperState?.trades.length ?? 0 }, engine: "idle", strategyId: null,
-      replay: { sessionDate: null, sessionsDone: 0, sessionsTotal: 0, finished: false }, orders: [], trades: [], events: [], ...state.paperState });
+    const paperSnapshot = () => {
+      const halted = state.paperState?.engine === "halted";
+      return { ...paper, strategies: active(), agent: { name: "Paper execution agent", ready: !!state.paperState?.strategyId },
+        account: { ...account, perTradeRiskPaise: settings.controls.maxRiskPerTradePaise }, risk: { ...risk,
+          status: halted ? "blocked" : "approved", blockedReason: halted ? "HALTED" : null,
+          tradeLimit: settings.controls.tradeLimit, lossLimitPaise: settings.controls.lossLimitPaise,
+          controlsRevision: settings.revision, tradesToday: state.paperState?.trades.length ?? 0 }, engine: "idle", strategyId: null,
+        replay: { sessionDate: null, sessionsDone: 0, sessionsTotal: 0, finished: false }, orders: [], trades: [], events: [], ...state.paperState };
+    };
 
     if (path === "brokers/preview") return ready(brokers());
     const broker = /^brokers\/preview\/(zerodha|fyers)\/actions$/.exec(path)?.[1];

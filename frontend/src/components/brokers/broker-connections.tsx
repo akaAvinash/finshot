@@ -13,7 +13,7 @@ import {
   demoAuthorizationPath, getBrokerConnections, sendBrokerConnectionAction, startBrokerAuthorization,
   type BrokerAuthorizationStart, type BrokerConnectionsSnapshot,
 } from "@/lib/api/broker-connections-client";
-import { stagingError } from "@/lib/api/staging-client";
+import { isUnconfirmedStagingWrite, stagingError } from "@/lib/api/staging-client";
 import { AuthError, verifyAccountStepUp } from "@/lib/auth/browser-client";
 import { formatBrokerTime } from "@/lib/brokers";
 import { BrokerPortfolioPanel } from "./broker-portfolio";
@@ -32,9 +32,11 @@ export function BrokerConnections() {
   const [portfolioRevision, setPortfolioRevision] = useState(0);
   const opener = useRef<HTMLButtonElement>(null);
   const resultsHeading = useRef<HTMLHeadingElement>(null);
+  const reading = useRef<AbortController | null>(null);
   const notify = useNotification();
   useEffect(() => {
     const controller = new AbortController();
+    reading.current = controller;
     void getBrokerConnections(controller.signal).then((data) => {
       if (!controller.signal.aborted) { setSnapshot(data); setError(""); }
     }, (error: unknown) => {
@@ -43,12 +45,20 @@ export function BrokerConnections() {
     return () => controller.abort();
   }, [refresh]);
 
+  function reload(clearSnapshot = false) {
+    reading.current?.abort();
+    if (clearSnapshot) { setSnapshot(undefined); setError(""); }
+    setRefresh((value) => value + 1);
+  }
+
   function open(action: Intent, trigger: HTMLButtonElement) {
     opener.current = trigger;
     setIntent(action);
   }
 
   function updated(data: BrokerConnectionsSnapshot, action: "sync" | "disconnect") {
+    reading.current?.abort();
+    setError("");
     setSnapshot(data);
     setIntent(undefined);
     setPortfolioRevision((revision) => revision + 1);
@@ -59,9 +69,7 @@ export function BrokerConnections() {
   return <div className="space-y-4 sm:space-y-5">
     <PageHeading title="Brokers" description="Authorize demo accounts, sync read-only data, and review connection activity."
       actions={<><Status tone="accent" dot>Demo connections</Status>
-        <Button variant="outline" disabled={!!intent || (!snapshot && !error)} onClick={() => {
-          setSnapshot(undefined); setError(""); setRefresh((value) => value + 1);
-        }}>Refresh brokers</Button></>} />
+        <Button variant="outline" disabled={!!intent || (!snapshot && !error)} onClick={() => reload(true)}>Refresh brokers</Button></>} />
     {!snapshot && !error && <DashboardSkeleton label="Loading brokers" />}
     {error && <DataState error title="Brokers could not load" description={error} />}
     {snapshot && <>
@@ -118,21 +126,22 @@ export function BrokerConnections() {
       </Card>
     </>}
     {intent && <BrokerActionDialog intent={intent} onClose={() => setIntent(undefined)} onUpdated={updated}
-      onExpired={() => setRefresh((value) => value + 1)} restoreFocus={() => {
+      onExpired={() => reload()} onUnconfirmed={() => reload(true)} restoreFocus={() => {
         if (opener.current?.isConnected && !opener.current.disabled) opener.current.focus();
         else resultsHeading.current?.focus();
       }} />}
   </div>;
 }
 
-function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, restoreFocus }: {
+function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, onUnconfirmed, restoreFocus }: {
   intent: Intent; onClose: () => void; onUpdated: (value: BrokerConnectionsSnapshot, action: "sync" | "disconnect") => void;
-  onExpired: () => void; restoreFocus: () => void;
+  onExpired: () => void; onUnconfirmed: () => void; restoreFocus: () => void;
 }) {
   const [stepUp, setStepUp] = useState(false);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const codeInput = useRef<HTMLInputElement>(null);
   useEffect(() => { if (stepUp) codeInput.current?.focus(); }, [stepUp]);
@@ -140,7 +149,7 @@ function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, restoreFocu
 
   async function run(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (request.current) return;
+    if (request.current || unconfirmed) return;
     if (stepUp && !/^\d{6}$/.test(code)) { setError("Enter the six-digit authenticator code."); return; }
     const controller = new AbortController();
     request.current = controller;
@@ -163,6 +172,12 @@ function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, restoreFocu
       if (controller.signal.aborted) return;
       setCode("");
       if (error instanceof AuthError && error.code === "STEP_UP_REQUIRED" && intent.kind === "authorize") { setStepUp(true); return; }
+      if (intent.kind !== "authorize" && isUnconfirmedStagingWrite(error)) {
+        setUnconfirmed(true);
+        setError("The action could not be confirmed. Broker connections are refreshing. Close this dialog to check the account.");
+        onUnconfirmed();
+        return;
+      }
       if (error instanceof AuthError && error.code === "BROKER_AUTH_EXPIRED") onExpired();
       setError(error instanceof AuthError && error.code === "INVALID_TOTP" ? "That code didn’t match. Try a current authenticator code." :
         stagingError(error, "The demo broker action could not be completed."));
@@ -185,8 +200,8 @@ function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, restoreFocu
         </div>}
         {error && <p role="alert" className="text-sm text-negative">{error}</p>}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={busy}>{busy ? "Working…" : stepUp ? "Verify and continue" : `${verbs[intent.kind]} demo account`}</Button>
-          <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={busy || unconfirmed}>{busy ? "Working…" : stepUp ? "Verify and continue" : `${verbs[intent.kind]} demo account`}</Button>
+          <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>{unconfirmed ? "Close" : "Cancel"}</Button>
         </div>
       </form>
     </DialogContent>

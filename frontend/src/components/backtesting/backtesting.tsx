@@ -12,8 +12,7 @@ import { Status } from "@/components/ui/status";
 import type { BacktestConfig, BacktestRun, BacktestScenario, BacktestWorkspace, BacktestWorkspaceResult } from "@/lib/api/backtest-types";
 import { createTradeoClient } from "@/lib/api/client";
 import { stagingBacktests } from "@/lib/api/staging-backtests";
-import { stagingError } from "@/lib/api/staging-client";
-import { AuthError } from "@/lib/auth/browser-client";
+import { isUnconfirmedStagingWrite, stagingError } from "@/lib/api/staging-client";
 import { BacktestInputError, formatBacktestTime } from "@/lib/backtesting";
 import { formatSnapshotDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -191,7 +190,7 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
       if (!staging && (run.status === "queued" || run.status === "running")) setActiveRun(run.id);
     } catch (error) {
       if (controller.signal.aborted) return;
-      if (staging && (!(error instanceof AuthError) || error.status >= 500 || error.status === 408)) {
+      if (staging && isUnconfirmedStagingWrite(error)) {
         setUnconfirmed({ config, existingIds: new Set(result.data.runs.map(({ id }) => id)) });
         setSubmitError("The submission could not be confirmed. Check the run queue before submitting again.");
       } else {

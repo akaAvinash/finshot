@@ -22,6 +22,6 @@ export async function capture(page: Page, name: string) {
   await mkdir("screenshots", { recursive: true });
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole("img", { name: "FinShot", exact: true }).filter({ visible: true }).first()
-    .locator("img").evaluate((logo: HTMLImageElement) => logo.decode());
+    .locator("img").evaluateAll((logos) => Promise.all(logos.map((logo) => (logo as HTMLImageElement).decode())));
   await page.screenshot({ path: `screenshots/${name}.png`, fullPage: true, animations: "disabled" });
 }

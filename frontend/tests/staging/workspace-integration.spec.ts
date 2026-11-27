@@ -16,7 +16,7 @@ test.beforeEach(async ({ request }) => {
   expect((await request.post(`${fixture}/workspace/enable`)).status()).toBe(204);
 });
 
-test("authorizes two same-provider accounts, persists actions by connection ID and shows the stored portfolio", async ({ page, request }) => {
+test("authorizes two same-provider accounts, persists actions by connection ID and shows the stored portfolio", async ({ page, context, request }) => {
   await signInStaging(page);
   expect((await request.post(`${fixture}/expire-step-up`)).status()).toBe(204);
   await page.goto("/brokers");
@@ -27,7 +27,15 @@ test("authorizes two same-provider accounts, persists actions by connection ID a
   await dialog.getByLabel("Authenticator code").fill("645721");
   await dialog.getByRole("button", { name: "Verify and continue" }).click();
   await expect(page).toHaveURL(/\/brokers\/callback\?state=/);
+  await page.route("**/api/v1/broker-connections/authorizations/callback", (route) => route.fulfill({
+    status: 429, headers: { "Retry-After": "2" }, json: { code: "BROKER_RATE_LIMITED", message: "Too many requests." },
+  }), { times: 1 });
   await page.getByRole("button", { name: "Complete demo authorization" }).click();
+  const retryAuthorization = page.getByRole("button", { name: "Retry demo authorization" });
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Try again in 2 seconds.");
+  await expect(page).toHaveURL(/\/brokers\/callback$/);
+  await expect(retryAuthorization).toBeDisabled();
+  await retryAuthorization.click();
   await expect(page).toHaveURL(/\/brokers$/);
   await expect(broker.getByText("•••• 0248")).toHaveCount(1);
 
@@ -38,21 +46,63 @@ test("authorizes two same-provider accounts, persists actions by connection ID a
   await expect(broker.getByRole("button", { name: "Connect demo" })).toBeDisabled();
   await page.reload();
   await expect(broker.getByText("•••• 0248")).toHaveCount(2);
+  const api = "/api/v1/broker-connections";
+  const { connections: [firstAccount, secondAccount] } = await (await context.request.get(api)).json();
+  expect(firstAccount.connectionId).not.toBe(secondAccount.connectionId);
 
   await broker.getByRole("listitem").first().getByRole("button", { name: "Sync demo" }).click();
   const sync = page.getByRole("dialog", { name: "Sync •••• 0248?" });
   await request.post(`${fixture}/workspace/reject-broker`);
   await sync.getByRole("button", { name: "Sync demo account" }).click();
   await expect(sync.getByRole("alert")).toContainText("The broker connection changed.");
+  await page.route(`**${api}/${firstAccount.connectionId}/actions`, async (route) => {
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  }, { times: 1 });
   await sync.getByRole("button", { name: "Sync demo account" }).click();
-  await expect(sync).toHaveCount(0);
+  await expect(sync.getByRole("alert")).toContainText("Broker connections are refreshing");
+  await expect(sync.getByRole("button", { name: "Sync demo account" })).toBeDisabled();
+  await sync.getByRole("button", { name: "Close", exact: true }).click();
   await broker.getByRole("listitem").first().getByRole("button", { name: "View portfolio" }).click();
-  await expect(page.getByRole("region", { name: "Stored portfolio · •••• 0248" })).toContainText("535.123456");
-  await broker.getByRole("listitem").last().getByRole("button", { name: "Disconnect" }).click();
-  await page.getByRole("button", { name: "Disconnect demo account" }).click();
-  await expect(broker.getByText("•••• 0248")).toHaveCount(1);
+  const portfolio = page.getByRole("region", { name: "Stored portfolio · •••• 0248" });
+  await expect(portfolio).toContainText("535.123456");
+  await broker.getByRole("listitem").last().getByRole("button", { name: "View portfolio" }).click();
+  await expect(portfolio).toContainText("Sync the account to populate the demo portfolio.");
+  await expect(portfolio).not.toContainText("535.123456");
+
+  // Hold the snapshot triggered by an expired-sync response until after a disconnect.
+  let releaseSnapshot!: () => void;
+  let markSnapshotHeld!: () => void;
+  const held = new Promise<void>((resolve) => { markSnapshotHeld = resolve; });
+  const release = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+  await page.route(`**${api}`, async (route) => {
+    const previous = await route.fetch();
+    markSnapshotHeld();
+    await release;
+    // A successful disconnect aborts the old request before it can paint.
+    await route.fulfill({ response: previous }).catch(() => undefined);
+  }, { times: 1 });
+  await page.route(`**${api}/${secondAccount.connectionId}/actions`, (route) => route.fulfill({
+    status: 409, json: { code: "BROKER_AUTH_EXPIRED", message: "The demo authorization has expired." },
+  }), { times: 1 });
+  try {
+    await broker.getByRole("listitem").last().getByRole("button", { name: "Sync demo" }).click();
+    await sync.getByRole("button", { name: "Sync demo account" }).click();
+    await expect(sync.getByRole("alert")).toContainText("authorization has expired");
+    await held;
+    await sync.getByRole("button", { name: "Cancel" }).click();
+    const cancelled = page.waitForEvent("requestfailed", (request) => request.url().endsWith(api));
+    await broker.getByRole("listitem").last().getByRole("button", { name: "Disconnect" }).click();
+    await page.getByRole("button", { name: "Disconnect demo account" }).click();
+    await cancelled;
+    await expect(broker.getByText("•••• 0248")).toHaveCount(1);
+  } finally {
+    releaseSnapshot();
+  }
   await page.reload();
   await expect(broker.getByText("•••• 0248")).toHaveCount(1);
+  const { connections } = await (await context.request.get(api)).json();
+  expect(connections.map((row: { connectionId: string }) => row.connectionId)).toEqual([firstAccount.connectionId]);
 });
 
 test("recovers a pending backtest after reload and runs an approved strategy to a paper fill", async ({ page }) => {
@@ -103,12 +153,16 @@ test("recovers a pending backtest after reload and runs an approved strategy to 
   await expect(page.getByRole("button", { name: "Paper kill switch" })).toBeEnabled();
   await page.getByRole("button", { name: "Paper kill switch" }).click();
   await page.getByLabel("Type STOP to confirm").fill("STOP");
+  const halted = page.waitForResponse((response) => response.url().endsWith("/api/v1/auto-trading/paper/commands"));
   await page.getByRole("button", { name: "Confirm paper halt" }).click();
+  expect(await (await halted).json()).toMatchObject({ engine: "halted", risk: { status: "blocked", blockedReason: "HALTED" } });
   await expect(page.getByRole("button", { name: "Clear paper halt" })).toBeVisible();
   await page.unroute("**/api/v1/auto-trading/paper");
   await page.reload();
   await expect(page.getByRole("button", { name: "Clear paper halt" })).toBeVisible();
+  const reset = page.waitForResponse((response) => response.url().endsWith("/api/v1/auto-trading/paper/commands"));
   await page.getByRole("button", { name: "Clear paper halt" }).click();
+  expect(await (await reset).json()).toMatchObject({ engine: "idle", risk: { status: "approved", blockedReason: null } });
   await expect(page.getByRole("button", { name: "Start paper engine" })).toBeEnabled();
   await page.getByRole("tab", { name: "Trade log" }).click();
   await expect(page.getByRole("rowheader", { name: "NIFTY 50" })).toBeVisible();
@@ -128,6 +182,11 @@ test("saves bounded paper limits with authenticator confirmation and displays se
   await profit.fill("1234.56");
   await panel.getByRole("button", { name: "Save paper limits" }).click();
   await panel.getByLabel("Authenticator code").fill("645721");
+  await page.route("**/api/v1/settings/trade-controls", async (route) => {
+    expect(route.request().method()).toBe("PUT");
+    expect((await route.fetch()).status()).toBe(200);
+    await route.abort();
+  }, { times: 1 });
   await panel.getByRole("button", { name: "Verify and save" }).click();
   await expect(panel.getByText("Revision 1", { exact: false }).first()).toBeVisible();
   await panel.getByText("Trade Controls history", { exact: true }).click();

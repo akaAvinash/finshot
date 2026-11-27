@@ -495,7 +495,7 @@ paths:
         only whitespace, returns the whole catalog in catalog order; a query
         with no letter or digit after normalising returns an empty list, not
         an error. Examples: 101 spaces gives `400`; `"   "` gives the whole
-        catalog; `!!` gives `{"instruments": []}` with `200`.
+        catalog; `!!` gives `{"source": "demo", "instruments": []}` with `200`.
 
         **Catalog order** is the server's fixed listing order, the same order
         as `getMarketOverview` quotes. It is stable between calls but carries

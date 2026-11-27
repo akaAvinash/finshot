@@ -231,21 +231,17 @@ def after_the_first_clock_read(
     auth.clock = ticking
 
 
-@pytest.mark.parametrize("what", ["expired", "revoked", "step-up-closed"])
-def test_expiry_and_session_are_rechecked_when_the_number_changes(
-    client: TestClient, user: Browser, clock: FakeClock, what: str
+def test_expiry_is_rechecked_when_the_number_changes(
+    client: TestClient, user: Browser, clock: FakeClock
 ) -> None:
+    """The session is locked before the clock is read, so only the challenge can
+    change in between; revoked and closed sessions are covered by the lock tests."""
     challenge = ask(user).json()["challengeId"]
-    acts = {
-        "expired": lambda: db_rows(
-            db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now
-        ),
-        "revoked": lambda: db_rows(db(), "UPDATE sessions SET revoked_at = :t", t=clock.now),
-        "step-up-closed": lambda: db_rows(
-            db(), "UPDATE sessions SET step_up_until = :t", t=clock.now
-        ),
-    }
-    after_the_first_clock_read(client, clock, acts[what])
+    after_the_first_clock_read(
+        client,
+        clock,
+        lambda: db_rows(db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now),
+    )
     refused = confirm(user, challenge)
     assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
     assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
@@ -260,9 +256,10 @@ def confirm_while_another_connection_holds(
     finish_sql: str | None = None,
 ) -> Any:
     """Hold `lock_sql` on another connection, start a confirmation, wait until it is
-    really blocked on a lock, run `while_blocked`, then let the holder (optionally
+    really blocked behind the holder's lock, run `while_blocked`, then let the holder (optionally
     running `finish_sql` first) commit. Returns the confirmation's response."""
     locked, release = threading.Event(), threading.Event()
+    holder_pid: list[int] = []
 
     def holder() -> None:
         async def hold() -> None:
@@ -270,6 +267,7 @@ def confirm_while_another_connection_holds(
             try:
                 async with conn.transaction():
                     await conn.execute(lock_sql)
+                    holder_pid.append(conn.get_server_pid())
                     locked.set()
                     await asyncio.get_running_loop().run_in_executor(None, release.wait, 30)
                     if finish_sql:
@@ -290,7 +288,9 @@ def confirm_while_another_connection_holds(
             waiting = db_rows(
                 db(),
                 "SELECT count(*) AS n FROM pg_stat_activity"
-                " WHERE wait_event_type = 'Lock' AND datname = current_database()",
+                " WHERE wait_event_type = 'Lock' AND datname = current_database()"
+                " AND :holder = ANY(pg_blocking_pids(pid))",
+                holder=holder_pid[0],
             )[0]["n"]
             if waiting:
                 break
@@ -320,6 +320,23 @@ def test_step_up_is_judged_after_waiting_for_the_account_lock(
     )
     assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
     assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
+
+
+def test_step_up_is_judged_after_waiting_for_the_session_lock(
+    user: Browser, clock: FakeClock
+) -> None:
+    """A non-revoking lock on the session row delays the confirmation; the step-up
+    window closing meanwhile must still refuse it (the clock is read after every lock)."""
+    challenge = ask(user).json()["challengeId"]
+    db_rows(
+        db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now + timedelta(days=2)
+    )
+    refused = confirm_while_another_connection_holds(
+        user, challenge, "SELECT 1 FROM sessions FOR UPDATE", lambda: clock.advance(3601)
+    )
+    assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
+    assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
+    assert db_rows(db(), "SELECT 1 FROM alerts WHERE kind = 'PHONE_CHANGED'") == []
 
 
 def test_a_logout_in_flight_ends_the_confirmation(user: Browser) -> None:

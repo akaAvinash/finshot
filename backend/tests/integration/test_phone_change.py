@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+import asyncpg
 import pytest
 import yaml  # type: ignore[import-untyped]
 from alembic import command
@@ -247,6 +250,45 @@ def test_expiry_and_session_are_rechecked_when_the_number_changes(
     assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
     assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
     assert db_rows(db(), "SELECT 1 FROM alerts WHERE kind = 'PHONE_CHANGED'") == []
+
+
+def test_step_up_is_judged_after_waiting_for_the_account_lock(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    """A confirmation that waits for the account row while the step-up window closes
+    must be refused: `now` is sampled after the wait, not before it."""
+    challenge = ask(user).json()["challengeId"]
+    db_rows(
+        db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now + timedelta(days=2)
+    )
+    locked, release = threading.Event(), threading.Event()
+
+    def holder() -> None:
+        async def hold() -> None:
+            conn = await asyncpg.connect(db().replace("+asyncpg", ""))
+            try:
+                async with conn.transaction():
+                    await conn.execute("SELECT 1 FROM users FOR UPDATE")
+                    locked.set()
+                    await asyncio.get_running_loop().run_in_executor(None, release.wait)
+            finally:
+                await conn.close()
+
+        asyncio.run(hold())
+
+    thread = threading.Thread(target=holder)
+    thread.start()
+    assert locked.wait(10)
+    result: list[Any] = []
+    caller = threading.Thread(target=lambda: result.append(confirm(user, challenge)))
+    caller.start()
+    time.sleep(0.5)  # the request is now waiting for the account row
+    clock.advance(3601)  # the step-up window closes while it waits
+    release.set()
+    caller.join(20)
+    thread.join(10)
+    assert code_of(result[0]) == "PHONE_CHANGE_CODE_INVALID"
+    assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
 
 
 def test_wrong_codes_exhaust_the_challenge(user: Browser) -> None:

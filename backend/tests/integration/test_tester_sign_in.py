@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml  # type: ignore[import-untyped]
+import yaml
 from alembic import command
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
@@ -366,9 +367,9 @@ def test_database_caps_invites_at_15_minutes(client: TestClient, clock: FakeCloc
 # --------------------------------------------------------- the allowlist
 
 
-def test_allowlist_matches_the_contract_proposal() -> None:
-    proposal = yaml.safe_load((CONTRACT_DIR / "tester-sign-in.openapi.yaml").read_text())
-    assert set(proposal["x-tester-allowed-operations"]) == TESTER_ALLOWED_OPERATIONS
+def test_allowlist_matches_the_contract() -> None:
+    contract = yaml.safe_load((CONTRACT_DIR / "openapi.yaml").read_text())
+    assert set(contract["x-tester-allowed-operations"]) == TESTER_ALLOWED_OPERATIONS
     assert len(TESTER_ALLOWED_OPERATIONS) == 26
 
 
@@ -609,3 +610,40 @@ def test_concurrent_issue_and_purge_do_not_deadlock(client: TestClient, clock: F
             db(), "SELECT 1 FROM tester_invites WHERE used_at IS NULL AND revoked_at IS NULL"
         )
         assert len(live) <= 1
+
+
+def test_the_tester_denial_matches_every_operations_declared_403(signed_in: Browser) -> None:
+    contract = yaml.safe_load((CONTRACT_DIR / "openapi.yaml").read_text())
+
+    def resolve(node: Any) -> Any:
+        while isinstance(node, dict) and "$ref" in node:
+            target: Any = contract
+            for key in node["$ref"].split("/")[1:]:
+                target = target[key]
+            node = target
+        return node
+
+    checked = 0
+    for path, operations in contract["paths"].items():
+        for method, operation in operations.items():
+            operation_id = operation.get("operationId") if isinstance(operation, dict) else None
+            if (
+                operation_id is None
+                or operation_id in TESTER_ALLOWED_OPERATIONS
+                or path in PRE_LOGIN_PATHS
+            ):
+                continue
+            response = signed_in.send(
+                method.upper(), _fill(path), json={}, headers=signed_in.headers()
+            )
+            assert (response.status_code, code_of(response)) == (403, "TESTER_ACCESS_DENIED")
+            declared = resolve(operation["responses"]["403"])
+            schema = declared["content"]["application/json"]["schema"]
+            errors = list(
+                Draft202012Validator({**schema, "components": contract["components"]}).iter_errors(
+                    response.json()
+                )
+            )
+            assert not errors, (operation_id, [e.message for e in errors])
+            checked += 1
+    assert checked >= 16

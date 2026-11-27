@@ -1,5 +1,5 @@
 """Invite-only tester sign-in: invite codes, operator actions and the operation
-allowlist (contracts/tester-sign-in.openapi.yaml).
+allowlist (`x-tester-allowed-operations` in contracts/openapi.yaml).
 
 A tester is a dedicated user on a synthetic phone number with no `invites`
 row and no authenticator, so the regular OTP, authenticator and recovery

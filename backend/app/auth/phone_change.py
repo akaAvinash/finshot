@@ -225,6 +225,16 @@ class PhoneChangeService:
                     raise code_invalid()
                 if user is None or user.status != "active":
                     raise code_invalid()
+                old_phone = user.phone_e164
+                old_invite = await db.scalar(
+                    select(Invite)
+                    .where(Invite.phone_e164 == old_phone, Invite.revoked_at.is_(None))
+                    .with_for_update()
+                )
+                if old_invite is None:
+                    raise code_invalid()
+                # Lock order: number, account row, old invite, then this session (the
+                # operator's revoke_invite takes the invite before sessions).
                 # The initiating session must still be live and stepped up: another
                 # session may have ended it while this request waited.
                 live = await db.scalar(
@@ -241,14 +251,6 @@ class PhoneChangeService:
                     .with_for_update(read=True)
                 )
                 if live is None:
-                    raise code_invalid()
-                old_phone = user.phone_e164
-                old_invite = await db.scalar(
-                    select(Invite)
-                    .where(Invite.phone_e164 == old_phone, Invite.revoked_at.is_(None))
-                    .with_for_update()
-                )
-                if old_invite is None:
                     raise code_invalid()
                 db.add(Invite(phone_e164=new_phone, email=old_invite.email, created_at=now))
                 old_invite.revoked_at = now

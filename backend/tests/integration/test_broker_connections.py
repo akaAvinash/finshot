@@ -480,9 +480,17 @@ def test_a_sync_overtaken_by_a_reauthorization_is_discarded(
     connection_id = connect(user, contract)
 
     def reauthorize_meanwhile() -> None:
-        sql = "UPDATE broker_connections SET connected_at = connected_at + interval '1 second'"
+        # Take the same advisory lock the service uses (try, so a lock held
+        # across the provider call fails this test at once instead of hanging).
+        sql = (
+            "UPDATE broker_connections SET connected_at = connected_at + interval '1 second'"
+            " WHERE pg_try_advisory_xact_lock("
+            "hashtextextended('broker:' || user_id::text || ':' || provider, 0))"
+            " RETURNING id"
+        )
         with ThreadPoolExecutor(max_workers=1) as pool:
-            pool.submit(db_rows, db(), sql).result()
+            rows = pool.submit(db_rows, db(), sql).result()
+        assert rows, "the advisory lock was held during the provider call"
 
     adapter.during_fetch = reauthorize_meanwhile
     refused = action(user, connection_id, "sync")

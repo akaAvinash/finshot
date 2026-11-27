@@ -268,7 +268,14 @@ def step(
     # 2. Stop-loss against this session's low; if it was not reached, the
     # Trade Controls take-profit against this session's high.
     stop = state.position_stop_paise
-    target = state.position_target_paise
+    # The target follows the current control, so turning take-profit off (or
+    # changing it) while a position is open applies from the next session.
+    target = (
+        None
+        if limits.take_profit_bps is None or state.position_entry_paise is None
+        else target_price(state.position_entry_paise, limits.take_profit_bps)
+    )
+    state.position_target_paise = target if state.position_quantity > 0 else None
     if state.position_quantity > 0 and stop is not None and low_paise <= stop:
         out.fills.append(_sell(state, sell_price(min(open_paise, stop)), "stop-loss", bar.time))
     elif state.position_quantity > 0 and target is not None and high_paise >= target:

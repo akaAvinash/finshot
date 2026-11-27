@@ -210,6 +210,20 @@ def test_stop_is_checked_before_take_profit() -> None:
     assert fill.reason == "stop-loss"
 
 
+def test_turning_take_profit_off_drops_a_stale_target_on_an_open_position() -> None:
+    state = held(position_target_paise=10_300)  # set under an earlier take-profit control
+    bars = sessions((100, 99, 101, 150), (100, 99, 101, 150), (100, 99, 101, 150))
+    out = run(state, bars, limits=engine.Limits(take_profit_bps=None))
+    assert out.fills == [] and state.position_target_paise is None
+
+
+def test_take_profit_follows_the_current_control_for_an_open_position() -> None:
+    state = held(position_target_paise=10_300)
+    bars = sessions((100, 99, 101, 104), (100, 99, 101, 104), (100, 99, 101, 104))
+    out = run(state, bars, limits=engine.Limits(take_profit_bps=500))  # raised to 5%
+    assert out.fills == [] and state.position_target_paise == engine.target_price(10_000, 500)
+
+
 def test_no_take_profit_when_off() -> None:
     state = held()
     bars = sessions((100, 99, 101, 150), (100, 99, 101, 150), (100, 99, 101, 150))

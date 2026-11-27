@@ -9,12 +9,14 @@ from typing import Any
 
 import pytest
 import yaml  # type: ignore[import-untyped]
+from alembic import command
 from fastapi.testclient import TestClient
 
 from app.paper import controls as tc
 from app.paper import engine
 from tests.integration.test_paper import (
     CONTRACT_PATH,
+    _alembic,
     active_strategy,
     check,
     ok,
@@ -298,3 +300,26 @@ def test_saved_controls_drive_the_replay_like_the_engine(
         (f.side, f.quantity, f.fill_paise, f.reason) for f in expected
     ]
     assert len(expected) > 0
+
+
+def test_migration_0013_keeps_take_profit_trades_on_rollback_and_backfills_the_peak(
+    user: Browser, db_url: str
+) -> None:
+    sid = active_strategy(user)
+    ok(user, {"action": "assign", "strategyId": sid})
+    db_rows(
+        db_url,
+        "INSERT INTO paper_trades (user_id, replay, instrument, side, quantity, fill_paise,"
+        " fees_paise, pnl_paise, reason, filled_at, created_at)"
+        " SELECT user_id, replay, 'SBIN', 'Sell', 7, 10100, 4, 321, 'take-profit', now(), now()"
+        " FROM paper_accounts",
+    )
+    db_rows(db_url, "UPDATE paper_accounts SET session_pnl_paise = 50000")
+    command.downgrade(_alembic(db_url), "0012")
+    rows = db_rows(db_url, "SELECT quantity, fees_paise, pnl_paise, reason FROM paper_trades")
+    assert [(r["quantity"], r["fees_paise"], r["pnl_paise"], r["reason"]) for r in rows] == [
+        (7, 4, 321, "signal-exit")
+    ]
+    command.upgrade(_alembic(db_url), "head")
+    peak = db_rows(db_url, "SELECT session_peak_pnl_paise AS p FROM paper_accounts")
+    assert peak[0]["p"] == 50000

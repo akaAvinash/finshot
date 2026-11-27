@@ -94,6 +94,8 @@ def upgrade() -> None:
         "paper_accounts",
         sa.Column("session_peak_pnl_paise", sa.BigInteger(), server_default="0", nullable=False),
     )
+    # A session already in progress keeps at least its current realised gain as its peak.
+    op.execute("UPDATE paper_accounts SET session_peak_pnl_paise = GREATEST(session_pnl_paise, 0)")
     op.add_column(
         "paper_accounts",
         sa.Column("session_loss_streak", sa.Integer(), server_default="0", nullable=False),
@@ -111,7 +113,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DELETE FROM paper_trades WHERE reason = 'take-profit'")
+    # The old constraint has no take-profit reason. These are sells at a target, so
+    # they become signal-exit; ids, quantities, fees and P&L stay as they are.
+    # The ledger rejects updates, so the trigger is off for this one statement.
+    op.execute("ALTER TABLE paper_trades DISABLE TRIGGER paper_trades_no_update")
+    op.execute("UPDATE paper_trades SET reason = 'signal-exit' WHERE reason = 'take-profit'")
+    op.execute("ALTER TABLE paper_trades ENABLE TRIGGER paper_trades_no_update")
     op.drop_constraint(op.f("ck_paper_trades_reason_valid"), "paper_trades", type_="check")
     op.create_check_constraint(op.f("ck_paper_trades_reason_valid"), "paper_trades", OLD_REASONS)
     op.drop_constraint(

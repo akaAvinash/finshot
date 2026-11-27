@@ -19,7 +19,8 @@ Deployed by a Remote Control session on the owner's machine, with the owner's go
 
 Rollback (no migration, so no restore needed): move `repo` aside, move
 `repo-c700c7e` back to `repo`, `docker tag tradeo-staging-api:rollback-c700c7e tradeo-staging-api:local`,
-then `./ops compose up -d --wait --force-recreate api frontend ingress`. The
+then `cd ~/tradeo-staging/repo/backend/staging && ./ops compose up -d --wait --force-recreate api frontend ingress`
+(from the restored release, not the moved-aside one). The
 frontend and ingress share the API's network namespace, so they are recreated
 with it; their images do not change.
 

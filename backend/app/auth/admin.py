@@ -5,6 +5,7 @@ these run on the server, against the configured database.
     python -m app.auth.admin invite revoke +919876543210
     python -m app.auth.admin invite list
     python -m app.auth.admin totp-reset +919876543210
+    python -m app.auth.admin user-id +919876543210   (for MARKET_STREAM_OWNER_USER_ID)
     python -m app.auth.admin staging-otp +919876543210
     python -m app.auth.admin tester issue +919000000001   (prints the code once)
     python -m app.auth.admin tester revoke +919000000001
@@ -138,6 +139,13 @@ async def reset_totp(db: AsyncSession, phone: str, now: datetime) -> bool:
     return bool(getattr(deleted, "rowcount", 0))
 
 
+async def user_id(db: AsyncSession, phone: str) -> str | None:
+    """The account id for a number (not a secret; used to name the market
+    stream owner in MARKET_STREAM_OWNER_USER_ID)."""
+    found = await db.scalar(select(User.id).where(User.phone_e164 == validate_phone(phone)))
+    return str(found) if found is not None else None
+
+
 def staging_code(path: str, phone: str) -> str | None:
     """The current unexpired staging code for a number, or None."""
     entry = read_staging_codes(Path(path), now=time.time()).get(validate_phone(phone))
@@ -175,6 +183,9 @@ async def _run(args: argparse.Namespace) -> int:
                     print(phone, email, "revoked" if revoked else "active")
             elif args.command == "tester":
                 await _run_tester(args, db, settings, now)
+            elif args.command == "user-id":
+                found = await user_id(db, args.phone)
+                print(found or "no account with that number")
             elif args.command == "totp-reset":
                 done = await reset_totp(db, args.phone, now)
                 print("authenticator removed" if done else "nothing to reset")
@@ -232,6 +243,7 @@ def _parser() -> argparse.ArgumentParser:
     tester_actions.add_parser("list")
     sub.add_parser("totp-reset").add_argument("phone")
     sub.add_parser("staging-otp").add_argument("phone")
+    sub.add_parser("user-id").add_argument("phone")
     return parser
 
 

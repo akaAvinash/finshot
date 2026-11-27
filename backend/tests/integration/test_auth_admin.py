@@ -90,3 +90,12 @@ def test_totp_reset_removes_the_authenticator(browser: Browser, db_url: str) -> 
     assert not db_rows(db_url, "SELECT 1 FROM totp_credentials")
     assert db_rows(db_url, "SELECT 1 FROM audit_events WHERE action = 'auth.totp_reset'")
     assert not _run(db_url, lambda db: admin.reset_totp(db, OTHER_PHONE, NOW))
+
+
+def test_user_id_names_the_account(browser: Browser, db_url: str) -> None:
+    browser.login()
+    (row,) = db_rows(db_url, "SELECT id FROM users WHERE phone_e164 = :p", p=PHONE)
+    assert _run(db_url, lambda db: admin.user_id(db, PHONE)) == str(row["id"])
+    assert _run(db_url, lambda db: admin.user_id(db, OTHER_PHONE)) is None
+    with pytest.raises(admin.AdminError):
+        _run(db_url, lambda db: admin.user_id(db, "123"))

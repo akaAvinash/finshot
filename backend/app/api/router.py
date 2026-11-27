@@ -11,6 +11,7 @@ from app.api.routes import (
     broker_connections,
     brokers,
     market,
+    market_stream,
     paper,
     reports,
     settings,
@@ -21,6 +22,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router)
 api_router.include_router(settings.router)
 api_router.include_router(market.router)
+api_router.include_router(market_stream.router)
 api_router.include_router(brokers.router)
 api_router.include_router(broker_connections.router)
 api_router.include_router(strategies.router)

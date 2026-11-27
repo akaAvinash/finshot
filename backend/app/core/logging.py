@@ -77,3 +77,6 @@ def configure_logging(settings: Settings) -> None:
         lib_logger.propagate = True
     # Our middleware logs each request, so the uvicorn access log is redundant.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # websockets DEBUG handshake records include the request target, and the
+    # Kite ticker URL carries the API key and access token in its query.
+    logging.getLogger("websockets").setLevel(max(logging.INFO, root.level))

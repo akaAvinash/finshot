@@ -29,6 +29,7 @@ the development kit is the roadmap.
 | Registration by emailed code, then authenticator sign-in | #37 contract, #38 (no migration) |
 | Recovery codes for a lost authenticator | #40 contract, #41 (migration `0012`) |
 | Setup required until an authenticator is active | #43 contract, this PR (no migration) |
+| Owner market stream (mock and Kite feeds, read-only) | #83 contract draft, this PR (no migration); see `docs/MARKET_STREAM.md` |
 
 ## Open
 

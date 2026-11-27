@@ -6,12 +6,24 @@ test("protects routes and supports demo OTP validation, change number, and sign-
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "Preview sign-in" })).toBeVisible();
   await expect(page).toHaveTitle(/FinShot/);
-  await expect(page.getByRole("img", { name: "FinShot", exact: true }).filter({ visible: true })).toBeVisible();
+  const wordmark = page.getByRole("img", { name: "FinShot", exact: true }).filter({ visible: true });
+  await expect(wordmark).toBeVisible();
+  await expect(wordmark.locator("img")).toHaveAttribute("src", "/brand/finshot-gold-fin.png");
+  await expect(wordmark.locator("img")).toHaveJSProperty("naturalWidth", 160);
   const favicon = page.locator('head link[rel="icon"]');
   await expect(favicon).toHaveAttribute("href", /^\/favicon\.ico(?:\?|$)/);
-  const icon = await page.request.get(await favicon.getAttribute("href") ?? "/favicon.ico");
+  const iconHref = await favicon.getAttribute("href") ?? "/favicon.ico";
+  const icon = await page.request.get(iconHref);
   expect(icon.ok()).toBeTruthy();
   expect(icon.headers()["content-type"]).toMatch(/^image\/(?:x-icon|vnd\.microsoft\.icon)\b/);
+  const iconSize = await page.evaluate(async (href) => {
+    const image = new Image();
+    image.src = href;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }, iconHref);
+  expect([16, 32, 48]).toContain(iconSize.width);
+  expect(iconSize.height).toBe(iconSize.width);
   await capture(page, "login-desktop-dark");
 
   await page.getByLabel("Mobile number").fill("1234567890");

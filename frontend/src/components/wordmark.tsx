@@ -5,19 +5,19 @@ import { cn } from "@/lib/utils";
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
     <span role="img" aria-label={productName} className={cn("inline-flex items-center leading-none", compact ? "gap-1.5" : "gap-2.5")}>
-      <span aria-hidden className={cn("relative shrink-0 overflow-hidden rounded-full bg-[#050505]", compact ? "size-8" : "size-10")}>
+      <span aria-hidden className={cn("shrink-0 rounded-lg bg-[#151619] dark:bg-transparent", compact ? "size-8" : "size-10")}>
         <Image
-          src="/brand/tradeo_approved_logo.png"
+          src="/brand/finshot-gold-fin.png"
           alt=""
-          width={2172}
-          height={724}
+          width={160}
+          height={160}
           loading="eager"
-          sizes={compact ? "172px" : "216px"}
-          className={cn("absolute max-w-none", compact ? "top-[-12px] left-[-28px] w-[172px]" : "top-[-16px] left-[-37px] w-[216px]")}
+          unoptimized
+          className="size-full"
         />
       </span>
-      <span aria-hidden className={cn("font-black italic tracking-[-0.075em] text-foreground", compact ? "text-xl" : "text-[1.8rem]")}>
-        Fin<span className="text-accent-foreground">Shot</span>
+      <span aria-hidden className={cn("font-bold tracking-[-0.055em] text-foreground", compact ? "text-xl" : "text-[1.8rem]")}>
+        {productName}
       </span>
     </span>
   );

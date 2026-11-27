@@ -127,14 +127,17 @@ Pinned-revision handoff, health checks, migrations, rollback and the Dashboard A
   `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` (server env only, never logged or
   committed). STARTTLS is required: settings refuse `smtp` without all five values
   or with `SMTP_STARTTLS=false`. SMS and push stay disabled or simulated.
-- Hard caps, counted in send attempts including retries: `NOTIFY_EMAIL_DAILY_CAP`
+- Hard caps, counted per send attempt (retries included) by each attempt's own
+  timestamp in `email_send_attempts`, under a mailbox-wide advisory lock: `NOTIFY_EMAIL_DAILY_CAP`
   (50 per UTC day across all users) and `NOTIFY_EMAIL_PER_USER_PER_HOUR` (5). A
   delivery over either is `skipped` with `DAILY_LIMIT` and nothing is sent.
+- Before each send the worker atomically re-takes its lease, so a batch that outlives
+  its lease cannot send a row another worker has since claimed.
 - A send failure shows as `PROVIDER_ERROR` (retries 1, 5, 15 min), then `failed`.
   Logs carry only the exception class, never the server reply, credentials or address.
 - Default stays `disabled`. Owner actions: create the mailbox, set the `SMTP_*`
   values and `NOTIFY_EMAIL_PROVIDER=smtp` in the server env yourself, restart the API
-  (migration 0019 adds an index).
+  (migration 0019 adds the `email_send_attempts` table).
 
 ## Data retention notes (contract 0.13.0)
 

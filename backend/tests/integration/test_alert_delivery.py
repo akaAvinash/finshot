@@ -565,7 +565,7 @@ def test_smtp_failure_is_clear_and_leaks_nothing(
     add_alert(uid(smtp_user), clock.now)
     for _ in range(3):
         assert run(smtp_client) == 0
-        clock.advance(16 * 60)
+        clock.advance(3601)
     (item,) = db_rows(db(), "SELECT status, status_reason, attempts FROM alert_deliveries")
     assert (item["status"], item["status_reason"], item["attempts"]) == (
         "failed",
@@ -645,3 +645,61 @@ def test_smtp_config_needs_mailbox_and_starttls(make_settings: SettingsFactory) 
     with pytest.raises(ValueError, match="STARTTLS"):
         make_settings(smtp_starttls=False, **base)
     assert make_settings().notify_email_provider == "disabled"
+
+
+def test_smtp_retry_counts_its_earlier_attempts_in_the_hourly_cap(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    me = uid(smtp_user)
+    smtp_server.fail_after_auth = True  # every attempt is recorded, even failed ones
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 0  # attempt 1 (hourly cap of the fixture is 2)
+    clock.advance(2 * 60)
+    assert run(smtp_client) == 0  # attempt 2 uses the last slot
+    clock.advance(6 * 60)
+    assert run(smtp_client) == 0  # attempt 3 would exceed the cap: skipped, not sent
+    row = db_rows(db(), "SELECT status, status_reason, attempts FROM alert_deliveries")[0]
+    assert row == {"status": "skipped", "status_reason": "DAILY_LIMIT", "attempts": 2}
+    assert len(db_rows(db(), "SELECT 1 FROM email_send_attempts")) == 2
+
+
+def test_smtp_caps_count_each_attempt_in_its_own_window(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    me = uid(smtp_user)
+    # An attempt just before the hour boundary, one a day ago: neither counts now.
+    for at in (clock.now - timedelta(minutes=61), clock.now - timedelta(days=1)):
+        db_rows(db(), "INSERT INTO email_send_attempts (user_id, at) VALUES (:u, :t)", u=me, t=at)
+    add_alert(me, clock.now)
+    add_alert(me, clock.now)
+    assert run(smtp_client) == 2  # hourly cap 2 not yet reached by the old attempts
+
+
+def test_a_lost_lease_is_not_sent_twice(
+    smtp_client: TestClient,
+    smtp_user: Browser,
+    smtp_server: FakeSmtpServer,
+    clock: FakeClock,
+) -> None:
+    add_alert(uid(smtp_user), clock.now)
+    svc = service(smtp_client)
+
+    async def stolen() -> int:
+        await svc.enqueue()
+        claimed = await svc._claim()
+        assert len(claimed) == 1
+        # another worker claims it after the lease expired and bumps attempts
+        db_rows_update = "UPDATE alert_deliveries SET attempts = attempts + 1"
+        await asyncio.to_thread(db_rows, db(), db_rows_update)
+        _, _, _, attempts, lease = claimed[0]
+        return int(await svc._still_owned(claimed[0][0], attempts, lease))
+
+    assert smtp_client.portal is not None
+    assert smtp_client.portal.call(stolen) == 0
+    assert smtp_server.messages == []

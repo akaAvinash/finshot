@@ -252,15 +252,16 @@ def test_expiry_and_session_are_rechecked_when_the_number_changes(
     assert db_rows(db(), "SELECT 1 FROM alerts WHERE kind = 'PHONE_CHANGED'") == []
 
 
-def test_step_up_is_judged_after_waiting_for_the_account_lock(
-    client: TestClient, user: Browser, clock: FakeClock
-) -> None:
-    """A confirmation that waits for the account row while the step-up window closes
-    must be refused: `now` is sampled after the wait, not before it."""
-    challenge = ask(user).json()["challengeId"]
-    db_rows(
-        db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now + timedelta(days=2)
-    )
+def confirm_while_another_connection_holds(
+    user: Browser,
+    challenge: str,
+    lock_sql: str,
+    while_blocked: Callable[[], None],
+    finish_sql: str | None = None,
+) -> Any:
+    """Hold `lock_sql` on another connection, start a confirmation, wait until it is
+    really blocked on a lock, run `while_blocked`, then let the holder (optionally
+    running `finish_sql` first) commit. Returns the confirmation's response."""
     locked, release = threading.Event(), threading.Event()
 
     def holder() -> None:
@@ -268,9 +269,11 @@ def test_step_up_is_judged_after_waiting_for_the_account_lock(
             conn = await asyncpg.connect(db().replace("+asyncpg", ""))
             try:
                 async with conn.transaction():
-                    await conn.execute("SELECT 1 FROM users FOR UPDATE")
+                    await conn.execute(lock_sql)
                     locked.set()
-                    await asyncio.get_running_loop().run_in_executor(None, release.wait)
+                    await asyncio.get_running_loop().run_in_executor(None, release.wait, 30)
+                    if finish_sql:
+                        await conn.execute(finish_sql)
             finally:
                 await conn.close()
 
@@ -278,17 +281,61 @@ def test_step_up_is_judged_after_waiting_for_the_account_lock(
 
     thread = threading.Thread(target=holder)
     thread.start()
-    assert locked.wait(10)
     result: list[Any] = []
     caller = threading.Thread(target=lambda: result.append(confirm(user, challenge)))
-    caller.start()
-    time.sleep(0.5)  # the request is now waiting for the account row
-    clock.advance(3601)  # the step-up window closes while it waits
-    release.set()
-    caller.join(20)
-    thread.join(10)
-    assert code_of(result[0]) == "PHONE_CHANGE_CODE_INVALID"
+    try:
+        assert locked.wait(10)
+        caller.start()
+        for _ in range(100):  # bounded: ten seconds
+            waiting = db_rows(
+                db(),
+                "SELECT count(*) AS n FROM pg_stat_activity"
+                " WHERE wait_event_type = 'Lock' AND datname = current_database()",
+            )[0]["n"]
+            if waiting:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the confirmation never blocked on the lock")
+        while_blocked()
+    finally:
+        release.set()
+        if caller.is_alive():
+            caller.join(20)
+        thread.join(10)
+    return result[0]
+
+
+def test_step_up_is_judged_after_waiting_for_the_account_lock(
+    user: Browser, clock: FakeClock
+) -> None:
+    """A confirmation that waits for the account row while the step-up window closes
+    must be refused: `now` is sampled after the wait, not before it."""
+    challenge = ask(user).json()["challengeId"]
+    db_rows(
+        db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now + timedelta(days=2)
+    )
+    refused = confirm_while_another_connection_holds(
+        user, challenge, "SELECT 1 FROM users FOR UPDATE", lambda: clock.advance(3601)
+    )
+    assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
     assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
+
+
+def test_a_logout_in_flight_ends_the_confirmation(user: Browser) -> None:
+    """The initiating session is locked while it is checked: a logout that is already
+    revoking it must finish first, and the confirmation must then see it revoked."""
+    challenge = ask(user).json()["challengeId"]
+    refused = confirm_while_another_connection_holds(
+        user,
+        challenge,
+        "SELECT 1 FROM sessions FOR UPDATE",
+        lambda: None,
+        "UPDATE sessions SET revoked_at = now()",
+    )
+    assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
+    assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
+    assert db_rows(db(), "SELECT 1 FROM alerts WHERE kind = 'PHONE_CHANGED'") == []
 
 
 def test_wrong_codes_exhaust_the_challenge(user: Browser) -> None:

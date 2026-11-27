@@ -17,6 +17,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app.agents.service import AgentService
+from app.alerts.delivery import Channel, NotificationProvider, build_providers
+from app.alerts.delivery_service import AlertDeliveryService
 from app.alerts.service import AlertService
 from app.api.router import api_router
 from app.api.routes import health
@@ -62,6 +64,7 @@ def create_app(
     clock: Clock = utc_now,
     market_provider: MarketDataProvider | None = None,
     broker_adapter: BrokerAdapter | None = None,
+    notification_providers: dict[Channel, NotificationProvider] | None = None,
 ) -> FastAPI:
     """`otp_provider`, `clock`, `market_provider` and `broker_adapter` are
     injection points for tests. Production wiring picks the OTP provider from
@@ -144,10 +147,17 @@ def create_app(
             enabled=settings.agents_enabled,
             stale_after_seconds=settings.agent_stale_after_seconds,
         )
+        app.state.alert_delivery = AlertDeliveryService(
+            settings=settings,
+            session_factory=app.state.session_factory,
+            clock=clock,
+            providers=notification_providers or build_providers(settings),
+        )
         app.state.alerts = AlertService(
             session_factory=app.state.session_factory,
             clock=clock,
             enabled=settings.alerts_enabled,
+            delivery=app.state.alert_delivery,
         )
         app.state.retention = RetentionService(
             settings=settings, session_factory=app.state.session_factory, clock=clock
@@ -176,6 +186,12 @@ def create_app(
         if settings.alerts_enabled and settings.alert_worker_enabled:
             workers.append(
                 asyncio.create_task(app.state.alerts.run_worker(settings.alert_worker_poll_seconds))
+            )
+        if settings.alerts_enabled and settings.notify_worker_enabled:
+            workers.append(
+                asyncio.create_task(
+                    app.state.alert_delivery.run_worker(settings.notify_worker_poll_seconds)
+                )
             )
         if not settings.tester_sign_in_enabled:
             # Disabling tester sign-in ends every tester session, even ones an

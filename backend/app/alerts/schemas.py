@@ -57,22 +57,56 @@ class AlertInAppOut(_Wire):
     info: bool
 
 
+Channel = Literal["email", "sms", "push"]
+UnavailableReason = Literal["PROVIDER_NOT_CONFIGURED", "NO_DESTINATION"]
+DeliveryReason = Literal[
+    "PROVIDER_ERROR", "DAILY_LIMIT", "NO_DESTINATION", "PROVIDER_NOT_CONFIGURED", "CHANNEL_DISABLED"
+]
+
+
 class AlertChannelOut(_Wire):
-    channel: Literal["email", "sms", "push"]
-    available: Literal[False] = False
-    enabled: Literal[False] = False
+    channel: Channel
+    available: bool
+    unavailable_reason: UnavailableReason | None
+    enabled: bool
+    min_severity: Severity
+    destination_masked: str | None
 
 
 class AlertPreferencesOut(_Wire):
     in_app: AlertInAppOut
-    channels: list[AlertChannelOut] = Field(
-        default_factory=lambda: [
-            AlertChannelOut(channel="email"),
-            AlertChannelOut(channel="sms"),
-            AlertChannelOut(channel="push"),
-        ]
-    )
+    channels: list[AlertChannelOut]
     updated_at: datetime | None
+
+
+class AlertChannelIn(_Wire):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    channel: Channel
+    enabled: bool = Field(strict=True)
+    min_severity: Severity
+
+
+class AlertChannelsIn(_Wire):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    channels: list[AlertChannelIn] = Field(min_length=3, max_length=3)
+
+
+class AlertDeliveryOut(_Wire):
+    id: str
+    kind: Literal["alert", "test"]
+    alert_id: str | None
+    channel: Channel
+    status: Literal["pending", "sent", "failed", "skipped"]
+    status_reason: DeliveryReason | None
+    attempts: int
+    simulated: bool
+    destination_masked: str | None
+    created_at: datetime
+    sent_at: datetime | None
+
+
+class AlertDeliveryListOut(_Wire):
+    items: list[AlertDeliveryOut]
 
 
 class AlertInAppIn(_Wire):

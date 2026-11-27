@@ -239,6 +239,9 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/alerts",
         "/api/v1/alerts/{alertId}/ack",
         "/api/v1/alerts/preferences",
+        "/api/v1/alerts/channels",
+        "/api/v1/alerts/channels/{channel}/test",
+        "/api/v1/alerts/deliveries",
     }
     # Market data is read-only.
     for path, operations in paths.items():

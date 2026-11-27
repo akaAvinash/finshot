@@ -26,7 +26,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.models import AgentEvent
-from app.alerts.models import Alert
+from app.alerts.models import Alert, AlertDelivery
 from app.auth.models import AuditEvent, User
 from app.core.config import Settings
 from app.core.errors import ApiError
@@ -57,12 +57,17 @@ async def _delete_older(db: AsyncSession, user_id: uuid.UUID, cutoff: datetime) 
     alerts = await db.execute(
         delete(Alert).where(Alert.user_id == user_id, Alert.created_at < cutoff)
     )
+    deliveries = await db.execute(
+        delete(AlertDelivery).where(
+            AlertDelivery.user_id == user_id, AlertDelivery.created_at < cutoff
+        )
+    )
     events = await db.execute(
         delete(AgentEvent).where(AgentEvent.user_id == user_id, AgentEvent.created_at < cutoff)
     )
     return {
         "alerts": int(alerts.rowcount or 0),  # type: ignore[attr-defined]
-        "alertDeliveries": 0,
+        "alertDeliveries": int(deliveries.rowcount or 0),  # type: ignore[attr-defined]
         "agentEvents": int(events.rowcount or 0),  # type: ignore[attr-defined]
     }
 

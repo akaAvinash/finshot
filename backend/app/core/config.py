@@ -214,6 +214,19 @@ class Settings(BaseSettings):
     alert_worker_enabled: bool = True
     alert_worker_poll_seconds: float = Field(default=5.0, gt=0, le=300)
 
+    # --- Alert delivery by email, SMS and push (contract 0.13.0) -------------
+    # `log` is a simulated provider: it writes a masked log line and sends
+    # nothing. It is refused in production. No real provider exists yet.
+    notify_email_provider: Literal["disabled", "log"] = "disabled"
+    notify_sms_provider: Literal["disabled", "log"] = "disabled"
+    notify_push_provider: Literal["disabled", "log"] = "disabled"
+    notify_worker_enabled: bool = True
+    notify_worker_poll_seconds: float = Field(default=10.0, gt=0, le=300)
+    # Alerts older than this when the worker first sees them are not sent.
+    notify_lookback_seconds: int = Field(default=3600, ge=60, le=86_400)
+    notify_daily_limit_per_channel: int = Field(default=20, ge=1, le=1000)
+    notify_test_per_hour: int = Field(default=3, ge=1, le=60)
+
     # --- Data retention (contract 0.13.0) -------------------------------------
     # Bounds and default for the user's retention period, in days. The purge
     # worker runs every `retention_purge_interval_seconds` (the contract
@@ -300,6 +313,19 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "DATA_RETENTION_MIN_DAYS <= DATA_RETENTION_DEFAULT_DAYS <= DATA_RETENTION_MAX_DAYS"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_notify_provider_rules(self) -> Self:
+        simulated = {
+            self.notify_email_provider,
+            self.notify_sms_provider,
+            self.notify_push_provider,
+        }
+        if self.app_env == Environment.PRODUCTION and "log" in simulated:
+            raise ValueError(
+                "the simulated (log) notification provider is not allowed in production"
             )
         return self
 

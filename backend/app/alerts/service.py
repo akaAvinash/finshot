@@ -43,8 +43,12 @@ from sqlalchemy.sql.expression import Selectable
 
 from app.agents.models import AgentEvent
 from app.alerts.catalog import CATALOG, SEVERITIES, Severity, Source
+from app.alerts.delivery import CHANNELS
+from app.alerts.delivery_service import AlertDeliveryService
 from app.alerts.models import Alert, AlertPreference
 from app.alerts.schemas import (
+    AlertChannelOut,
+    AlertChannelsIn,
     AlertInAppOut,
     AlertLinkOut,
     AlertOut,
@@ -132,10 +136,12 @@ class AlertService:
         session_factory: async_sessionmaker[AsyncSession],
         clock: Callable[[], datetime],
         enabled: bool = True,
+        delivery: AlertDeliveryService | None = None,
     ) -> None:
         self._factory = session_factory
         self._clock = clock
         self._enabled = enabled
+        self.delivery = delivery
 
     @property
     def enabled(self) -> bool:
@@ -229,7 +235,43 @@ class AlertService:
         self._require_enabled()
         async with self._factory() as db, db.begin():
             prefs = await db.get(AlertPreference, user_id)
-        return _preferences_out(prefs)
+            return await self._preferences_full(db, user_id, prefs)
+
+    async def _preferences_full(
+        self, db: AsyncSession, user_id: uuid.UUID, prefs: AlertPreference | None
+    ) -> AlertPreferencesOut:
+        channels = (
+            await self.delivery.channels_out(db, user_id)
+            if self.delivery is not None
+            else [
+                AlertChannelOut(
+                    channel=c,
+                    available=False,
+                    unavailable_reason="PROVIDER_NOT_CONFIGURED",
+                    enabled=False,
+                    min_severity="critical",
+                    destination_masked=None,
+                )
+                for c in CHANNELS
+            ]
+        )
+        base = _preferences_out(prefs)
+        return AlertPreferencesOut(
+            in_app=base.in_app, channels=channels, updated_at=base.updated_at
+        )
+
+    async def save_channels(self, user_id: uuid.UUID, body: AlertChannelsIn) -> AlertPreferencesOut:
+        self._require_enabled()
+        if self.delivery is None:
+            raise unavailable()
+        await self.delivery.save_channels(user_id, body)
+        return await self.preferences(user_id)
+
+    def _require_delivery(self) -> AlertDeliveryService:
+        self._require_enabled()
+        if self.delivery is None:
+            raise unavailable()
+        return self.delivery
 
     async def save_preferences(
         self, user_id: uuid.UUID, body: AlertPreferencesIn
@@ -273,7 +315,7 @@ class AlertService:
                     )
                 )
             await db.flush()
-            out = _preferences_out(prefs)
+            out = await self._preferences_full(db, user_id, prefs)
         return out
 
     # ---------------------------------------------------------------- worker
@@ -431,6 +473,7 @@ def _preferences_out(prefs: AlertPreference | None) -> AlertPreferencesOut:
             warning=True if prefs is None else prefs.warning,
             info=True if prefs is None else prefs.info,
         ),
+        channels=[],
         updated_at=None if prefs is None else prefs.updated_at,
     )
 

@@ -9,7 +9,9 @@ from typing import Literal
 Severity = Literal["critical", "warning", "info"]
 Source = Literal["paper", "brokers", "agents", "security"]
 Environment = Literal["PAPER", "DEMO"]
-LinkKind = Literal["paper-trade", "paper-order", "paper-replay", "broker", "session"]
+LinkKind = Literal[
+    "paper-trade", "paper-order", "paper-replay", "broker", "broker-connection", "session"
+]
 Kind = Literal[
     "PAPER_ENGINE_HALTED",
     "PAPER_RISK_LIMIT_REACHED",
@@ -31,6 +33,7 @@ LINK_KINDS: tuple[LinkKind, ...] = (
     "paper-order",
     "paper-replay",
     "broker",
+    "broker-connection",
     "session",
 )
 

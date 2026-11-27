@@ -29,6 +29,7 @@ from app.auth.smtp import SmtpTransport
 from app.auth.stepup import StepUpService
 from app.backtests.service import BacktestService
 from app.brokers.adapter import BrokerAdapter, DemoBrokerAdapter
+from app.brokers.connections import BrokerConnectionService
 from app.brokers.service import BrokerService
 from app.cache.redis import create_redis
 from app.core.config import Environment, Settings, get_settings
@@ -104,6 +105,13 @@ def create_app(
             ),
             clock=clock,
             timeout_seconds=settings.broker_timeout_seconds,
+        )
+        app.state.broker_connections = BrokerConnectionService(
+            session_factory=app.state.session_factory,
+            adapter=app.state.brokers._adapter,
+            clock=clock,
+            timeout_seconds=settings.broker_timeout_seconds,
+            callback_path=settings.broker_callback_path,
         )
         app.state.strategies = StrategyService(
             session_factory=app.state.session_factory,

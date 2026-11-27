@@ -47,7 +47,8 @@ class Alert(Base):
         ),
         CheckConstraint(
             "link_kind IS NULL OR link_kind IN"
-            " ('paper-trade', 'paper-order', 'paper-replay', 'broker', 'session')",
+            " ('paper-trade', 'paper-order', 'paper-replay', 'broker', 'broker-connection',"
+            " 'session')",
             name="link_kind_valid",
         ),
         CheckConstraint("(link_kind IS NULL) = (link_id IS NULL)", name="link_complete"),
@@ -72,7 +73,7 @@ class Alert(Base):
     environment: Mapped[str | None] = mapped_column(String(8))
     title: Mapped[str] = mapped_column(String(120))
     message: Mapped[str] = mapped_column(Text)
-    link_kind: Mapped[str | None] = mapped_column(String(16))
+    link_kind: Mapped[str | None] = mapped_column(String(24))
     link_id: Mapped[str | None] = mapped_column(String(64))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

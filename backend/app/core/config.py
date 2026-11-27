@@ -147,6 +147,9 @@ class Settings(BaseSettings):
     # Live broker adapters need a separately approved phase.
     broker_provider: Literal["demo", "disabled"] = "demo"
     broker_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # The app's own callback page a provider returns the browser to. A path on
+    # the app's origin, never a full URL.
+    broker_callback_path: str = Field(default="/brokers/callback", pattern=r"^/[A-Za-z0-9/_-]*$")
 
     # --- Strategies (Phase C1) -------------------------------------------------
     # false: every strategy endpoint returns 503 STRATEGY_UNAVAILABLE.

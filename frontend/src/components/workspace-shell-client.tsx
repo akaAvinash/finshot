@@ -73,7 +73,7 @@ export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; child
         Skip to content
       </a>
       <aside className="sticky top-0 hidden h-dvh flex-col overflow-y-auto border-r border-border bg-sidebar px-4 lg:flex">
-        <Link href="/dashboard" aria-label="Tradeo dashboard" className="my-4 ml-1 self-start rounded-lg">
+        <Link href="/dashboard" aria-label="FinShot dashboard" className="my-4 ml-1 self-start rounded-lg">
           <Wordmark />
         </Link>
         <div className="mt-3 mb-6">
@@ -92,18 +92,18 @@ export function WorkspaceShellClient({ mode, children }: { mode: AuthMode; child
                 </DialogTrigger>
                 <DialogContent className="inset-y-0 left-0 top-0 flex h-dvh max-h-none w-[min(19rem,calc(100%-2rem))] max-w-none translate-x-0 translate-y-0 flex-col rounded-none border-y-0 border-l-0 bg-sidebar p-4">
                   <DialogTitle className="sr-only">Workspace navigation</DialogTitle>
-                  <DialogDescription className="sr-only">Go to a Tradeo workspace page.</DialogDescription>
+                  <DialogDescription className="sr-only">Go to a FinShot workspace page.</DialogDescription>
                   <div className="mb-5 self-start"><Wordmark /></div>
                   <Navigation pathname={pathname} onNavigate={() => setMenuOpen(false)} />
                   <div className="mt-auto"><SessionControls mode={mode} /></div>
                 </DialogContent>
               </Dialog>
             </div>
-            <Link href="/dashboard" aria-label="Tradeo dashboard" className="rounded-lg sm:hidden"><Wordmark compact /></Link>
+            <Link href="/dashboard" aria-label="FinShot dashboard" className="rounded-lg sm:hidden"><Wordmark compact /></Link>
             <div aria-label="Current page" className="hidden min-w-0 items-center gap-2 text-sm sm:flex">
               <span className="text-muted-foreground">Workspace</span>
               <ChevronRight aria-hidden className="size-3.5 text-muted-foreground" />
-              <span className="truncate font-medium">{activeRoute?.title ?? "Tradeo"}</span>
+              <span className="truncate font-medium">{activeRoute?.title ?? "FinShot"}</span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">

@@ -10,6 +10,22 @@ test.beforeEach(async ({ request }) => {
   expect((await request.post(`${fixture}/reset`)).status()).toBe(204);
 });
 
+test("includes a matching request ID in local routing and CSV errors", async ({ request }) => {
+  const headers = { "X-Request-ID": "finshot-qa.trace-1" };
+  const endpoints = [
+    { path: "broker-connections/unknown/subpath", method: "GET", status: 404, code: "NOT_FOUND" },
+    { path: "settings/trade-controls", method: "PATCH", status: 405, code: "METHOD_NOT_ALLOWED" },
+    { path: "reports/paper/trades.csv", method: "GET", status: 401, code: "UNAUTHENTICATED" },
+    { path: "auth/me", method: "PUT", status: 405, code: "METHOD_NOT_ALLOWED" },
+  ];
+  for (const { path, method, status, code } of endpoints) {
+    const response = await request.fetch(`${api}/${path}`, { method, headers });
+    expect(response.status()).toBe(status);
+    expect(response.headers()["x-request-id"]).toBe(headers["X-Request-ID"]);
+    expect(await response.json()).toMatchObject({ code, requestId: headers["X-Request-ID"] });
+  }
+});
+
 test("forwards public market data through ingress without sharing account credentials", async ({ context, page, request }) => {
   const overview = await request.get(`${api}/market/overview`, { headers: { "X-Forwarded-For": "192.0.2.9" } });
   expect(overview.status()).toBe(200);

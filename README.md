@@ -1,18 +1,16 @@
-<h1 align="center">
-  <img src="frontend/public/brand/tradeo_approved_logo.png" alt="Tradeo" width="420">
-</h1>
+<h1 align="center"><em>FinShot</em></h1>
 
 <p align="center">A personal trading workspace for Indian markets.</p>
 
-## Why I started Tradeo
+## Why I started FinShot
 
 I wanted one place to check Indian markets, keep a watchlist, test a trading idea, and see what happened to each order. I also wanted to set limits before a trade and understand why an order was accepted or stopped.
 
-Tradeo started with screen designs and sample data. The first step was making the screens easy to use on a phone as well as a desktop. Next came invite-only sign-in, account recovery, and a server that could run practice trades and keep a record of them. The Dashboard, Markets, Reports, Alerts, and account settings now use the backend on private staging. Brokers, Strategies, Backtesting, and Auto Trading still have browser previews while their screens are being connected.
+FinShot started with screen designs and sample data. The first step was making the screens easy to use on a phone as well as a desktop. Next came invite-only sign-in, account recovery, and a server that could run practice trades and keep a record of them. The Dashboard, Markets, Reports, Alerts, and account settings use the backend on private staging. The remaining workspace integrations are tested against the API contract before deployment.
 
 ## Who it is for
 
-Tradeo is being built for my own trading workflow. The first live pilot is planned for my account only. Invited testers can use a private preview when access is arranged. The current staging build uses demo market data and simulated trades.
+FinShot is being built for my own trading workflow. The first live pilot is planned for my account only. Invited testers can use a private preview when access is arranged. The current staging build uses demo market data and simulated trades.
 
 ## Before you start
 
@@ -51,8 +49,8 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     actor User
-    participant Web as Tradeo web app
-    participant API as Tradeo API
+    participant Web as FinShot web app
+    participant API as FinShot API
     participant Mail as Email
     alt First sign-in
         User->>Web: Enter invited phone number
@@ -104,7 +102,7 @@ flowchart LR
     Stop["Kill switch"] -->|Block new orders| Orders
     Orders --> Broker["Broker"]
     Broker -->|Order updates and fills| Check["Match orders and positions"]
-    Check --> Dashboard["Tradeo dashboard and trade log"]
+    Check --> Dashboard["FinShot dashboard and trade log"]
 ```
 
 ### From a code change to staging
@@ -133,4 +131,4 @@ flowchart LR
 
 ## Ownership
 
-Tradeo is private property. See the [all-rights-reserved notice](LICENSE) and the [third-party notices](frontend/THIRD_PARTY_NOTICES.md).
+FinShot is private property. See the [all-rights-reserved notice](LICENSE) and the [third-party notices](frontend/THIRD_PARTY_NOTICES.md).

@@ -54,11 +54,13 @@ const fixtureAddresses = new Map([
 ]);
 
 const workspaceReads = new Set(["/api/v1/brokers/preview", "/api/v1/strategies/preview", "/api/v1/auto-trading/paper",
-  "/api/v1/backtests/preview", "/api/v1/agents", "/api/v1/agents/health", "/api/v1/agents/events"]);
+  "/api/v1/backtests/preview", "/api/v1/agents", "/api/v1/agents/health", "/api/v1/agents/events",
+  "/api/v1/settings/trade-controls", "/api/v1/settings/trade-controls/history", "/api/v1/broker-connections"]);
 const workspaceCommands = new Set([
   "/api/v1/brokers/preview/zerodha/actions", "/api/v1/brokers/preview/fyers/actions",
   "/api/v1/strategies/preview/commands", "/api/v1/auto-trading/paper/commands",
   "/api/v1/backtests/preview/runs",
+  "/api/v1/broker-connections/authorizations", "/api/v1/broker-connections/authorizations/callback",
 ]);
 
 createServer((incoming, response) => {
@@ -173,8 +175,11 @@ createServer(async (request, response) => {
   const clientIp = request.headers["x-forwarded-for"];
 
   const marketRead = request.method === "GET" && url.pathname.startsWith("/api/v1/market/");
-  const workspaceRead = request.method === "GET" && (workspaceReads.has(url.pathname) || url.pathname.startsWith("/api/v1/backtests/preview/runs/"));
-  const workspaceCommand = request.method === "POST" && workspaceCommands.has(url.pathname);
+  const workspaceRead = request.method === "GET" && (workspaceReads.has(url.pathname) || url.pathname.startsWith("/api/v1/backtests/preview/runs/") ||
+    /^\/api\/v1\/broker-connections\/[^/]+\/portfolio$/.test(url.pathname));
+  const workspaceCommand = (request.method === "POST" && (workspaceCommands.has(url.pathname) ||
+    /^\/api\/v1\/broker-connections\/[^/]+\/actions$/.test(url.pathname))) ||
+    (request.method === "PUT" && url.pathname === "/api/v1/settings/trade-controls");
   if (marketRead || workspaceRead || workspaceCommand) {
     if (clientIp !== fixtureAddresses.get("primary") || request.headers["x-tradeo-client-ip"] || request.headers["x-tradeo-ingress-token"]) {
       return error(response, 400, "UNEXPECTED_HEADERS");
@@ -225,7 +230,7 @@ createServer(async (request, response) => {
     for await (const chunk of request) chunks.push(chunk);
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString());
-      if (workspaceFixture) return json(response, ...workspaceFixture.handle(url, session.phone, body));
+      if (workspaceFixture) return json(response, ...workspaceFixture.handle(url, session.phone, body, Date.parse(session.stepUpUntil) > Date.now()));
       return json(response, 200, { received: body });
     } catch {
       return error(response, 400, "INVALID_REQUEST");

@@ -1,18 +1,24 @@
 import Image from "next/image";
+import { productName } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
-    <span className={cn("relative block overflow-hidden rounded-lg bg-[#050505]", compact ? "h-8 w-[7.5rem]" : "h-12 w-[10.5rem]")}>
-      <Image
-        src="/brand/tradeo_approved_logo.png"
-        alt="Tradeo"
-        width={2172}
-        height={724}
-        loading="eager"
-        sizes={compact ? "172px" : "226px"}
-        className={cn("absolute max-w-none", compact ? "top-[-12px] left-[-28px] w-[172px]" : "top-[-14px] left-[-31px] w-[226px]")}
-      />
+    <span role="img" aria-label={productName} className={cn("inline-flex items-center leading-none", compact ? "gap-1.5" : "gap-2.5")}>
+      <span aria-hidden className={cn("relative shrink-0 overflow-hidden rounded-full bg-[#050505]", compact ? "size-8" : "size-10")}>
+        <Image
+          src="/brand/tradeo_approved_logo.png"
+          alt=""
+          width={2172}
+          height={724}
+          loading="eager"
+          sizes={compact ? "172px" : "216px"}
+          className={cn("absolute max-w-none", compact ? "top-[-12px] left-[-28px] w-[172px]" : "top-[-16px] left-[-37px] w-[216px]")}
+        />
+      </span>
+      <span aria-hidden className={cn("font-black italic tracking-[-0.075em] text-foreground", compact ? "text-xl" : "text-[1.8rem]")}>
+        Fin<span className="text-accent-foreground">Shot</span>
+      </span>
     </span>
   );
 }

@@ -1,22 +1,17 @@
 import type { NextRequest } from "next/server";
 import { readBoundedBody } from "@/lib/api/bounded-body";
+import { apiProxyResponse } from "@/lib/api/proxy-response";
 import { readAuthConfig } from "@/lib/auth/config";
 import { authCookieHeader, sessionCookie } from "@/lib/auth/upstream";
 
-const privateHeaders = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
 const filterKeys = new Set(["status", "severity", "source", "cursor", "limit"]);
-
-function fail(status: number, code: string, message: string) {
-  return Response.json({ code, message }, { status, headers: privateHeaders });
-}
 
 type Context = { params: Promise<{ endpoint?: string[] }> };
 
 async function proxy(request: NextRequest, context: Context) {
+  const { fail, requestId, wrongMethod, relay } = apiProxyResponse(request);
   const config = readAuthConfig();
   if (config.mode === "preview") return fail(404, "NOT_FOUND", "Alerts API is unavailable in preview mode.");
-  if (config.mode === "unavailable") return fail(503, "ALERTS_UNAVAILABLE", "Alerts are temporarily unavailable.");
-  if (!request.cookies.get(sessionCookie)?.value) return fail(401, "UNAUTHENTICATED", "Sign in to continue.");
 
   const segments = (await context.params).endpoint ?? [];
   let path: string;
@@ -33,16 +28,16 @@ async function proxy(request: NextRequest, context: Context) {
   } else {
     return fail(404, "NOT_FOUND", "Unknown alerts endpoint.");
   }
-  if (!methods.includes(request.method)) {
-    return new Response(null, { status: 405, headers: { ...privateHeaders, Allow: methods.join(", ") } });
-  }
+  if (!methods.includes(request.method)) return wrongMethod(methods);
+  if (config.mode === "unavailable") return fail(503, "ALERTS_UNAVAILABLE", "Alerts are temporarily unavailable.");
+  if (!request.cookies.get(sessionCookie)?.value) return fail(401, "UNAUTHENTICATED", "Sign in to continue.");
 
   const { search, searchParams } = request.nextUrl;
   if (search && (path !== "/api/v1/alerts" || search.length > 1024 || [...searchParams.keys()].some((key) => !filterKeys.has(key)))) {
     return fail(400, "INVALID_REQUEST", "The alerts filters are invalid.");
   }
 
-  const headers = new Headers({ Accept: "application/json", Cookie: authCookieHeader((name) =>
+  const headers = new Headers({ Accept: "application/json", "X-Request-ID": requestId, Cookie: authCookieHeader((name) =>
     request.method !== "GET" || name === sessionCookie ? request.cookies.get(name)?.value : undefined) });
 
   try {
@@ -72,10 +67,10 @@ async function proxy(request: NextRequest, context: Context) {
       await response.body?.cancel();
       return fail(502, "ALERTS_UNAVAILABLE", "Alerts are temporarily unavailable.");
     }
-    return new Response(response.body, { status: response.status, headers: { ...privateHeaders, "Content-Type": "application/json" } });
+    return await relay(response);
   } catch {
     return fail(503, "ALERTS_UNAVAILABLE", "Alerts are temporarily unavailable.");
   }
 }
 
-export { proxy as GET, proxy as POST, proxy as PUT };
+export { proxy as GET, proxy as HEAD, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE, proxy as OPTIONS };

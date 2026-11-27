@@ -3,6 +3,7 @@ import { FlaskConical, ShieldCheck } from "lucide-react";
 import { Wordmark } from "@/components/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Status } from "@/components/ui/status";
+import { productName } from "@/lib/brand";
 
 export function LoginFrame({ preview = false, title, children }: { preview?: boolean; title: string; children: ReactNode }) {
   return (
@@ -19,7 +20,7 @@ export function LoginFrame({ preview = false, title, children }: { preview?: boo
             Explore portfolio performance, a market watchlist and sample activity in one dashboard.
           </p>
         </div>
-        <p className="relative text-sm text-muted-foreground">Tradeo {preview ? "preview" : "staging"} · India</p>
+        <p className="relative text-sm text-muted-foreground">{productName} {preview ? "preview" : "staging"} · India</p>
       </aside>
       <div className="relative flex min-h-dvh flex-col">
         <header className="flex h-18 items-center justify-between px-6 sm:px-10 lg:justify-end">

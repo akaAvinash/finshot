@@ -13,21 +13,30 @@ import { getStagingPaper, sendStagingPaper, type StagingPaperResult } from "@/li
 import { formatInr, formatSnapshotDate } from "@/lib/format";
 import { PaperActivity, paperTime } from "./paper-activity";
 import { KillSwitch, PaperControls } from "./paper-controls";
+import { StagingTradeControls } from "./staging-trade-controls";
 
 const replayPollMs = 1500;
 type PaperData = Extract<StagingPaperResult, { status: "ready" }>["data"];
+const blockedReasons = {
+  HALTED: "The paper engine is halted.",
+  LOSS_LIMIT: "The daily loss limit was reached.",
+  TRADE_LIMIT: "The daily trade limit was reached.",
+  PROFIT_CAP: "The daily profit cap was reached.",
+  CONSECUTIVE_LOSSES: "The consecutive-loss limit was reached.",
+} as const;
 
 function ServerTradeControls({ snapshot }: { snapshot: PaperData }) {
   const { risk, account, replay } = snapshot;
   const limits = [
     ["Daily loss used", `${formatInr(risk.dailyLossPaise / 100)} / ${formatInr(risk.lossLimitPaise / 100)}`],
     ["Trades this session", `${risk.tradesToday} / ${risk.tradeLimit}`],
+    ...(risk.consecutiveLosses === undefined ? [] : [["Consecutive losses", String(risk.consecutiveLosses)]]),
     ["Per-trade risk limit", formatInr(account.perTradeRiskPaise / 100)],
     ["Paper equity", formatInr(account.equityPaise / 100)],
   ];
-  return <Card aria-labelledby="paper-trade-controls" className="space-y-4 p-4 sm:p-5">
+  return <Card aria-labelledby="paper-risk-status" className="space-y-4 p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 id="paper-trade-controls" className="font-semibold">Trade Controls</h2>
+      <h2 id="paper-risk-status" className="font-semibold">Paper risk status</h2>
       <Status tone={risk.status === "approved" ? "positive" : "negative"} dot>{risk.status === "approved" ? "Within limits" : "Risk blocked"}</Status>
     </div>
     <dl className="grid gap-3 min-[430px]:grid-cols-2 xl:grid-cols-4">
@@ -35,12 +44,13 @@ function ServerTradeControls({ snapshot }: { snapshot: PaperData }) {
         <dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-sm font-semibold tabular-nums">{value}</dd>
       </div>)}
     </dl>
+    {risk.controlsRevision !== undefined && <p className="text-xs text-muted-foreground">
+      Limits revision {risk.controlsRevision}{risk.blockedReason && ` · ${blockedReasons[risk.blockedReason]}`}
+    </p>}
     {replay.sessionsTotal > 0 && <p className="text-sm text-muted-foreground">
       Replay sessions {replay.sessionsDone} / {replay.sessionsTotal}{replay.sessionDate && <> · <time dateTime={replay.sessionDate}>{replay.sessionDate}</time></>}
       {replay.finished && " · Finished"}
     </p>}
-    <p className="text-sm text-muted-foreground">Paper limits come from the server. Editing limits, daily profit caps, post-cap confidence, consecutive-loss stops and take-profit controls are unavailable in staging.</p>
-    <p className="text-sm text-muted-foreground">Set the strategy’s stop loss and position size in its draft before activation.</p>
   </Card>;
 }
 
@@ -123,7 +133,8 @@ export function StagingAutoTrading() {
         canStart={!snapshot.replay.finished && snapshot.strategies.some(({ id }) => id === snapshot.strategyId)}
         finished={snapshot.replay.finished} haltError={commandError?.action === "halt" ? commandError.message : undefined} />
       <ServerTradeControls snapshot={snapshot} />
-      <PaperActivity snapshot={snapshot} />
     </>}
+    <StagingTradeControls engineRunning={running} onSaved={() => setRefresh((value) => value + 1)} />
+    {snapshot && <PaperActivity snapshot={snapshot} />}
   </div>;
 }

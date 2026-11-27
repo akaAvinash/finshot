@@ -7,12 +7,13 @@ import { parsePaperReportResult } from "./paper-report-response";
 
 export type PaperReportResponse = PaperReportResult | { status: "unauthenticated" | "invalid" | "unavailable" };
 
-export function requestPaperReport(upstream: string, token: string, period: ReportPeriod, csv = false) {
+export function requestPaperReport(upstream: string, token: string, period: ReportPeriod, csv = false, requestId?: string) {
   const path = csv ? reportCsvPath : "/api/v1/reports/paper";
   return fetch(`${upstream}${path}${reportQuery(period)}`, {
     headers: {
       Accept: csv ? "text/csv" : "application/json",
       Cookie: authCookieHeader((name) => name === sessionCookie ? token : undefined),
+      ...(requestId ? { "X-Request-ID": requestId } : {}),
     },
     cache: "no-store",
     redirect: "error",

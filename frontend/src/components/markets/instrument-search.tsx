@@ -5,7 +5,7 @@ import { Search, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/input";
-import type { Instrument } from "@/lib/api/market-types";
+import type { Instrument, MarketSource } from "@/lib/api/market-types";
 import { searchInstruments } from "@/lib/market/search";
 import { cn } from "@/lib/utils";
 
@@ -24,10 +24,11 @@ export function WatchlistToggle({ instrument, saved, onToggle }: {
   );
 }
 
-export function InstrumentSearch({ open, onOpenChange, instruments, watchlist, onSelect, onToggle, onClose }: {
+export function InstrumentSearch({ open, onOpenChange, instruments, source, watchlist, onSelect, onToggle, onClose }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   instruments: Instrument[];
+  source: MarketSource;
   watchlist: string[];
   onSelect: (id: string) => void;
   onToggle: (instrument: Instrument, add: boolean) => void;
@@ -42,7 +43,7 @@ export function InstrumentSearch({ open, onOpenChange, instruments, watchlist, o
         }}>
           <div>
             <DialogTitle>Find an instrument</DialogTitle>
-            <DialogDescription>Search sample NSE instruments by symbol or name.</DialogDescription>
+            <DialogDescription>{source === "demo" ? "Demo catalog. Search sample NSE instruments by symbol or name." : "Search NSE instruments by symbol or name."}</DialogDescription>
           </div>
           <SearchResults instruments={instruments} watchlist={watchlist} onSelect={(id) => {
             onSelect(id);

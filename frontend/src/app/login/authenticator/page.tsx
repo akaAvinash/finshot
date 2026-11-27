@@ -13,7 +13,7 @@ export default async function AuthenticatorPage() {
 
   return <LoginFrame title="Set up your authenticator">
     <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-      Add Tradeo to an authenticator app. You’ll use its six-digit codes to sign in next time.
+      Add your account to an authenticator app. You’ll use its six-digit codes to sign in next time.
     </p>
     <AuthenticatorSetup />
   </LoginFrame>;

@@ -1,7 +1,8 @@
 const authRoot = "/api/v1/auth";
 
 export class AuthError extends Error {
-  constructor(public readonly status: number, public readonly code?: string, public readonly retryAfter?: number, public readonly detail?: string) {
+  constructor(public readonly status: number, public readonly code?: string, public readonly retryAfter?: number,
+    public readonly detail?: string, public readonly requestId?: string, public readonly fieldErrors?: unknown) {
     super("Auth request failed");
   }
 }
@@ -23,7 +24,7 @@ export async function requestAccount(path: string, init?: RequestInit) {
     const error = await response.json().catch(() => null);
     const retryAfter = Number(response.headers.get("Retry-After"));
     throw new AuthError(response.status, error?.code, Number.isSafeInteger(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
-      typeof error?.message === "string" ? error.message : undefined);
+      typeof error?.message === "string" ? error.message : undefined, response.headers.get("X-Request-ID") ?? undefined, error?.fieldErrors);
   }
   return response;
 }

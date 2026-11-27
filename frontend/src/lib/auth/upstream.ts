@@ -48,16 +48,6 @@ export function requestUpstreamAuth(origin: string, endpoint: AuthEndpoint, init
   });
 }
 
-export function authProxyResponse(upstream: Response) {
-  const headers = new Headers({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-  for (const name of ["content-type", "retry-after", "x-request-id"]) {
-    const value = upstream.headers.get(name);
-    if (value) headers.set(name, value);
-  }
-  for (const cookie of upstream.headers.getSetCookie()) {
-    if (cookie.startsWith(`${sessionCookie}=`) || cookie.startsWith(`${csrfCookie}=`)) {
-      headers.append("Set-Cookie", cookie);
-    }
-  }
-  return new Response(upstream.body, { status: upstream.status, headers });
+export function authResponseCookies(upstream: Response) {
+  return upstream.headers.getSetCookie().filter((cookie) => cookie.startsWith(`${sessionCookie}=`) || cookie.startsWith(`${csrfCookie}=`));
 }

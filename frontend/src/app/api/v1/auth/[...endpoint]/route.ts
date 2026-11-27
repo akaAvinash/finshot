@@ -1,31 +1,27 @@
 import type { NextRequest } from "next/server";
 import { readBoundedBody } from "@/lib/api/bounded-body";
+import { apiProxyResponse } from "@/lib/api/proxy-response";
 import { readAuthConfig } from "@/lib/auth/config";
 import { getTrustedClientIp } from "@/lib/auth/ingress";
-import { authCookieHeader, authEndpointMethod, authProxyResponse, getAuthEndpoint, requestUpstreamAuth, sessionCookie } from "@/lib/auth/upstream";
+import { authCookieHeader, authEndpointMethod, authResponseCookies, getAuthEndpoint, requestUpstreamAuth, sessionCookie } from "@/lib/auth/upstream";
 
 const maxBodyBytes = 1024;
-
-function errorResponse(status: number, code: string, message: string) {
-  return Response.json({ code, message }, { status, headers: { "Cache-Control": "no-store" } });
-}
 
 type Context = { params: Promise<{ endpoint: string[] }> };
 
 async function proxy(request: NextRequest, context: Context) {
+  const { fail: errorResponse, requestId, wrongMethod, relay } = apiProxyResponse(request, "no-store");
   const config = readAuthConfig();
   const endpoint = getAuthEndpoint((await context.params).endpoint.join("/"));
   if (!endpoint || config.mode === "preview") return errorResponse(404, "NOT_FOUND", "Auth endpoint unavailable.");
   const method = authEndpointMethod(endpoint);
-  if (request.method !== method) {
-    return new Response(null, { status: 405, headers: { Allow: method, "Cache-Control": "no-store" } });
-  }
+  if (request.method !== method) return wrongMethod([method]);
   if (config.mode === "unavailable") return errorResponse(503, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");
 
   const clientIp = getTrustedClientIp(request.headers, config.ingressToken);
   if (!clientIp) return errorResponse(403, "UNTRUSTED_INGRESS", "Sign-in must go through the staging ingress.");
 
-  const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp });
+  const headers = new Headers({ Accept: "application/json", "X-Forwarded-For": clientIp, "X-Request-ID": requestId });
   const cookie = authCookieHeader((name) => endpoint !== "sessions" || name === sessionCookie ? request.cookies.get(name)?.value : undefined);
   if (cookie) headers.set("Cookie", cookie);
   const userAgent = request.headers.get("user-agent");
@@ -55,12 +51,13 @@ async function proxy(request: NextRequest, context: Context) {
 
     const upstream = await requestUpstreamAuth(config.upstream, endpoint, { headers, body });
     if (upstream.status !== 204 && !/^application\/json(?:\s*;|$)/i.test(upstream.headers.get("content-type") ?? "")) {
+      await upstream.body?.cancel();
       return errorResponse(502, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");
     }
-    return authProxyResponse(upstream);
+    return await relay(upstream, authResponseCookies(upstream));
   } catch {
     return errorResponse(503, "AUTH_UNAVAILABLE", "Sign-in is temporarily unavailable.");
   }
 }
 
-export { proxy as GET, proxy as POST, proxy as DELETE };
+export { proxy as GET, proxy as HEAD, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE, proxy as OPTIONS };

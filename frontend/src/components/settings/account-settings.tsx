@@ -138,8 +138,8 @@ export function AccountSettings() {
         <SettingsCard id="notification-preferences" title="Notifications" description="Choose which optional in-app alerts appear for your account." icon={Bell}>
           <Button asChild variant="outline"><Link href="/alerts#account-alert-preferences">Manage alert preferences</Link></Button>
         </SettingsCard>
-        <SettingsCard id="staging-settings-availability" title="Staging availability" description="Changing your phone number, data retention, and editing paper risk limits are unavailable in staging." icon={Monitor}>
-          <Button asChild variant="outline"><Link href="/auto-trading#paper-trade-controls">View paper limits</Link></Button>
+        <SettingsCard id="staging-settings-availability" title="Paper risk limits" description="Review the paper engine’s limits and recent changes." icon={Monitor}>
+          <Button asChild variant="outline"><Link href="/auto-trading#paper-trade-controls">Manage paper limits</Link></Button>
         </SettingsCard>
       </div>
       <div className="min-w-0 space-y-4">

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
@@ -181,6 +183,70 @@ def test_a_taken_number_looks_the_same_and_can_never_be_confirmed(
     refused = confirm(user, taken.json()["challengeId"])
     assert (refused.status_code, code_of(refused)) == (400, "PHONE_CHANGE_CODE_INVALID")
     assert db_rows(db(), "SELECT 1 FROM users WHERE phone_e164 = :p", p=PHONE)
+
+
+@pytest.mark.parametrize("kind", ["account", "invite"])
+def test_a_number_taken_after_the_request_cannot_be_confirmed(
+    client: TestClient, user: Browser, kind: str
+) -> None:
+    challenge = ask(user, "+916543210987").json()["challengeId"]
+    if kind == "account":
+        Browser(client).login_ready(phone="+916543210987")
+        open_step_up(FakeClock())
+    else:
+        invite_phone("+916543210987")
+    before_invites = db_rows(db(), "SELECT phone_e164, revoked_at FROM invites ORDER BY 1")
+    refused = confirm(user, challenge)
+    assert (refused.status_code, code_of(refused)) == (400, "PHONE_CHANGE_CODE_INVALID")
+    assert db_rows(db(), "SELECT 1 FROM users WHERE phone_e164 = :p", p=PHONE)
+    assert db_rows(db(), "SELECT phone_e164, revoked_at FROM invites ORDER BY 1") == before_invites
+    assert db_rows(db(), "SELECT 1 FROM sessions WHERE revoked_at IS NOT NULL") == []
+    assert user.get("/api/v1/auth/me").status_code == 200
+
+
+def after_the_first_clock_read(
+    client: TestClient, clock: FakeClock, act: Callable[[], None]
+) -> None:
+    """Make `confirm` see the world change between its attempt count and the
+    transaction that changes the number, as a wait for the number's lock would.
+    Only reads made by `PhoneChangeService.confirm` itself are counted."""
+    auth = client.app.state.auth  # type: ignore[attr-defined]
+    reads = {"n": 0}
+
+    def ticking() -> Any:
+        caller = sys._getframe(1)
+        if caller.f_code.co_name == "confirm" and caller.f_code.co_filename.endswith(
+            "phone_change.py"
+        ):
+            reads["n"] += 1
+            if reads["n"] == 2:
+                worker = threading.Thread(target=act)  # db_rows cannot run on the loop
+                worker.start()
+                worker.join()
+        return clock.now
+
+    auth.clock = ticking
+
+
+@pytest.mark.parametrize("what", ["expired", "revoked", "step-up-closed"])
+def test_expiry_and_session_are_rechecked_when_the_number_changes(
+    client: TestClient, user: Browser, clock: FakeClock, what: str
+) -> None:
+    challenge = ask(user).json()["challengeId"]
+    acts = {
+        "expired": lambda: db_rows(
+            db(), "UPDATE phone_change_challenges SET expires_at = :t", t=clock.now
+        ),
+        "revoked": lambda: db_rows(db(), "UPDATE sessions SET revoked_at = :t", t=clock.now),
+        "step-up-closed": lambda: db_rows(
+            db(), "UPDATE sessions SET step_up_until = :t", t=clock.now
+        ),
+    }
+    after_the_first_clock_read(client, clock, acts[what])
+    refused = confirm(user, challenge)
+    assert code_of(refused) == "PHONE_CHANGE_CODE_INVALID"
+    assert db_rows(db(), "SELECT phone_e164 FROM users") == [{"phone_e164": PHONE}]
+    assert db_rows(db(), "SELECT 1 FROM alerts WHERE kind = 'PHONE_CHANGED'") == []
 
 
 def test_wrong_codes_exhaust_the_challenge(user: Browser) -> None:

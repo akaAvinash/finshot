@@ -195,15 +195,18 @@ class PhoneChangeService:
 
         try:
             async with auth._factory() as db, db.begin():
-                now = auth.clock()
-                # Serialise every change to the same number.
+                # Serialise every change to the same number. Read the clock only
+                # after the lock: the wait must not let an expired challenge or
+                # session through.
                 lock_key = func.hashtextextended(f"phone:{new_phone}", 0)
                 await db.execute(select(func.pg_advisory_xact_lock(lock_key)))
+                now = auth.clock()
                 consumed = await db.scalar(
                     update(PhoneChangeChallenge)
                     .where(
                         PhoneChangeChallenge.id == challenge_id,
                         PhoneChangeChallenge.consumed_at.is_(None),
+                        PhoneChangeChallenge.expires_at > now,
                     )
                     .values(consumed_at=now)
                     .returning(PhoneChangeChallenge.id)
@@ -221,6 +224,19 @@ class PhoneChangeService:
                     select(User).where(User.id == session.user_id).with_for_update()
                 )
                 if user is None or user.status != "active":
+                    raise code_invalid()
+                # The initiating session must still be live and stepped up: another
+                # session may have ended it while this request waited.
+                live = await db.scalar(
+                    select(SessionRow.id).where(
+                        SessionRow.id == session.session_id,
+                        SessionRow.user_id == session.user_id,
+                        SessionRow.revoked_at.is_(None),
+                        SessionRow.expires_at > now,
+                        SessionRow.step_up_until > now,
+                    )
+                )
+                if live is None:
                     raise code_invalid()
                 old_phone = user.phone_e164
                 old_invite = await db.scalar(

@@ -1,5 +1,6 @@
 export const inboxSeverities = ["critical", "warning", "info"] as const;
 export const inboxSources = ["paper", "brokers", "agents", "security"] as const;
+export const inboxAlertLinkKinds = ["paper-trade", "paper-order", "paper-replay", "broker", "broker-connection", "session"] as const;
 
 export type InboxSeverity = (typeof inboxSeverities)[number];
 export type InboxSource = (typeof inboxSources)[number];
@@ -16,7 +17,7 @@ export type InboxAlert = {
   occurredAt: string;
   createdAt: string;
   acknowledgedAt: string | null;
-  link: { kind: "paper-trade" | "paper-order" | "paper-replay" | "broker" | "session"; id: string } | null;
+  link: { kind: (typeof inboxAlertLinkKinds)[number]; id: string } | null;
 };
 
 export type InboxPage = {

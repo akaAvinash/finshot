@@ -3,6 +3,7 @@ Redis, with the simulated (log) provider and an injected failing one."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import Callable, Iterator
@@ -304,6 +305,93 @@ def test_daily_cap_skips(make_app: Callable[..., TestClient], clock: FakeClock) 
         for r in db_rows(db(), "SELECT status, status_reason FROM alert_deliveries")
     )
     assert statuses == [("sent", None), ("skipped", "DAILY_LIMIT")]
+
+
+def _insert_deliveries(user_id: str, now: Any, count: int, kind: str = "test") -> None:
+    db_rows(
+        db(),
+        "INSERT INTO alert_deliveries (user_id, kind, channel, status, attempts, next_attempt_at,"
+        " created_at) SELECT :u, :k, 'sms', 'pending', 0, :t, :t FROM generate_series(1, :n)",
+        u=user_id,
+        k=kind,
+        t=now,
+        n=count,
+    )
+
+
+def test_daily_cap_counts_the_day_sending_starts(
+    make_app: Callable[..., TestClient], clock: FakeClock
+) -> None:
+    client = make_app(alert_worker_enabled=False, notify_daily_limit_per_channel=1, **SIMULATED)
+    browser = Browser(client)
+    browser.login_ready()
+    clock.advance(1)
+    me = uid(browser)
+    _insert_deliveries(me, clock.now, 2)  # queued today ...
+    clock.advance(20 * 3600)  # ... claimed after midnight UTC
+    assert run(client) == 1
+    assert sorted(r["status"] for r in db_rows(db(), "SELECT status FROM alert_deliveries")) == [
+        "sent",
+        "skipped",
+    ]
+
+
+def test_concurrent_claims_cannot_exceed_the_daily_cap(
+    make_app: Callable[..., TestClient], clock: FakeClock
+) -> None:
+    client = make_app(alert_worker_enabled=False, notify_daily_limit_per_channel=1, **SIMULATED)
+    browser = Browser(client)
+    browser.login_ready()
+    clock.advance(1)
+    _insert_deliveries(uid(browser), clock.now, 120)  # more than one claim batch
+    svc = service(client)
+
+    async def both() -> list[Any]:
+        return list(await asyncio.gather(svc._claim(), svc._claim()))
+
+    assert client.portal is not None
+    first, second = client.portal.call(both)
+    assert len(first) + len(second) == 1
+
+
+def test_exhausted_delivery_is_failed_not_retried_forever(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    _insert_deliveries(uid(user), clock.now, 1)
+    db_rows(db(), "UPDATE alert_deliveries SET attempts = 3")  # last attempt was interrupted
+    _insert_deliveries(uid(user), clock.now, 1)
+    assert run(client) == 1  # the healthy one still goes out
+    statuses = sorted(r["status"] for r in db_rows(db(), "SELECT status FROM alert_deliveries"))
+    assert statuses == ["failed", "sent"]
+    assert run(client) == 0
+
+
+def test_orphaned_alert_delivery_is_skipped_not_sent_as_a_test(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    save(user, body(sms=(True, "info")))
+    add_alert(uid(user), clock.now)
+    assert client.portal is not None
+    client.portal.call(service(client).enqueue)
+    db_rows(db(), "DELETE FROM alerts WHERE source = 'paper'")  # alert_id becomes NULL
+    assert run(client) == 0
+    row = db_rows(db(), "SELECT status, status_reason FROM alert_deliveries")[0]
+    assert row == {"status": "skipped", "status_reason": "CHANNEL_DISABLED"}
+
+
+def test_long_invite_email_is_masked_and_sent(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    long_email = "a@" + "d" * 59 + "." + "e" * 60 + ".example.com"
+    invite_phone(PHONE, email=long_email)
+    db_rows(db(), "UPDATE invites SET email = :e", e=long_email)
+    simulated = service(client)._providers
+    assert simulated["email"].configured
+    save(user, body(email=(True, "info")))
+    add_alert(uid(user), clock.now)
+    assert run(client) == 1
+    row = db_rows(db(), "SELECT status, destination_masked FROM alert_deliveries")[0]
+    assert row["status"] == "sent" and len(row["destination_masked"]) > 64
 
 
 def test_test_messages(client: TestClient, user: Browser, contract: dict[str, Any]) -> None:

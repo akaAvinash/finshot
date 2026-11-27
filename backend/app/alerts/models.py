@@ -161,7 +161,7 @@ class AlertDelivery(Base):
     status_reason: Mapped[str | None] = mapped_column(String(32))
     attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     simulated: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
-    destination_masked: Mapped[str | None] = mapped_column(String(64))
+    destination_masked: Mapped[str | None] = mapped_column(String(257))
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

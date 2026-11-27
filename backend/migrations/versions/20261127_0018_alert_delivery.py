@@ -55,10 +55,11 @@ def upgrade() -> None:
         sa.Column("status_reason", sa.String(32), nullable=True),
         sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
         sa.Column("simulated", sa.Boolean(), server_default=sa.text("false"), nullable=False),
-        sa.Column("destination_masked", sa.String(64), nullable=True),
+        sa.Column("destination_masked", sa.String(257), nullable=True),
         sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(_CHANNEL, name=op.f("ck_alert_deliveries_channel_valid")),
         sa.CheckConstraint(
             "kind IN ('alert', 'test')", name=op.f("ck_alert_deliveries_kind_valid")

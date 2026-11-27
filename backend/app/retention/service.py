@@ -13,6 +13,7 @@ every `retention_purge_interval_seconds` when the worker is enabled."""
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -122,7 +123,7 @@ class RetentionService:
         if not s.data_retention_min_days <= days <= s.data_retention_max_days:
             raise out_of_bounds(s.data_retention_min_days, s.data_retention_max_days)
         async with self._factory() as db, db.begin():
-            await db.execute(select(func.pg_advisory_xact_lock(_lock_key(user_id))))
+            await db.execute(select(func.pg_advisory_xact_lock(lock_key(user_id))))
             now = self._clock()
             row = await db.get(DataRetention, user_id, populate_existing=True)
             before = (
@@ -154,7 +155,7 @@ class RetentionService:
 
     async def purge_user(self, user_id: uuid.UUID) -> Counts:
         async with self._factory() as db, db.begin():
-            await db.execute(select(func.pg_advisory_xact_lock(_lock_key(user_id))))
+            await db.execute(select(func.pg_advisory_xact_lock(lock_key(user_id))))
             now = self._clock()
             row = await db.get(DataRetention, user_id, populate_existing=True)
             days = (
@@ -192,6 +193,12 @@ class RetentionService:
 
     async def purge_all(self) -> Counts:
         """Purge every user. Returns the totals deleted."""
+        totals, _ = await self.purge_pass()
+        return totals
+
+    async def purge_pass(self) -> tuple[Counts, int]:
+        """Purge every user, isolating failures. Returns the totals deleted and the
+        number of users whose purge failed (they are retried on the next pass)."""
         async with self._factory() as db:
             user_ids = list((await db.scalars(select(User.id).order_by(User.id))).all())
         totals: Counts = dict.fromkeys(CATEGORIES, 0)
@@ -215,7 +222,7 @@ class RetentionService:
             logger.info("retention_purged", **totals)
         if failed:
             logger.warning("retention_pass_incomplete", failed_users=failed)
-        return totals
+        return totals, failed
 
     async def run_worker(self, interval_seconds: float) -> None:
         while True:
@@ -233,7 +240,7 @@ class RetentionService:
 _monotonic = time.monotonic
 
 
-def _lock_key(user_id: uuid.UUID) -> Any:
+def lock_key(user_id: uuid.UUID) -> Any:
     return func.hashtextextended(f"retention:{user_id}", 0)
 
 
@@ -262,9 +269,14 @@ async def _main() -> None:
             session_factory=create_session_factory(engine),
             clock=lambda: datetime.now(UTC),
         )
-        print(await service.purge_all())
+        totals, failed = await service.purge_pass()
+        print(totals)
     finally:
         await engine.dispose()
+    if failed:
+        # A pass with failed users is not a success for a scheduler or operator.
+        print(f"{failed} user(s) failed; see the log", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

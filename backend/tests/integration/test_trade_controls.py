@@ -315,7 +315,10 @@ def test_migration_0013_keeps_take_profit_trades_on_rollback_and_backfills_the_p
         " FROM paper_accounts",
     )
     db_rows(db_url, "UPDATE paper_accounts SET session_pnl_paise = 50000")
+    ids_before = [r["id"] for r in db_rows(db_url, "SELECT id FROM paper_trades")]
+    assert len(ids_before) == 1
     command.downgrade(_alembic(db_url), "0012")
+    assert [r["id"] for r in db_rows(db_url, "SELECT id FROM paper_trades")] == ids_before
     rows = db_rows(db_url, "SELECT quantity, fees_paise, pnl_paise, reason FROM paper_trades")
     assert [(r["quantity"], r["fees_paise"], r["pnl_paise"], r["reason"]) for r in rows] == [
         (7, 4, 321, "signal-exit")

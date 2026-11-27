@@ -226,6 +226,61 @@ def test_purge_deletes_only_old_records_of_each_user(
     assert len(db_rows(db(), "SELECT 1 FROM audit_events WHERE action = 'retention.purged'")) == 1
 
 
+def test_one_failing_user_does_not_stop_the_others(
+    client: TestClient, user: Browser, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = Browser(client)
+    other.login_ready(phone=OTHER_PHONE)
+    me, them = uid(user), uid(other)
+    for who in (me, them):
+        add_alert(who, clock.now - timedelta(days=400))
+    service: RetentionService = client.app.state.retention  # type: ignore[attr-defined]
+    real = service.purge_user
+    first = sorted([me, them])[0]  # purge_all goes in id order: this user is first
+
+    async def flaky(user_id: Any) -> Any:
+        if str(user_id) == first:
+            raise RuntimeError("statement timeout")
+        return await real(user_id)
+
+    second = them if first == me else me
+    before = {first: count("alerts", first), second: count("alerts", second)}
+    monkeypatch.setattr(service, "purge_user", flaky)
+    totals = purge(client)
+    assert totals["alerts"] == 1
+    assert count("alerts", first) == before[first]  # kept for the next pass
+    assert count("alerts", second) == before[second] - 1
+
+
+@pytest.mark.parametrize(("took", "slept"), [(0.0, 100.0), (60.0, 40.0), (250.0, 0.0)])
+def test_the_worker_counts_the_purge_time_in_its_interval(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, took: float, slept: float
+) -> None:
+    from app.retention import service as module
+
+    class Stop(Exception):
+        pass
+
+    service: RetentionService = client.app.state.retention  # type: ignore[attr-defined]
+    now = {"t": 1000.0}
+    sleeps: list[float] = []
+
+    async def fake_purge() -> Any:
+        now["t"] += took
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        raise Stop
+
+    monkeypatch.setattr(service, "purge_all", fake_purge)
+    monkeypatch.setattr(module, "_monotonic", lambda: now["t"])
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+    assert client.portal is not None
+    with pytest.raises(Stop):
+        client.portal.call(service.run_worker, 100.0)
+    assert sleeps == [slept]
+
+
 def test_lengthening_never_moves_the_watermark_back(
     client: TestClient, user: Browser, clock: FakeClock
 ) -> None:
@@ -251,6 +306,96 @@ def test_purged_sources_are_not_alerted_again(
     add_agent_event(me, clock.now - timedelta(days=31), "RECONCILIATION_MISMATCH")
     add_agent_event(me, clock.now - timedelta(days=1), "RECONCILIATION_MISMATCH")
     assert alert_worker(client) == 1
+
+
+@pytest.mark.parametrize(
+    ("floor_days_ago", "source_days_ago", "alerted"),
+    [(30, 31, False), (30, 30, False), (30, 29, True), (None, 400, True)],
+    ids=["below", "equal", "above", "no-watermark"],
+)
+def test_the_mismatch_filter_uses_the_watermark(
+    client: TestClient,
+    user: Browser,
+    clock: FakeClock,
+    floor_days_ago: int | None,
+    source_days_ago: int,
+    alerted: bool,
+) -> None:
+    me = uid(user)
+    if floor_days_ago is not None:
+        db_rows(
+            db(),
+            "INSERT INTO data_retention (user_id, purged_through) VALUES (:u, :t)",
+            u=me,
+            t=clock.now - timedelta(days=floor_days_ago),
+        )
+    source = clock.now - timedelta(days=source_days_ago)
+    add_agent_event(me, source, "RECONCILIATION_MISMATCH")
+    assert alert_worker(client) == (1 if alerted else 0)
+    rows = db_rows(db(), "SELECT occurred_at FROM alerts WHERE source = 'agents'")
+    assert [r["occurred_at"] for r in rows] == ([source] if alerted else [])
+
+
+def test_the_broker_expiry_filter_uses_the_watermark(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    me = uid(user)
+    connected = user.post("/api/v1/brokers/preview/zerodha/actions", json={"action": "connect"})
+    assert connected.status_code == 200, connected.text
+    clock.advance(8 * 3600)  # expired now
+    # A watermark at the expiry itself: the alert may have been purged, so none is made.
+    db_rows(
+        db(),
+        "INSERT INTO data_retention (user_id, purged_through) SELECT :u, expires_at"
+        " FROM broker_connections",
+        u=me,
+    )
+    assert alert_worker(client) == 0
+    db_rows(db(), "UPDATE data_retention SET purged_through = purged_through - interval '1 second'")
+    assert alert_worker(client) == 1
+
+
+def test_the_agent_filters_share_the_watermark_semantics(
+    client: TestClient, user: Browser, clock: FakeClock
+) -> None:
+    """Replay finishes and cancelled orders compare with `purged_floor` too; check its
+    boundary on the real tables: strictly newer than the watermark, none = everything."""
+    assert client.portal is not None
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.paper.models import PaperReplayFinish
+    from app.retention.service import purged_floor
+
+    me = uid(user)
+    floor = clock.now - timedelta(days=30)
+    for replay, ago in enumerate((31, 30, 29), start=1):
+        db_rows(
+            db(),
+            "INSERT INTO paper_replay_finishes (user_id, replay, finished_at) VALUES (:u, :r, :t)",
+            u=me,
+            r=replay,
+            t=clock.now - timedelta(days=ago),
+        )
+
+    async def visible() -> list[int]:
+        engine = create_async_engine(db())
+        try:
+            async with async_sessionmaker(engine)() as session:
+                rows = await session.scalars(
+                    select(PaperReplayFinish.replay)
+                    .where(PaperReplayFinish.finished_at > purged_floor(PaperReplayFinish.user_id))
+                    .order_by(PaperReplayFinish.replay)
+                )
+                return list(rows)
+        finally:
+            await engine.dispose()
+
+    assert client.portal.call(visible) == [1, 2, 3]  # no watermark: everything
+    db_rows(
+        db(), "INSERT INTO data_retention (user_id, purged_through) VALUES (:u, :t)", u=me, t=floor
+    )
+    assert client.portal.call(visible) == [3]  # strictly newer than the watermark
 
 
 def test_bounds_come_from_settings(make_app: Callable[..., TestClient], clock: FakeClock) -> None:

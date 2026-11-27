@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
+import time
 import uuid
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +19,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 from alembic import command
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.auth import admin, tester
@@ -481,3 +484,112 @@ def test_migration_0015_round_trips(
     assert db_rows(db_url, "SELECT 1 FROM users WHERE phone_e164 = :p", p=TESTER_PHONE) == []
     command.upgrade(_alembic(db_url), "head")
     assert db_rows(db_url, "SELECT 1 FROM pg_tables WHERE tablename = 'tester_invites'")
+
+
+def test_issuing_again_after_a_purge_works(client: TestClient, clock: FakeClock) -> None:
+    redeem(Browser(client), TESTER_PHONE, issue(client, clock))
+    assert operator(client, lambda s, k: tester.purge_credentials(s, TESTER_PHONE, clock.now))
+    fresh = redeem(Browser(client), TESTER_PHONE, issue(client, clock))
+    assert fresh.status_code == 200, fresh.text
+    assert db_rows(db(), "SELECT purged_at FROM tester_identities")[0]["purged_at"] is None
+    # Regular-account numbers are still refused.
+    Browser(client).login_ready()
+    with pytest.raises(tester.TesterError):
+        issue(client, clock, PHONE)
+
+
+def test_concurrent_issuance_leaves_one_live_code(client: TestClient, clock: FakeClock) -> None:
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        codes = list(pool.map(lambda _: issue(client, clock), range(4)))
+    assert len(set(codes)) == 4
+    live = db_rows(
+        db(), "SELECT 1 FROM tester_invites WHERE used_at IS NULL AND revoked_at IS NULL"
+    )
+    assert len(live) == 1
+
+
+def test_redemption_overlapping_revocation_never_leaves_a_live_session(
+    client: TestClient, clock: FakeClock
+) -> None:
+    """Holds the invite row so a redemption and a revocation for the same
+    tester are both waiting on it, then releases them together."""
+
+    def hold_row(started: threading.Event, release: threading.Event) -> None:
+        async def run() -> None:
+            engine = create_async_engine(db())
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(text("SELECT 1 FROM tester_invites FOR UPDATE"))
+                    started.set()
+                    await asyncio.to_thread(release.wait, 10)
+            finally:
+                await engine.dispose()
+
+        asyncio.run(run())
+
+    for _ in range(4):
+        code = issue(client, clock)
+        browser = Browser(client)
+        browser.get_csrf()
+        active = browser.activate()
+        headers = {
+            **browser.headers(),
+            "Cookie": "; ".join(f"{c.name}={c.value}" for c in browser.jar.jar),
+        }
+        active.cookies.clear()
+        started, release = threading.Event(), threading.Event()
+        holder = threading.Thread(target=hold_row, args=(started, release))
+        holder.start()
+        assert started.wait(10)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            redeeming = pool.submit(
+                active.post,
+                LOGIN,
+                json={"phone": TESTER_PHONE, "inviteCode": code},
+                headers=headers,
+            )
+            revoking = pool.submit(
+                lambda: operator(
+                    client, lambda s, k: tester.revoke_access(s, TESTER_PHONE, clock.now)
+                )
+            )
+            time.sleep(0.5)  # both are now waiting on the held row
+            release.set()
+            assert redeeming.result(20).status_code in (200, 401)
+            assert revoking.result(20) is True
+        holder.join(10)
+        live = db_rows(
+            db(), "SELECT 1 FROM sessions WHERE tester_invite_id IS NOT NULL AND revoked_at IS NULL"
+        )
+        assert live == []
+    assert redeem(Browser(client), TESTER_PHONE, issue(client, clock)).status_code == 200
+
+
+def test_a_failed_startup_cleanup_is_retried(
+    make_app: Callable[..., TestClient],
+    client: TestClient,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    browser = Browser(client)
+    assert redeem(browser, TESTER_PHONE, issue(client, clock)).status_code == 200
+    real = tester.revoke_all_tester_sessions
+    calls = {"n": 0}
+
+    async def flaky(db: AsyncSession, now: Any) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("database down")
+        return int(await real(db, now))
+
+    monkeypatch.setattr(tester, "revoke_all_tester_sessions", flaky)
+    make_app(tester_sign_in_enabled=False)  # starts disabled; the first cleanup fails
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        rows = db_rows(db(), "SELECT revoked_at FROM sessions WHERE tester_invite_id IS NOT NULL")
+        if rows and all(r["revoked_at"] is not None for r in rows):
+            break
+        time.sleep(0.2)
+    assert calls["n"] >= 2
+    # Re-enabled: the earlier session stays dead.
+    assert browser.get("/api/v1/auth/me").status_code == 401

@@ -17,7 +17,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.crypto import Keys, hmac_hex
@@ -120,6 +120,10 @@ async def issue_invite(
     _validate_phone(phone)
     if ttl > MAX_INVITE_TTL or ttl <= timedelta(0):
         raise TesterError("an invite lasts at most 15 minutes")
+    # One issuance per tester at a time, released at the commit below.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended(f"tester:{phone}", 0)))
+    )
     user_id = await _identity(db, phone)
     if user_id is None:
         taken = await db.scalar(select(User.id).where(User.phone_e164 == phone)) or await db.scalar(
@@ -140,6 +144,10 @@ async def issue_invite(
         await db.flush()
         db.add(TesterIdentity(user_id=user_id, created_at=now))
         await db.flush()
+    # A purged tester that is issued a new code is active again.
+    await db.execute(
+        update(TesterIdentity).where(TesterIdentity.user_id == user_id).values(purged_at=None)
+    )
     await db.execute(
         update(TesterInvite)
         .where(

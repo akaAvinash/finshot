@@ -52,7 +52,29 @@ test("redeems a tester invite once, enforces the UI scope, and handles revocatio
   await page.goto("/auto-trading");
   await expect(page.getByText("Tester accounts have read-only access to paper limits.")).toBeVisible();
   await expect(page.getByText("Daily loss limit (₹)", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /save trade controls/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save paper limits", exact: true })).toHaveCount(0);
+
+  await page.goto("/strategies");
+  await page.getByRole("button", { name: "Create strategy" }).click();
+  await page.getByLabel("Strategy name").fill("Tester NIFTY demo");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await page.getByRole("button", { name: "View Tester NIFTY demo" }).click();
+  await page.getByRole("link", { name: "Open Backtesting" }).click();
+  await page.getByRole("button", { name: "Run demo backtest" }).click();
+  await expect(page.getByRole("region", { name: "Run queue" })).toContainText("Completed", { timeout: 12_000 });
+  await page.goto("/strategies");
+  await page.getByRole("button", { name: "View Tester NIFTY demo" }).click();
+  await page.getByRole("button", { name: "Activate demo" }).click();
+  await expect(page.getByRole("button", { name: "Pause demo" })).toBeEnabled();
+
+  await page.goto("/auto-trading");
+  await page.getByLabel("Assigned strategy").selectOption({ label: "Tester NIFTY demo · NIFTY 50" });
+  await page.getByRole("button", { name: "Start paper engine" }).click();
+  await expect(page.getByRole("button", { name: "Pause paper engine" })).toBeVisible();
+  await page.getByRole("button", { name: "Paper kill switch" }).click();
+  await page.getByLabel("Type STOP to confirm").fill("STOP");
+  await page.getByRole("button", { name: "Confirm paper halt" }).click();
+  await expect(page.getByRole("button", { name: "Clear paper halt" })).toBeEnabled();
 
   expect((await request.post(`${fixture}/tester/revoke`)).status()).toBe(204);
   await page.goto("/dashboard");

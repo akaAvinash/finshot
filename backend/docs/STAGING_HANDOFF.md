@@ -122,10 +122,16 @@ put back without restoring the database, Alembic sees `0012` as already applied
 and skips its migration, so code and schema would not match. Main has exactly
 one `0012` (`0012_recovery_codes`).
 
-## Rollback
+## Rollback for releases with migrations
+
+Use this procedure only to undo a release that ran an Alembic migration. For a
+release that ran no migration (such as 2026-11-27, above), follow that
+release's own rollback steps and do not restore a database dump.
 
 1. Backup in `~/.local/state/tradeo-staging/backups` (mode 0600, each with a
-   `.sha256`). Latest: `tradeo-staging-20261125T143541Z-T6Cc26rN-v1.dump.gpg`,
+   `.sha256`). Latest: `tradeo-staging-20261127T073059Z-aB8Xj0xm-v1.dump.gpg`
+   (72,025 bytes, before the 2026-11-27 release, which ran no migration).
+   Last pre-migration dump: `tradeo-staging-20261125T143541Z-T6Cc26rN-v1.dump.gpg`,
    69,586 bytes, 2026-11-25 14:35:41 UTC, taken just before the c700c7e release
    directory (14:44). Older: `20261125T094543Z` (10,293 bytes),
    `20261124T011242Z` (10,277 bytes).

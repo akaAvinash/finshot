@@ -4677,7 +4677,7 @@ components:
           type: string
           format: date-time
         reason:
-          enum: [entry, signal-exit, stop-loss, end-of-replay]
+          enum: [entry, signal-exit, stop-loss, take-profit, end-of-replay]
     ReportReconciliation:
       type: object
       required: [status, replay, ledgerCashPaise, accountCashPaise, ledgerQuantity, accountQuantity]

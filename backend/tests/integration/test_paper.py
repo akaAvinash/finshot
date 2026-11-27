@@ -119,7 +119,7 @@ def active_strategy(browser: Browser, **overrides: Any) -> str:
 def sessions(instrument_id: str) -> list[engine.Session]:
     candles = asyncio.run(DemoMarketDataProvider().get_candles(instrument_id, "1D"))
     assert candles is not None
-    return [engine.Session(c.time, c.open, c.low, c.close) for c in candles.candles]
+    return [engine.Session(c.time, c.open, c.low, c.close, c.high) for c in candles.candles]
 
 
 def expected_replay(
@@ -235,6 +235,9 @@ def test_active_strategy_makes_a_ready_idle_workspace(
         "lossLimitPaise": 2_500_000,
         "tradesToday": 0,
         "tradeLimit": 10,
+        "blockedReason": None,
+        "consecutiveLosses": 0,
+        "controlsRevision": 0,
     }
     assert data["account"] == {
         "capitalPaise": 100_000_000,

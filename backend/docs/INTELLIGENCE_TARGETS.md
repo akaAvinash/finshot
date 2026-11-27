@@ -395,6 +395,7 @@ from app.market.demo import DemoMarketDataProvider
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+
 async def main() -> None:
     p = DemoMarketDataProvider()
     bars = (await p.get_candles("NSE:NIFTY50", "1m")).candles
@@ -402,17 +403,29 @@ async def main() -> None:
     by = {b.time.astimezone(IST).strftime("%H:%M"): b for b in bars}
     for hh, mm in ((9, 30), (9, 45)):
         t0 = hh * 60 + mm
-        f = [b for b in bars if b.time.astimezone(IST).hour * 60 + b.time.astimezone(IST).minute < t0]
+        f = [
+            b for b in bars if b.time.astimezone(IST).hour * 60 + b.time.astimezone(IST).minute < t0
+        ]
         o, c = f[0].open, f[-1].close
         hi, lo = max(b.high for b in f), min(b.low for b in f)
-        print(f"{hh:02d}:{mm:02d}", len(f), "gap", round(1e4 * math.log(o / prev.close), 1),
-              "drive", round(1e4 * math.log(c / o), 1), "range", round(1e4 * math.log(hi / lo), 1),
-              "eff", round(abs(c - o) / (hi - lo), 3))
+        print(
+            f"{hh:02d}:{mm:02d}",
+            len(f),
+            "gap",
+            round(1e4 * math.log(o / prev.close), 1),
+            "drive",
+            round(1e4 * math.log(c / o), 1),
+            "range",
+            round(1e4 * math.log(hi / lo), 1),
+            "eff",
+            round(abs(c - o) / (hi - lo), 3),
+        )
         e = t0 + 1  # P0 is the bar stamped D + 1 min
         p0 = by[f"{e // 60:02d}:{e % 60:02d}"].close
         for h in (15, 30, 60):
             ph = by[f"{(e + h) // 60:02d}:{(e + h) % 60:02d}"].close
             print("  h", h, p0, ph, round(1e4 * math.log(ph / p0), 1))
+
 
 asyncio.run(main())
 ```

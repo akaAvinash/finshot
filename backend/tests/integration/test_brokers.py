@@ -439,10 +439,11 @@ def test_check_constraints_keep_their_intended_names() -> None:
         " AND conrelid::regclass::text IN ('broker_connections', 'broker_events')",
     )
     assert {r["conname"] for r in rows} == {
-        "ck_broker_connections_provider_valid",
+        "ck_broker_connections_provider_format",
+        "ck_broker_connections_status_reason_valid",
         "ck_broker_connections_environment_demo",
         "ck_broker_connections_expiry_after_connect",
-        "ck_broker_events_provider_valid",
+        "ck_broker_events_provider_format",
         "ck_broker_events_action_valid",
     }
 
@@ -498,9 +499,10 @@ def test_snapshot_reads_one_consistent_state(browser: Browser) -> None:
 
     def commit_disconnect() -> None:
         sql = (
-            "WITH gone AS (DELETE FROM broker_connections WHERE user_id = :u RETURNING user_id)"
-            " INSERT INTO broker_events (user_id, provider, action, at)"
-            " SELECT user_id, 'zerodha', 'disconnect', now() FROM gone"
+            "WITH gone AS (DELETE FROM broker_connections WHERE user_id = :u"
+            " RETURNING user_id, id)"
+            " INSERT INTO broker_events (user_id, connection_id, provider, action, at)"
+            " SELECT user_id, id, 'zerodha', 'disconnect', now() FROM gone"
         )
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(db_rows, _db(), sql, u=user_id).result()

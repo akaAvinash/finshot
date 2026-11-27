@@ -179,6 +179,12 @@ def test_openapi_documents_400_not_422(client: TestClient) -> None:
     assert set(events["get"]["responses"]) == {"200", "400", "401", "503"}
 
 
+def schema_actions(client: TestClient, name: str) -> list[str]:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    actions: list[str] = schemas[name]["properties"]["action"]["enum"]
+    return actions
+
+
 def test_no_order_routes_exist(client: TestClient) -> None:
     """Live order placement is out of scope for this foundation."""
     paths = client.get("/openapi.json").json()["paths"]
@@ -209,6 +215,11 @@ def test_no_order_routes_exist(client: TestClient) -> None:
         "/api/v1/market/instruments/{instrumentId}/candles",
         "/api/v1/brokers/preview",
         "/api/v1/brokers/preview/{provider}/actions",
+        "/api/v1/broker-connections",
+        "/api/v1/broker-connections/authorizations",
+        "/api/v1/broker-connections/authorizations/callback",
+        "/api/v1/broker-connections/{connectionId}/actions",
+        "/api/v1/broker-connections/{connectionId}/portfolio",
         "/api/v1/strategies/preview",
         "/api/v1/strategies/preview/commands",
         "/api/v1/backtests/preview",
@@ -229,6 +240,8 @@ def test_no_order_routes_exist(client: TestClient) -> None:
     for path, operations in paths.items():
         if path.startswith("/api/v1/market/"):
             assert set(operations) == {"get"}, path
+    # Broker connection actions never include anything that places an order.
+    assert set(schema_actions(client, "ConnectionActionIn")) == {"sync", "disconnect"}
     # Broker actions are limited to the four demo connection actions.
     schema = client.get("/openapi.json").json()["components"]["schemas"]
     assert set(schema["BrokerActionRequest"]["properties"]["action"]["enum"]) == {
@@ -245,7 +258,15 @@ def test_broker_adapter_protocol_is_read_only() -> None:
 
     for cls in (BrokerAdapter, DemoBrokerAdapter):
         public = {name for name in vars(cls) if not name.startswith("_")}
-        assert public == {"authorize", "fetch_account"}, cls
+        assert public == {
+            "providers",
+            "authorize_url",
+            "exchange",
+            "fetch_portfolio",
+            "revoke",
+            "authorize",
+            "fetch_account",
+        }, cls
 
 
 def test_access_log_is_json_with_request_id(

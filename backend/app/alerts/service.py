@@ -34,6 +34,7 @@ from sqlalchemy import (
     func,
     literal,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert
@@ -54,7 +55,7 @@ from app.alerts.schemas import (
 )
 from app.auth.models import AuditEvent
 from app.auth.models import Session as SessionRow
-from app.brokers.models import BrokerConnection
+from app.brokers.models import BrokerConnection, BrokerEvent
 from app.core.errors import ApiError
 from app.db.session import begin_consistent_read
 from app.paper.models import PaperOrder, PaperReplay, PaperTrade
@@ -293,6 +294,17 @@ class AlertService:
                 )
                 .on_conflict_do_nothing(constraint="uq_alerts_dedupe")
             )
+            await db.execute(
+                insert(BrokerEvent)
+                .from_select(
+                    ["user_id", "connection_id", "provider", "action", "at"],
+                    _expiry_events(now),
+                    include_defaults=False,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["connection_id", "at"], index_where=text("action = 'expire'")
+                )
+            )
             mismatches = await db.execute(
                 insert(Alert)
                 .from_select(_COLUMNS, _reconciliation_mismatches(now), include_defaults=False)
@@ -354,14 +366,28 @@ def _expired_connections(now: datetime) -> Selectable:
             BrokerConnection.provider,
             " connection expired. Reconnect it to sync again.",
         ),
-        literal("broker"),
-        BrokerConnection.provider,
+        literal("broker-connection"),
+        cast(BrokerConnection.id, String),
         BrokerConnection.expires_at,
         literal(now),
     ).where(
         BrokerConnection.expires_at <= now,
+        # A connection the provider already invalidated was alerted then.
+        BrokerConnection.status_reason.is_(None),
         _not_alerted(BrokerConnection.user_id, dedupe),
     )
+
+
+def _expiry_events(now: datetime) -> Selectable:
+    """One `expire` event per connection and expiry time (the history of
+    `getBrokerConnections`), at the instant the authorization ran out."""
+    return select(
+        BrokerConnection.user_id,
+        BrokerConnection.id,
+        BrokerConnection.provider,
+        literal("expire"),
+        BrokerConnection.expires_at,
+    ).where(BrokerConnection.expires_at <= now, BrokerConnection.status_reason.is_(None))
 
 
 def _reconciliation_mismatches(now: datetime) -> Selectable:
@@ -456,6 +482,14 @@ async def _verified_links(
             )
         )
         found |= {("paper-replay", str(r)) for r in matched_replays}
+    connections = [i for i in (_uuid(v) for v in wanted.get("broker-connection", ())) if i]
+    if connections:
+        matched_connections = await db.scalars(
+            select(BrokerConnection.id).where(
+                BrokerConnection.user_id == user_id, BrokerConnection.id.in_(connections)
+            )
+        )
+        found |= {("broker-connection", str(i)) for i in matched_connections}
     providers = sorted(wanted.get("broker", ()))
     if providers:
         matched_providers = await db.scalars(

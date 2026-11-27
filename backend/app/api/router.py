@@ -8,6 +8,7 @@ from app.api.routes import (
     alerts,
     auth,
     backtests,
+    broker_connections,
     brokers,
     market,
     paper,
@@ -21,6 +22,7 @@ api_router.include_router(auth.router)
 api_router.include_router(settings.router)
 api_router.include_router(market.router)
 api_router.include_router(brokers.router)
+api_router.include_router(broker_connections.router)
 api_router.include_router(strategies.router)
 api_router.include_router(backtests.router)
 api_router.include_router(paper.router)

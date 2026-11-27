@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.alerts import producer as alerts
 from app.auth.models import AuditEvent
-from app.brokers.adapter import PROVIDERS, BrokerAdapter, BrokerId, BrokerUnavailableError
+from app.brokers.adapter import (
+    PROVIDERS,
+    READ_SCOPES,
+    BrokerAdapter,
+    BrokerId,
+    BrokerUnavailableError,
+)
 from app.brokers.models import BrokerConnection, BrokerEvent
 from app.brokers.schemas import (
     MAX_EVENTS,
@@ -43,11 +49,12 @@ ALLOWED_ACTIONS: dict[Status, frozenset[BrokerAction]] = {
 }
 
 
-def status_of(expires_at: datetime | None, now: datetime) -> Status:
-    """A connection is expired at or after its expiry instant."""
+def status_of(expires_at: datetime | None, now: datetime, reason: str | None = None) -> Status:
+    """A connection is expired at or after its expiry instant, or once the
+    provider has reported its authorization invalid."""
     if expires_at is None:
         return "disconnected"
-    return "connected" if now < expires_at else "expired"
+    return "connected" if now < expires_at and reason is None else "expired"
 
 
 def unavailable() -> ApiError:
@@ -105,17 +112,17 @@ class BrokerService:
                     )
                 )
                 now = self._clock()
-                conn = await db.scalar(
-                    select(BrokerConnection).where(
-                        BrokerConnection.user_id == user_id, BrokerConnection.provider == provider
-                    )
+                conn = await _first_connection(db, user_id, provider)
+                status = status_of(
+                    conn.expires_at if conn else None, now, conn.status_reason if conn else None
                 )
-                status = status_of(conn.expires_at if conn else None, now)
                 if action not in ALLOWED_ACTIONS[status]:
                     raise conflict()
                 try:
                     async with asyncio.timeout(self._timeout):
-                        await self._perform(db, adapter, user_id, provider, action, conn, now)
+                        conn = await self._perform(
+                            db, adapter, user_id, provider, action, conn, now
+                        )
                 except BrokerUnavailableError:
                     logger.warning("broker_unavailable", provider=provider, action=action)
                     raise unavailable() from None
@@ -125,7 +132,12 @@ class BrokerService:
                 event_id = uuid.uuid4()
                 db.add(
                     BrokerEvent(
-                        id=event_id, user_id=user_id, provider=provider, action=action, at=now
+                        id=event_id,
+                        user_id=user_id,
+                        connection_id=conn.id,
+                        provider=provider,
+                        action=action,
+                        at=now,
                     )
                 )
                 if action == "disconnect":
@@ -136,7 +148,7 @@ class BrokerService:
                         dedupe_key=f"broker-disconnected:{event_id}",
                         message=f"The demo {provider} connection was disconnected.",
                         at=now,
-                        link=("broker", provider),
+                        link=("broker-connection", str(conn.id)),
                     )
                 db.add(
                     AuditEvent(
@@ -165,17 +177,20 @@ class BrokerService:
         action: BrokerAction,
         conn: BrokerConnection | None,
         now: datetime,
-    ) -> None:
+    ) -> BrokerConnection:
         if action in ("connect", "reconnect"):
             grant = await adapter.authorize(provider, now)
             if conn is None:
-                conn = BrokerConnection(user_id=user_id, provider=provider)
+                conn = BrokerConnection(id=uuid.uuid4(), user_id=user_id, provider=provider)
                 db.add(conn)
+            conn.account_ref = grant.account_ref or grant.masked_account_id
             conn.masked_account_id = grant.masked_account_id
             conn.scopes = list(grant.scopes)
             conn.connected_at = now
             conn.expires_at = grant.expires_at
             conn.last_synced_at = None
+            conn.status_reason = None
+            conn.portfolio = None
         elif action == "sync":
             if conn is None:  # unreachable: ALLOWED_ACTIONS requires a connection
                 raise conflict()
@@ -185,12 +200,17 @@ class BrokerService:
                 raise BrokerUnavailableError("account mismatch")
             conn.last_synced_at = now
         else:  # disconnect
+            if conn is None:  # unreachable: ALLOWED_ACTIONS requires a connection
+                raise conflict()
             await db.execute(
                 delete(BrokerConnection).where(
-                    BrokerConnection.user_id == user_id, BrokerConnection.provider == provider
+                    BrokerConnection.user_id == user_id, BrokerConnection.id == conn.id
                 )
             )
         await db.flush()
+        if conn is None:  # unreachable: connect creates it
+            raise conflict()
+        return conn
 
     async def _snapshot(
         self, db: AsyncSession, user_id: uuid.UUID, now: datetime
@@ -209,12 +229,16 @@ class BrokerService:
             events = (
                 await db.scalars(
                     select(BrokerEvent)
-                    .where(BrokerEvent.user_id == user_id)
+                    .where(BrokerEvent.user_id == user_id, BrokerEvent.action != "expire")
+                    .where(BrokerEvent.provider.in_(PROVIDERS))
                     .order_by(BrokerEvent.seq.desc())
                     .limit(MAX_EVENTS)
                 )
             ).all()
-        by_provider = {row.provider: row for row in rows}
+        # The deprecated preview shows one connection per fixed provider.
+        by_provider: dict[str, BrokerConnection] = {}
+        for row in sorted(rows, key=lambda r: (r.connected_at, r.id), reverse=True):
+            by_provider[row.provider] = row
         return BrokerSnapshotOut(
             as_of=now,
             connections=[
@@ -228,6 +252,17 @@ class BrokerService:
         )
 
 
+async def _first_connection(
+    db: AsyncSession, user_id: uuid.UUID, provider: str
+) -> BrokerConnection | None:
+    return await db.scalar(
+        select(BrokerConnection)
+        .where(BrokerConnection.user_id == user_id, BrokerConnection.provider == provider)
+        .order_by(BrokerConnection.connected_at, BrokerConnection.id)
+        .limit(1)
+    )
+
+
 def _account(row: BrokerConnection | None) -> BrokerAccountOut | None:
     if row is None:
         return None
@@ -236,5 +271,5 @@ def _account(row: BrokerConnection | None) -> BrokerAccountOut | None:
         connected_at=row.connected_at,
         expires_at=row.expires_at,
         last_synced_at=row.last_synced_at,
-        scopes=row.scopes,
+        scopes=[sc for sc in row.scopes if sc in READ_SCOPES],
     )

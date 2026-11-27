@@ -32,7 +32,8 @@ app/
   api/routes/health.py
   api/routes/auth.py /api/v1/auth/* (see contracts/openapi.yaml)
   api/routes/market.py /api/v1/market/* (read-only)
-  api/routes/brokers.py /api/v1/brokers/preview* (demo connections)
+  api/routes/brokers.py /api/v1/brokers/preview* (deprecated demo connections)
+  api/routes/broker_connections.py /api/v1/broker-connections* (provider-neutral)
   api/routes/strategies.py /api/v1/strategies/preview* (drafts, versions)
   api/router.py      /api/v1 router
   auth/              models, service, signed CSRF tokens, OTP providers, rate limits
@@ -118,7 +119,24 @@ Implements the three Markets operations in `contracts/openapi.yaml`:
   over 100 characters), `404 UNKNOWN_INSTRUMENT` (well-formed ID not in the
   catalog), `503 MARKET_DATA_UNAVAILABLE`; all with `requestId`.
 
-## Brokers (Phase B2, demo only)
+## Broker connections (contract 0.11.0, demo only)
+
+`/api/v1/broker-connections` replaces the fixed two-provider preview below.
+The provider registry comes from the adapter (`providers()`); a connection has
+a server-issued `connectionId`, and one user may hold up to the provider's
+`maxConnections` (1 for the demo providers). Authorizing is two steps:
+`POST /authorizations` (needs step-up) stores a hash of a single-use `state`
+bound to the session (valid 10 minutes) and returns the `authorizeUrl`;
+`POST /authorizations/callback` checks it, runs the provider exchange outside
+any transaction, then claims the state and writes under the per-(user,
+provider) advisory lock. `sync` stores the canonical portfolio, served by
+`GET /{connectionId}/portfolio`; a provider-reported invalid authorization
+keeps the connection `expired` (`AUTH_INVALIDATED`) and answers
+`409 BROKER_AUTH_EXPIRED`. `disconnect` revokes best-effort. The alert worker
+records one `expire` event per connection and expiry. Migration `0014`. The
+deprecated preview below reads and writes the same rows.
+
+## Brokers (Phase B2, demo only, deprecated)
 
 Implements `GET /api/v1/brokers/preview` and
 `POST /api/v1/brokers/preview/{provider}/actions` from `contracts/openapi.yaml`.

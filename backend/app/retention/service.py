@@ -13,6 +13,7 @@ every `retention_purge_interval_seconds` when the worker is enabled."""
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -194,23 +195,42 @@ class RetentionService:
         async with self._factory() as db:
             user_ids = list((await db.scalars(select(User.id).order_by(User.id))).all())
         totals: Counts = dict.fromkeys(CATEGORIES, 0)
+        failed = 0
         for user_id in user_ids:
-            counts = await self.purge_user(user_id)
+            # One user's failure (for example a statement timeout) must not starve the
+            # users after it: every pass would otherwise stop at the same place.
+            try:
+                counts = await self.purge_user(user_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "retention_user_failed", user_id=str(user_id), error_type=type(exc).__name__
+                )
+                continue
             for key, value in counts.items():
                 totals[key] += value
         if any(totals.values()):
             logger.info("retention_purged", **totals)
+        if failed:
+            logger.warning("retention_pass_incomplete", failed_users=failed)
         return totals
 
     async def run_worker(self, interval_seconds: float) -> None:
         while True:
+            started = _monotonic()
             try:
                 await self.purge_all()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning("retention_worker_error", error_type=type(exc).__name__)
-            await asyncio.sleep(interval_seconds)
+            # Passes start one interval apart, however long a pass took.
+            await asyncio.sleep(max(0.0, interval_seconds - (_monotonic() - started)))
+
+
+_monotonic = time.monotonic
 
 
 def _lock_key(user_id: uuid.UUID) -> Any:

@@ -152,3 +152,4 @@ QA-GATE-002,qa_framework,QA,"Gate: high/medium/low failures warn, do not block",
 QA-GATE-003,qa_framework,QA,Gate: cancelled job is not a pass,brief s16,P0,automated
 QA-POL-005,qa_framework,QA,Traceability matrix and test catalog match the test markers,brief s7,P1,automated
 QA-GATE-004,qa_framework,QA,Nightly verdict published as qa/nightly status on each tested PR head; no report is an error,owner 2026-11-25,P0,automated
+QA-PERF-001,qa_framework,QA,Concurrent API reads and paper halt meet latency and error thresholds,owner 2026-11-27,P1,automated

@@ -31,6 +31,32 @@ python -m pytest -c qa/pytest.ini qa/tests/financial qa/tests/framework qa/tests
 Without `QA_DATABASE_URL`/`QA_REDIS_URL`, service tests are reported as
 **blocked** (never passed). Set `QA_REQUIRE_SERVICES=1` (CI does) to fail instead.
 
+## API performance
+
+The backend QA job saves `api-latency.json` with status counts, successful
+sample counts, and p50/p95/p99 for each API operation covered by the existing
+tests. It checks for a successful response on every operation in the active
+contract, including tester sign-in. This is an endpoint baseline, including
+in-process test requests.
+
+The independent HTTP load test starts a real backend against disposable
+PostgreSQL, Redis, and a local SMTP sink. Each simulated user has a different
+test account. The workload times a concurrent paper halt burst and a paced
+mix of signed-in API reads. It fails on any unexpected response, a read
+operation above 500 ms p95, or paper halt above 1,000 ms p95.
+
+```bash
+QA_REQUIRE_SERVICES=1 QA_PERF_USERS=50 QA_PERF_SECONDS=30 \
+  python -m pytest -c qa/pytest.ini qa/tests -m performance
+```
+
+The nightly suite runs the 10-user, 20-second profile by default and attaches
+`api-load.json` to its QA artifact. The profile caps the run at 100 users and
+90 seconds. The default preconnects the authenticated clients before the
+timed burst. Set `QA_PERF_COLD_START=1` to include new connections in the burst
+and compare both profiles against the same thresholds. Public ingress, real
+broker latency, and live orders need separate verification.
+
 ## Layout
 
 | Path | What |

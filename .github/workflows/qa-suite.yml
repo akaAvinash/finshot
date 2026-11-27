@@ -125,9 +125,13 @@ jobs:
       - name: Backend tests (unit + integration)
         working-directory: backend
         env:
+          PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql+asyncpg://tradeo:ci-only-not-secret@localhost:5432/tradeo_test
           TEST_REDIS_URL: redis://localhost:6379/15
-        run: pytest -q -p no:cacheprovider --junitxml=../out/backend.xml
+        run: >-
+          python -m pytest -q -p no:cacheprovider -p qa.scripts.api_latency
+          --api-latency-report=../out/api-latency.json --api-latency-require-success
+          --junitxml=../out/backend.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

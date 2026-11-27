@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     session_absolute_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
     csrf_pre_login_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
 
+    # Phone number change: requests and confirmations per account per window.
+    rate_limit_phone_change_per_user: int = Field(default=5, ge=1)
+    rate_limit_phone_change_verify_per_user: int = Field(default=10, ge=1)
+    rate_limit_phone_change_window_seconds: int = Field(default=3600, ge=1)
+
     # Rate limits (fixed windows, counted in Redis). Exceeding one returns 429.
     rate_limit_otp_request_per_phone: int = Field(default=5, ge=1)
     rate_limit_otp_request_per_ip: int = Field(default=20, ge=1)

@@ -192,7 +192,21 @@ the restricted list from the contract. Domain tests use
   user's session ids cannot be probed.
 - Profile (`GET`/`PUT /settings/profile`): display name and timezone; no
   step-up. The display name is trimmed (1 to 48 characters, no control
-  characters). Phone number changes are not supported.
+  characters).
+- Phone number change (`POST /settings/phone/change`, then `/confirm`): both
+  steps need CSRF and step-up in the same session. Code: `app/auth/phone_change.py`,
+  table `phone_change_challenges` (migration 0016). The code goes by SMS to the
+  new number through `OTP_PROVIDER` (staging: the allowlisted file provider, so
+  the new number must be on `OTP_STAGING_ALLOWLIST`). Confirming moves the
+  user's number and invite (old invite revoked, email kept), ends every other
+  session and records a `PHONE_CHANGED` critical alert. A number held by any
+  user or invite (even revoked) gets the same 202, nothing is sent and the
+  challenge is marked `suppressed`, so it can never be confirmed. Limits: the
+  OTP per-IP, per-number and cooldown limits and daily spend caps, plus
+  `RATE_LIMIT_PHONE_CHANGE_PER_USER` (5) and
+  `RATE_LIMIT_PHONE_CHANGE_VERIFY_PER_USER` (10) per
+  `RATE_LIMIT_PHONE_CHANGE_WINDOW_SECONDS` (3600). Audit: `phone.change_requested`,
+  `phone.change_failed`, `phone.changed`, never with a number or code.
 
 ## Audit
 

@@ -1083,6 +1083,13 @@ class AuthService:
             )
         return count
 
+    async def current_phone(self, user_id: uuid.UUID) -> str:
+        async with self._factory() as db:
+            phone = await db.scalar(select(User.phone_e164).where(User.id == user_id))
+        if phone is None:
+            raise _unauthenticated()
+        return phone
+
     async def get_profile(self, info: SessionInfo) -> tuple[str | None, str]:
         """The caller's display name and timezone."""
         async with self._factory() as db:

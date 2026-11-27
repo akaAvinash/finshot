@@ -10,12 +10,22 @@ from app.paper.engine import QueuedOrder, Session, State, step
 T0 = datetime(2026, 10, 1, 3, 45, tzinfo=UTC)
 
 
-def sessions(*bars: tuple[float, float, float]) -> list[Session]:
-    """(open, low, close) in rupees, one per day."""
-    return [Session(T0 + timedelta(days=i), o, lo, c) for i, (o, lo, c) in enumerate(bars)]
+def sessions(*bars: tuple[float, ...]) -> list[Session]:
+    """(open, low, close) or (open, low, close, high) in rupees, one per day.
+    Without a high it is the larger of the open and the close."""
+    return [
+        Session(T0 + timedelta(days=i), b[0], b[1], b[2], b[3] if len(b) > 3 else max(b[0], b[2]))
+        for i, b in enumerate(bars)
+    ]
 
 
-def run(state: State, bars: list[Session], queued: QueuedOrder | None = None, **kw: int):  # type: ignore[no-untyped-def]
+def run(  # type: ignore[no-untyped-def]
+    state: State,
+    bars: list[Session],
+    queued: QueuedOrder | None = None,
+    limits: engine.Limits = engine.DEFAULT_LIMITS,
+    **kw: int,
+):
     return step(
         state,
         bars,
@@ -23,6 +33,7 @@ def run(state: State, bars: list[Session], queued: QueuedOrder | None = None, **
         size_bps=kw.get("size_bps", 1000),
         stop_loss_bps=kw.get("stop_loss_bps", 200),
         symbol="SBIN",
+        limits=limits,
     )
 
 
@@ -158,3 +169,99 @@ def test_risk_blocked_by_fill_count() -> None:
     assert engine.risk_blocked(state)
     state.session_fills = engine.TRADE_LIMIT - 1
     assert not engine.risk_blocked(state)
+
+
+# ------------------------------------------------------------ Trade Controls
+
+
+def held(entry: int = 10_000, quantity: int = 100, **kw: int | None) -> State:
+    state = State(cash_paise=engine.CAPITAL_PAISE, sessions_done=1)
+    state.position_quantity = quantity
+    state.position_entry_paise = entry
+    state.position_stop_paise = engine.stop_price(entry, 200)
+    for name, value in kw.items():
+        setattr(state, name, value)
+    return state
+
+
+def test_take_profit_sells_at_the_target_when_the_high_reaches_it() -> None:
+    limits = engine.Limits(take_profit_bps=300)
+    state = held(position_target_paise=engine.target_price(10_000, 300))
+    bars = sessions((100, 99, 101, 104), (100, 99, 101, 104))
+    out = run(state, bars, limits=limits)
+    (fill,) = out.fills
+    assert fill.reason == "take-profit"
+    assert fill.fill_paise == engine.sell_price(10_300)
+    assert state.position_quantity == 0
+
+
+def test_take_profit_gap_up_fills_at_the_open() -> None:
+    state = held(position_target_paise=10_300)
+    bars = sessions((100, 99, 101, 104), (106, 105, 107, 108), (106, 105, 107, 108))
+    state.sessions_done = 1
+    (fill,) = run(state, bars, limits=engine.Limits(take_profit_bps=300)).fills
+    assert fill.reason == "take-profit" and fill.fill_paise == engine.sell_price(10_600)
+
+
+def test_stop_is_checked_before_take_profit() -> None:
+    state = held(position_target_paise=10_300)
+    bars = sessions((100, 99, 101, 104), (100, 97, 101, 104), (100, 99, 101, 104))
+    (fill,) = run(state, bars, limits=engine.Limits(take_profit_bps=300)).fills
+    assert fill.reason == "stop-loss"
+
+
+def test_no_take_profit_when_off() -> None:
+    state = held()
+    bars = sessions((100, 99, 101, 150), (100, 99, 101, 150), (100, 99, 101, 150))
+    assert run(state, bars).fills == []
+
+
+def test_tighter_limits_block_in_order() -> None:
+    limits = engine.Limits(
+        loss_limit_paise=1_000, trade_limit=2, profit_limit_paise=500, max_consecutive_losses=2
+    )
+    assert engine.blocked_reason(State(cash_paise=0), limits) is None
+    assert engine.blocked_reason(State(cash_paise=0, session_pnl_paise=-1_000), limits) == (
+        "LOSS_LIMIT"
+    )
+    assert engine.blocked_reason(State(cash_paise=0, session_fills=2), limits) == "TRADE_LIMIT"
+    assert engine.blocked_reason(State(cash_paise=0, session_peak_pnl_paise=500), limits) == (
+        "PROFIT_CAP"
+    )
+    assert engine.blocked_reason(State(cash_paise=0, session_loss_streak=2), limits) == (
+        "CONSECUTIVE_LOSSES"
+    )
+
+
+def test_profit_cap_counts_the_peak_not_the_current_pnl() -> None:
+    state = State(cash_paise=engine.CAPITAL_PAISE)
+    for entry, exit_ in ((10_000, 10_600), (10_000, 9_000)):
+        state.position_quantity, state.position_entry_paise = 10, entry
+        engine._sell(state, exit_, "signal-exit", T0)
+    assert state.session_pnl_paise < state.session_peak_pnl_paise
+    assert engine.blocked_reason(state, engine.Limits(profit_limit_paise=1)) == "PROFIT_CAP"
+
+
+def test_loss_streak_resets_on_a_non_negative_exit_and_ignores_entries() -> None:
+    state = State(cash_paise=engine.CAPITAL_PAISE)
+    for exit_ in (9_000, 9_000):
+        state.position_quantity, state.position_entry_paise = 10, 10_000
+        engine._sell(state, exit_, "stop-loss", T0)
+    assert state.session_loss_streak == 2
+    state.position_quantity, state.position_entry_paise = 10, 10_000
+    engine._sell(state, 11_000, "signal-exit", T0)
+    assert state.session_loss_streak == 0
+
+
+def test_buy_signal_blocked_by_a_user_limit_sets_risk_blocked() -> None:
+    # The queued exit fills at the open (one fill), then the rising close
+    # signals a new entry, which a one-fill session limit blocks.
+    def replay(limits: engine.Limits) -> engine.StepResult:
+        state = held(entry=10_000, quantity=10)
+        state.sessions_done = 3
+        return run(state, RISING, QueuedOrder("Sell", 10), limits=limits)
+
+    blocked = replay(engine.Limits(trade_limit=1))
+    assert blocked.risk_blocked and blocked.new_order is None
+    allowed = replay(engine.Limits(trade_limit=2))
+    assert not allowed.risk_blocked and allowed.new_order is not None

@@ -497,3 +497,44 @@ async def test_session_check_runs_while_a_send_is_stalled(make_settings: Setting
     code = await _run_serve(settings, socket, EndedSessions(), time.monotonic() - 1)
     assert code == 4401 and socket.closed == [4401]
     assert loop.time() - started_at < 2.5
+
+
+class ReleasableSocket(StalledSocket):
+    """The first send stalls until released; every completed send is recorded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self.sent: list[str] = []
+
+    async def send_json(self, data: Any) -> None:
+        if not self.sent and not self.release.is_set():
+            await self.release.wait()
+        self.sent.append(data["type"])
+
+
+class SlowEndedSessions:
+    """A check that frees the stalled send, then takes a while to say the
+    session has ended."""
+
+    def __init__(self, socket: ReleasableSocket) -> None:
+        self.socket = socket
+
+    async def resolve_session(self, token: str, *, renew: bool = True) -> None:
+        self.socket.release.set()
+        await asyncio.sleep(0.3)
+        return None
+
+
+async def test_no_new_send_starts_while_a_due_session_check_runs(
+    make_settings: SettingsFactory,
+) -> None:
+    settings = make_settings(
+        market_stream_send_timeout_seconds=60, market_stream_session_recheck_seconds=1
+    )
+    socket = ReleasableSocket()
+    # The next check falls due half a second in, while the snapshot send stalls.
+    code = await _run_serve(settings, socket, SlowEndedSessions(socket), time.monotonic() - 0.5)
+    assert code == 4401 and socket.closed == [4401]
+    # The in-flight snapshot completes; the queued status frame is never sent.
+    assert socket.sent == ["snapshot"]

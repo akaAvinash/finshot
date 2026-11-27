@@ -260,13 +260,25 @@ async def _serve(
     that stops reading never holds up the session check, the overflow check
     or a disconnect: the control loop below never waits on a send. The writer
     gives each send MARKET_STREAM_SEND_TIMEOUT_SECONDS; a stalled send, or an
-    outbox that fills, ends the stream with 1013."""
+    outbox that fills, ends the stream with 1013.
+
+    Once a session check is due, the writer starts no new send until the
+    check has passed, so a revoked session gets no more frames. A send
+    already in flight is not waited for by the check."""
     deadline = settings.market_stream_send_timeout_seconds
+    recheck = settings.market_stream_session_recheck_seconds
     outbox: asyncio.Queue[Any] = asyncio.Queue(maxsize=settings.market_stream_queue_size)
+    # Counted from the last check, not from when frames were sent. A list so
+    # the writer sees updates; `passed` is set each time a due check passes.
+    due = [checked_at + recheck]
+    passed = asyncio.Event()
 
     async def write() -> None:
         while True:
             frame = await outbox.get()
+            while time.monotonic() >= due[0]:
+                passed.clear()
+                await passed.wait()
             async with asyncio.timeout(deadline):
                 await websocket.send_json(wire(frame))
 
@@ -300,8 +312,6 @@ async def _serve(
     enqueue(snapshot)
     enqueue(MarketStatusFrame(state=last_state, sent_at=hub.now()))
     last_sent = time.monotonic()
-    # Counted from the last check, not from when frames were sent.
-    next_recheck = checked_at + settings.market_stream_session_recheck_seconds
 
     try:
         while True:
@@ -330,11 +340,12 @@ async def _serve(
 
             # Session first: nothing more is queued once a due check fails.
             now = time.monotonic()
-            if now >= next_recheck:
+            if now >= due[0]:
                 code = await _check_session(auth, settings, token)
-                next_recheck = time.monotonic() + settings.market_stream_session_recheck_seconds
                 if code is not None:
                     return await close(code)
+                due[0] = time.monotonic() + recheck
+                passed.set()
 
             ticks: list[Tick] = []
             if getter in done:

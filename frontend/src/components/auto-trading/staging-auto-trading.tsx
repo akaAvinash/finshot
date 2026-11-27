@@ -12,7 +12,7 @@ import { stagingError } from "@/lib/api/staging-client";
 import { getStagingPaper, sendStagingPaper, type StagingPaperResult } from "@/lib/api/staging-paper";
 import { formatInr, formatSnapshotDate } from "@/lib/format";
 import { PaperActivity, paperTime } from "./paper-activity";
-import { PaperControls } from "./paper-controls";
+import { KillSwitch, PaperControls } from "./paper-controls";
 
 const replayPollMs = 1500;
 type PaperData = Extract<StagingPaperResult, { status: "ready" }>["data"];
@@ -81,7 +81,7 @@ export function StagingAutoTrading() {
   useEffect(() => () => writing.current?.abort(), []);
 
   async function run(command: PaperEngineCommand) {
-    if (writing.current || !snapshot || loadError) return false;
+    if (writing.current || (command.action !== "halt" && (!snapshot || loadError))) return false;
     const controller = new AbortController();
     reading.current?.abort();
     writing.current = controller;
@@ -110,14 +110,16 @@ export function StagingAutoTrading() {
         <Button variant="outline" disabled={pending} onClick={() => setRefresh((value) => value + 1)}>Refresh paper data</Button></div>} />
     {!result && !loadError && <DashboardSkeleton label="Loading paper workspace" />}
     {loadError && <DataState error title={snapshot ? "Paper data could not refresh" : "Paper workspace could not load"}
-      description={snapshot ? `${loadError} Showing the last server snapshot. Controls are paused.` : loadError} />}
+      description={snapshot ? `${loadError} Showing the last server snapshot. The paper kill switch is still available.` : loadError}
+      action={snapshot ? undefined : <KillSwitch disabled={pending} pending={pending} onRun={run}
+        error={commandError?.action === "halt" ? commandError.message : undefined} />} />}
     {result?.status === "empty" && <DataState title="No paper activity" description="Activate an approved demo strategy to prepare a paper replay."
       action={<Button asChild variant="outline"><Link href="/strategies">Open Strategies</Link></Button>} />}
     {snapshot && <>
       <p className="text-xs text-muted-foreground">Staging snapshot · <time dateTime={snapshot.asOf}>{formatSnapshotDate(snapshot.asOf)} · {paperTime.format(new Date(snapshot.asOf))} IST</time></p>
       {commandError && commandError.action !== "halt" && <p role="alert" className="text-sm text-negative">{commandError.message}</p>}
       {pending && <p role="status" className="sr-only">Updating paper controls</p>}
-      <PaperControls snapshot={snapshot} stale={!!loadError} pending={pending} onRun={run}
+      <PaperControls snapshot={snapshot} stale={!!loadError} pending={pending} onRun={run} allowStaleHalt
         canStart={!snapshot.replay.finished && snapshot.strategies.some(({ id }) => id === snapshot.strategyId)}
         finished={snapshot.replay.finished} haltError={commandError?.action === "halt" ? commandError.message : undefined} />
       <ServerTradeControls snapshot={snapshot} />

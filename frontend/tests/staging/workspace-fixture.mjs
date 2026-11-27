@@ -21,7 +21,7 @@ export function createWorkspaceFixture() {
   let rejectBroker = false;
 
   function handle(url, owner, body) {
-    if (!accounts.has(owner)) accounts.set(owner, { connections: [], brokerEvents: [], strategies: [], runs: [], paperState: null });
+    if (!accounts.has(owner)) accounts.set(owner, { connections: [], brokerEvents: [], strategies: [], runs: [], testedDrafts: new Map(), paperState: null });
     const state = accounts.get(owner);
     const brokers = () => ({ ...demo, events: state.brokerEvents, connections: ["zerodha", "fyers"].map((provider) => ({
       provider, account: state.connections.find((row) => row.provider === provider)?.account ?? null,
@@ -77,8 +77,10 @@ export function createWorkspaceFixture() {
       })),
     });
     if (path === "backtests/preview/runs") {
-      if (!state.strategies.some(({ id, draft }) => draft && `${id}:draft` === body.strategyId)) return rejected("Select a current strategy revision.");
+      const draft = state.strategies.find(({ id, draft }) => draft && `${id}:draft` === body.strategyId)?.draft;
+      if (!draft) return rejected("Select a current strategy revision.");
       const run = { ...demo, id: randomUUID(), config: body, queuedAt: asOf, status: "queued" };
+      state.testedDrafts.set(run.id, draft.parameters);
       state.runs.unshift(run);
       return [202, run];
     }
@@ -93,7 +95,10 @@ export function createWorkspaceFixture() {
           points: [{ date: "2026-10-21", equityPaise: 50000000, drawdownBps: 0 }, { date: "2026-11-23", equityPaise: 50133400, drawdownBps: 0 }],
           trades: [{ id: "backtest-trade", entryAt: "2026-10-22T10:00:00Z", exitAt: asOf, quantity: 5, entryPaise: 2270000, exitPaise: 2297000, feesPaise: 1600, pnlPaise: 133400 }] };
         const row = state.strategies.find(({ id }) => `${id}:draft` === run.config.strategyId);
-        if (row?.draft) row.draft.backtest = "passed";
+        if (row?.draft && JSON.stringify(row.draft.parameters) === JSON.stringify(state.testedDrafts.get(run.id))) {
+          row.draft.backtest = "passed";
+        }
+        state.testedDrafts.delete(run.id);
       }
       return [200, run];
     }
@@ -112,7 +117,10 @@ export function createWorkspaceFixture() {
         state.paperState = { engine: "idle", strategyId: body.strategyId, orders: [], trades: [], events: [] };
       } else if (body.action === "start" && state.paperState?.engine === "idle") state.paperState.engine = "running";
       else if (body.action === "pause" && state.paperState?.engine === "running") state.paperState.engine = "idle";
-      else if (body.action === "halt" && body.confirmation === "STOP" && state.paperState) state.paperState.engine = "halted";
+      else if (body.action === "halt" && body.confirmation === "STOP" && state.paperState?.engine !== "halted" && state.paperState) {
+        state.paperState.engine = "halted";
+        for (const order of state.paperState.orders) if (order.status === "queued") order.status = "cancelled";
+      } else if (body.action === "reset" && state.paperState?.engine === "halted") state.paperState.engine = "idle";
       else return rejected("The paper engine cannot accept that command.");
       return [200, paperSnapshot()];
     }

@@ -15,12 +15,12 @@ function PanelTitle({ icon: Icon, children }: { icon: typeof Workflow; children:
   return <h2 className="flex items-center gap-2 font-semibold tracking-tight"><Icon aria-hidden className="size-4 text-accent-foreground" />{children}</h2>;
 }
 
-function KillSwitch({ disabled, pending, orders, onRun, focusAfterHalt, error }: {
+export function KillSwitch({ disabled, pending, orders, onRun, focusAfterHalt, error }: {
   disabled: boolean;
   pending: boolean;
-  orders: number;
+  orders?: number;
   onRun: (command: PaperEngineCommand) => Promise<boolean>;
-  focusAfterHalt: () => boolean;
+  focusAfterHalt?: () => boolean;
   error?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -40,11 +40,12 @@ function KillSwitch({ disabled, pending, orders, onRun, focusAfterHalt, error }:
         <Button disabled={disabled} variant="outline" className="h-11 border-negative/40 text-negative hover:text-negative"><CircleStop aria-hidden /> Paper kill switch</Button>
       </DialogTrigger>
       <DialogContent onCloseAutoFocus={(event) => {
-        if (focusAfterHalt()) event.preventDefault();
+        if (focusAfterHalt?.()) event.preventDefault();
       }}>
         <DialogTitle>Halt paper trading?</DialogTitle>
         <DialogDescription>
-          This stops the simulated engine and cancels {orders} pending paper {orders === 1 ? "order" : "orders"}.
+          {orders === undefined ? "This stops the simulated engine and cancels any pending paper orders." :
+            `This stops the simulated engine and cancels ${orders} pending paper ${orders === 1 ? "order" : "orders"}.`}
           Completed paper trades remain in the log.
         </DialogDescription>
         <form className="mt-5 space-y-3" onSubmit={async (event) => {
@@ -66,7 +67,7 @@ function KillSwitch({ disabled, pending, orders, onRun, focusAfterHalt, error }:
   );
 }
 
-export function PaperControls({ snapshot, stale, pending, onRun, canStart, finished, haltError }: {
+export function PaperControls({ snapshot, stale, pending, onRun, canStart, finished, haltError, allowStaleHalt = false }: {
   snapshot: Pick<PaperSnapshot, "engine" | "strategyId" | "strategies" | "agent" | "orders">;
   stale: boolean;
   pending: boolean;
@@ -74,6 +75,7 @@ export function PaperControls({ snapshot, stale, pending, onRun, canStart, finis
   canStart: boolean;
   finished?: boolean;
   haltError?: string;
+  allowStaleHalt?: boolean;
 }) {
   const { engine, strategyId, strategies, agent, orders } = snapshot;
   const disabled = stale || pending;
@@ -98,7 +100,8 @@ export function PaperControls({ snapshot, stale, pending, onRun, canStart, finis
           ) : (
             <Button className="h-11" disabled={disabled || !canStart} onClick={() => void onRun({ action: "start" })}><Play aria-hidden /> Start paper engine</Button>
           )}
-          <KillSwitch disabled={disabled || engine === "halted"} pending={pending} orders={queued} onRun={onRun} error={haltError}
+          <KillSwitch disabled={pending || (stale ? !allowStaleHalt : engine === "halted")}
+            pending={pending} orders={stale ? undefined : queued} onRun={onRun} error={haltError}
             focusAfterHalt={() => {
               if (!clearHaltButton.current) return false;
               clearHaltButton.current.focus();

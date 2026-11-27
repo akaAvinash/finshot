@@ -1,7 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { signInStaging } from "./staging-helpers";
 
 const fixture = "http://127.0.0.1:3102/__fixture";
+
+async function createDraft(page: Page, name: string) {
+  await page.goto("/strategies");
+  await page.getByRole("button", { name: "Create strategy" }).click();
+  await page.getByLabel("Strategy name").fill(name);
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("button", { name: `View ${name}` })).toBeVisible();
+}
 
 test.beforeEach(async ({ request }) => {
   expect((await request.post(`${fixture}/reset`)).status()).toBe(204);
@@ -34,11 +42,7 @@ test("persists broker actions and shows the server rejection in the confirmation
 
 test("recovers a pending backtest after reload and runs an approved strategy to a paper fill", async ({ page }) => {
   await signInStaging(page);
-  await page.goto("/strategies");
-  await page.getByRole("button", { name: "Create strategy" }).click();
-  await page.getByLabel("Strategy name").fill("Staging NIFTY demo");
-  await page.getByRole("button", { name: "Save draft" }).click();
-  await expect(page.getByRole("button", { name: "View Staging NIFTY demo" })).toBeVisible();
+  await createDraft(page, "Staging NIFTY demo");
   await page.reload();
   await page.getByRole("button", { name: "View Staging NIFTY demo" }).click();
   await expect(page.getByRole("button", { name: "Activate demo" })).toBeDisabled();
@@ -78,14 +82,67 @@ test("recovers a pending backtest after reload and runs an approved strategy to 
 
   await page.getByRole("button", { name: "Pause paper engine" }).click();
   await expect(page.getByRole("button", { name: "Start paper engine" })).toBeEnabled();
+  await page.route("**/api/v1/auto-trading/paper", (route) => route.abort());
+  await page.getByRole("button", { name: "Start paper engine" }).click();
+  await expect(page.getByRole("heading", { name: "Paper data could not refresh" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause paper engine" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Paper kill switch" })).toBeEnabled();
   await page.getByRole("button", { name: "Paper kill switch" }).click();
   await page.getByLabel("Type STOP to confirm").fill("STOP");
   await page.getByRole("button", { name: "Confirm paper halt" }).click();
   await expect(page.getByRole("button", { name: "Clear paper halt" })).toBeVisible();
+  await page.unroute("**/api/v1/auto-trading/paper");
   await page.reload();
   await expect(page.getByRole("button", { name: "Clear paper halt" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear paper halt" }).click();
+  await expect(page.getByRole("button", { name: "Start paper engine" })).toBeEnabled();
   await page.getByRole("tab", { name: "Trade log" }).click();
   await expect(page.getByRole("rowheader", { name: "NIFTY 50" })).toBeVisible();
+});
+
+test("an older backtest cannot approve a draft changed while the run was queued", async ({ page, context }) => {
+  await signInStaging(page);
+  await createDraft(page, "Edited after queue");
+  const { csrfToken } = await (await context.request.get("/api/v1/auth/csrf")).json();
+  const headers = { Origin: "http://127.0.0.1:3101", "X-CSRF-Token": csrfToken };
+  const { data: { strategies: [strategy] } } = await (await context.request.get("/api/v1/strategies/preview")).json();
+  const queued = await context.request.post("/api/v1/backtests/preview/runs", { headers, data: {
+    strategyId: `${strategy.id}:draft`, instrumentId: "NSE:NIFTY50", from: "2026-10-05", to: "2026-11-23",
+    outOfSampleFrom: "2026-10-21", capitalPaise: 50_000_000, feeBps: 8, slippageBps: 5,
+  } });
+  expect(queued.status()).toBe(202);
+  const { id } = await queued.json();
+  await page.getByRole("button", { name: "View Edited after queue" }).click();
+  await page.getByRole("button", { name: "Edit draft" }).click();
+  await page.getByLabel("Position size (%)").fill("6");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("dialog", { name: "Edited after queue" })).toBeVisible();
+
+  await context.request.get(`/api/v1/backtests/preview/runs/${id}`);
+  expect(await (await context.request.get(`/api/v1/backtests/preview/runs/${id}`)).json()).toMatchObject({ status: "completed" });
+  await page.reload();
+  await page.getByRole("button", { name: "View Edited after queue" }).click();
+  await expect(page.getByRole("button", { name: "Activate demo" })).toBeDisabled();
+  await expect(page.getByText("Backtest · Unavailable")).toBeVisible();
+});
+
+test("reconciles a lost backtest response against the server queue before offering another run", async ({ page }) => {
+  await signInStaging(page);
+  await createDraft(page, "Lost reply test");
+  await page.goto("/backtesting");
+  await page.route("**/api/v1/backtests/preview/runs", async (route) => {
+    const committed = await route.fetch();
+    expect(committed.status()).toBe(202);
+    await route.abort();
+  });
+  const submit = page.getByRole("button", { name: "Run demo backtest" });
+  await submit.click();
+  await expect(submit).toBeDisabled();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("The submission could not be confirmed");
+  await page.getByRole("button", { name: "Check run queue" }).click();
+  const queue = page.getByRole("region", { name: "Run queue" });
+  await expect(queue.getByRole("listitem")).toHaveCount(1);
+  await expect(queue).toContainText("Completed", { timeout: 12_000 });
 });
 
 test("shows read-only agent health and pages server events without enabling commands", async ({ page, context, request }) => {

@@ -13,6 +13,7 @@ import type { BacktestConfig, BacktestRun, BacktestScenario, BacktestWorkspace, 
 import { createTradeoClient } from "@/lib/api/client";
 import { stagingBacktests } from "@/lib/api/staging-backtests";
 import { stagingError } from "@/lib/api/staging-client";
+import { AuthError } from "@/lib/auth/browser-client";
 import { BacktestInputError, formatBacktestTime } from "@/lib/backtesting";
 import { formatSnapshotDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ const runStatus = {
 
 type Request = { scenario: BacktestScenario };
 type Result = BacktestWorkspaceResult | { status: "error"; message: string };
+type UnconfirmedRun = { config: BacktestConfig; existingIds: ReadonlySet<string> };
 
 function RunQueue({ workspace, selectedId, onSelect }: {
   workspace: BacktestWorkspace;
@@ -73,6 +75,7 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
   const [activeRun, setActiveRun] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedRun>();
   const [pollError, setPollError] = useState<{ id: string; message: string }>();
   const [pollAttempt, setPollAttempt] = useState(0);
   const submission = useRef<AbortController | null>(null);
@@ -137,15 +140,44 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
   }, [client, notify, pollAttempt, pollDelay, pollingRun, staging, updateRun]);
 
   function load(scenario: BacktestScenario) {
-    if (busy) return;
+    if (busy || unconfirmed) return;
     setRequest({ scenario });
     setSelected(undefined);
     setPollError(undefined);
     setSubmitError(null);
   }
 
+  async function checkQueue() {
+    if (submission.current || !unconfirmed) return;
+    const controller = new AbortController();
+    submission.current = controller;
+    setSubmitting(true);
+    try {
+      const latest = await client.getBacktestWorkspace({ signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (latest.status !== "ready") throw new Error("Queue is unavailable.");
+      const keys = Object.keys(unconfirmed.config) as (keyof BacktestConfig)[];
+      const run = latest.data.runs.find((entry) => !unconfirmed.existingIds.has(entry.id) &&
+        keys.every((key) => entry.config[key] === unconfirmed.config[key]));
+      setSettled({ request, result: latest });
+      setUnconfirmed(undefined);
+      if (run) {
+        setSelected(run.id);
+        setSubmitError(null);
+        notify("The submitted backtest was found in the run queue.");
+      } else {
+        setSubmitError("The refreshed queue has no matching submission. You can try again.");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setSubmitError(stagingError(error, "The run queue could not be checked. Check it again before submitting."));
+    } finally {
+      submission.current = null;
+      if (!controller.signal.aborted) setSubmitting(false);
+    }
+  }
+
   async function start(config: BacktestConfig) {
-    if (submission.current || busy || result?.status !== "ready") return;
+    if (submission.current || busy || unconfirmed || result?.status !== "ready") return;
     const controller = new AbortController();
     submission.current = controller;
     setSubmitting(true);
@@ -158,8 +190,14 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
       setSelected(run.id);
       if (!staging && (run.status === "queued" || run.status === "running")) setActiveRun(run.id);
     } catch (error) {
-      const fallback = "The demo run could not be queued. Try again.";
-      if (!controller.signal.aborted) setSubmitError(staging ? stagingError(error, fallback) : error instanceof BacktestInputError ? error.message : fallback);
+      if (controller.signal.aborted) return;
+      if (staging && (!(error instanceof AuthError) || error.status >= 500 || error.status === 408)) {
+        setUnconfirmed({ config, existingIds: new Set(result.data.runs.map(({ id }) => id)) });
+        setSubmitError("The submission could not be confirmed. Check the run queue before submitting again.");
+      } else {
+        const fallback = "The demo run could not be queued. Try again.";
+        setSubmitError(staging ? stagingError(error, fallback) : error instanceof BacktestInputError ? error.message : fallback);
+      }
     } finally {
       submission.current = null;
       if (!controller.signal.aborted) setSubmitting(false);
@@ -171,7 +209,7 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
       <PageHeading title="Backtesting" description="Replay a strategy setup on demo history and inspect holdout performance." actions={
         <div className="flex flex-wrap items-center gap-2">
           <Status tone="accent" dot>Demo only</Status>
-          {staging ? <Button variant="outline" disabled={busy || !result} onClick={() => load("ready")}>Refresh backtests</Button> : <>
+          {staging ? <Button variant="outline" disabled={busy || !result || !!unconfirmed} onClick={() => load("ready")}>Refresh backtests</Button> : <>
           <Label className="sr-only" htmlFor="backtest-scenario">Backtest preview data</Label>
           <select id="backtest-scenario" className="h-11 rounded-lg border border-input bg-background px-3 text-sm" value={request.scenario} disabled={busy}
             onChange={({ target }) => {
@@ -197,8 +235,11 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
         </div>}
         <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[19rem_minmax(0,1fr)] xl:gap-5">
           <div className="min-w-0 space-y-4">
-            <BacktestForm workspace={workspace} canRun={result?.status === "ready"} busy={busy} onRun={start} staging={staging} />
-            {submitError && <p role="alert" className="rounded-lg border border-negative/30 bg-negative/8 p-3 text-sm text-negative">{submitError}</p>}
+            <BacktestForm workspace={workspace} canRun={result?.status === "ready" && !unconfirmed} busy={busy} onRun={start} staging={staging} />
+            {submitError && <div className="space-y-2 rounded-lg border border-negative/30 bg-negative/8 p-3 text-sm">
+              <p role="alert" className="text-negative">{submitError}</p>
+              {unconfirmed && <Button variant="outline" disabled={busy} onClick={() => void checkQueue()}>Check run queue</Button>}
+            </div>}
             <RunQueue workspace={workspace} selectedId={selectedRun?.id} onSelect={setSelected} />
           </div>
           <section aria-label="Selected backtest results" className="min-w-0 space-y-4">

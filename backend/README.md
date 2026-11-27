@@ -92,6 +92,27 @@ alembic upgrade head && uvicorn app.asgi:app
 
 The code appears in that terminal as `OTP for +91******3210: 123456`, not in any log.
 
+## Tester sign-in (off by default, demo and paper only)
+
+Invite-only access for designated testers, per `contracts/tester-sign-in.openapi.yaml`.
+Set `TESTER_SIGN_IN_ENABLED=true` to turn it on; while it is off the route is 404 and
+every tester session is ended at startup. `TESTER_SESSION_TTL_SECONDS` (default and
+maximum 7200) and `TESTER_INVITE_TTL_SECONDS` (default and maximum 900) bound lifetimes.
+
+The owner issues a single-use code from the operator CLI. The code is printed once and
+only a keyed digest is stored:
+
+```bash
+python -m app.auth.admin tester issue +91XXXXXXXXXX   # prints the code once
+python -m app.auth.admin tester revoke +91XXXXXXXXXX  # ends sessions immediately
+python -m app.auth.admin tester purge  +91XXXXXXXXXX  # removes all credentials, keeps audit
+python -m app.auth.admin tester list
+```
+
+Tester sessions are allowed only the operations in `TESTER_ALLOWED_OPERATIONS`
+(`app/auth/tester.py`); everything else, including account security, real broker access
+and step-up, is `403 TESTER_ACCESS_DENIED`.
+
 ## Market data (Phase B1, read-only)
 
 Implements the three Markets operations in `contracts/openapi.yaml`:

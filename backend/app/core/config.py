@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     rate_limit_totp_per_ip: int = Field(default=20, ge=1)
     rate_limit_totp_window_seconds: int = Field(default=900, ge=1)
 
+    # Invite-only tester sign-in (demo and paper only). Off unless the owner
+    # turns it on. A tester session lasts at most `tester_session_ttl_seconds`
+    # (the contract says within two hours) and an invite code at most 15 minutes.
+    tester_sign_in_enabled: bool = False
+    tester_session_ttl_seconds: int = Field(default=7200, ge=300, le=7200)
+    tester_invite_ttl_seconds: int = Field(default=900, ge=60, le=900)
+
     session_idle_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
     session_absolute_ttl_seconds: int = Field(default=43_200, ge=300, le=2_592_000)
     csrf_pre_login_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)

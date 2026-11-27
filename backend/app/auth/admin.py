@@ -6,6 +6,10 @@ these run on the server, against the configured database.
     python -m app.auth.admin invite list
     python -m app.auth.admin totp-reset +919876543210
     python -m app.auth.admin staging-otp +919876543210
+    python -m app.auth.admin tester issue +919000000001   (prints the code once)
+    python -m app.auth.admin tester revoke +919000000001
+    python -m app.auth.admin tester purge +919000000001
+    python -m app.auth.admin tester list
 
 Phone numbers are masked in output. Nothing here prints a secret."""
 
@@ -16,16 +20,24 @@ import asyncio
 import re
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.models import AuditEvent, Invite, RecoveryCode, TotpCredential, User
+from app.auth.models import (
+    AuditEvent,
+    Invite,
+    RecoveryCode,
+    TesterIdentity,
+    TotpCredential,
+    User,
+)
 from app.auth.models import Session as SessionRow
 from app.auth.otp import mask_destination, read_staging_codes
+from app.core.config import Settings
 
 _PHONE = re.compile(r"^\+91[6-9][0-9]{9}$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -43,6 +55,12 @@ def validate_phone(phone: str) -> str:
 
 async def add_invite(db: AsyncSession, phone: str, email: str | None, now: datetime) -> None:
     validate_phone(phone)
+    if await db.scalar(
+        select(TesterIdentity.user_id)
+        .join(User, User.id == TesterIdentity.user_id)
+        .where(User.phone_e164 == phone)
+    ):
+        raise AdminError("that number is a tester identity and cannot be a regular account")
     if email is not None and not _EMAIL.fullmatch(email):
         raise AdminError("email is not a valid address")
     stmt = insert(Invite).values(phone_e164=phone, email=email, created_at=now)
@@ -155,12 +173,46 @@ async def _run(args: argparse.Namespace) -> int:
             elif args.command == "invite":
                 for phone, email, revoked in await list_invites(db):
                     print(phone, email, "revoked" if revoked else "active")
+            elif args.command == "tester":
+                await _run_tester(args, db, settings, now)
             elif args.command == "totp-reset":
                 done = await reset_totp(db, args.phone, now)
                 print("authenticator removed" if done else "nothing to reset")
     finally:
         await engine.dispose()
     return 0
+
+
+async def _run_tester(
+    args: argparse.Namespace, db: AsyncSession, settings: Settings, now: datetime
+) -> None:
+    from app.auth import tester
+    from app.auth.crypto import Keys
+
+    try:
+        if args.action == "issue":
+            ttl = timedelta(seconds=settings.tester_invite_ttl_seconds)
+            code = await tester.issue_invite(
+                db,
+                Keys.from_secret(settings.auth_secret_key.get_secret_value()),
+                args.phone,
+                ttl,
+                now,
+            )
+            minutes = int(ttl.total_seconds() // 60)
+            print(f"tester {mask_destination(args.phone)}: code (shown once, {minutes} min):")
+            print(code)
+        elif args.action == "revoke":
+            done = await tester.revoke_access(db, args.phone, now)
+            print("access revoked" if done else "no tester with that number")
+        elif args.action == "purge":
+            done = await tester.purge_credentials(db, args.phone, now)
+            print("credentials purged" if done else "no tester with that number")
+        else:
+            for phone, purged, live in await tester.list_testers(db):
+                print(phone, "purged" if purged else "active", f"live-invites={live}")
+    except tester.TesterError as exc:
+        raise AdminError(str(exc)) from None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -173,6 +225,11 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("--email")
     actions.add_parser("revoke").add_argument("phone")
     actions.add_parser("list")
+    tester_cmd = sub.add_parser("tester")
+    tester_actions = tester_cmd.add_subparsers(dest="action", required=True)
+    for name in ("issue", "revoke", "purge"):
+        tester_actions.add_parser(name).add_argument("phone")
+    tester_actions.add_parser("list")
     sub.add_parser("totp-reset").add_argument("phone")
     sub.add_parser("staging-otp").add_argument("phone")
     return parser

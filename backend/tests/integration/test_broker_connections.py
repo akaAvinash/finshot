@@ -46,6 +46,7 @@ class FlakyAdapter(DemoBrokerAdapter):
         self.fail_portfolio: Exception | None = None
         self.fail_exchange: Exception | None = None
         self.fail_revoke = False
+        self.during_fetch: Callable[[], None] | None = None
         self.revoked: list[tuple[str, str]] = []
 
     async def exchange(self, provider: str, params: Any, now: datetime) -> Any:
@@ -56,6 +57,8 @@ class FlakyAdapter(DemoBrokerAdapter):
     async def fetch_portfolio(
         self, provider: str, account_ref: str, capabilities: Sequence[Capability], now: datetime
     ) -> PortfolioData:
+        if self.during_fetch is not None:
+            self.during_fetch()
         if self.fail_portfolio is not None:
             raise self.fail_portfolio
         return await super().fetch_portfolio(provider, account_ref, capabilities, now)
@@ -467,6 +470,27 @@ def test_provider_invalidating_the_authorization_expires_the_connection(
     assert (
         callback(user, state, params).json()["snapshot"]["connections"][0]["statusReason"] is None
     )
+
+
+def test_a_sync_overtaken_by_a_reauthorization_is_discarded(
+    user: Browser, contract: Any, adapter: FlakyAdapter
+) -> None:
+    """The provider call holds no lock, so a re-authorization can land while it
+    runs; its result must not be written over the new authorization."""
+    connection_id = connect(user, contract)
+
+    def reauthorize_meanwhile() -> None:
+        sql = "UPDATE broker_connections SET connected_at = connected_at + interval '1 second'"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(db_rows, db(), sql).result()
+
+    adapter.during_fetch = reauthorize_meanwhile
+    refused = action(user, connection_id, "sync")
+    assert (refused.status_code, code(refused)) == (409, "BROKER_ACTION_CONFLICT")
+    adapter.during_fetch = None
+    snapshot = user.get(BASE).json()
+    assert snapshot["connections"][0]["lastSyncedAt"] is None
+    assert [e["action"] for e in snapshot["events"]] == ["connect"]
 
 
 # ---------------------------------------------------------------- adapter errors

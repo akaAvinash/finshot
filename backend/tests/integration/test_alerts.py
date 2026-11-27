@@ -289,7 +289,8 @@ def test_broker_expiry_alerts_once_and_disconnect_alerts(
     assert expired["severity"] == "critical"
     assert expired["environment"] == "DEMO"
     assert expired["link"]["kind"] == "broker-connection"
-    assert uuid.UUID(expired["link"]["id"])  # the connection id, not the provider
+    (connection,) = browser.get("/api/v1/broker-connections").json()["connections"]
+    assert expired["link"]["id"] == connection["connectionId"]  # not the provider, not another id
     assert expired["occurredAt"] == expired["createdAt"]  # recorded exactly at the expiry
 
     # A reconnect sets a new expiry, which can alert again later.

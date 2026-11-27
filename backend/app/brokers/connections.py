@@ -341,11 +341,91 @@ class BrokerConnectionService:
         adapter = self._require_adapter()
         async with self._factory() as db, db.begin():
             first = await _owned(db, user_id, connection_id)
-        if first is None:
-            raise not_found()
-        provider = first.provider
-        revoke_ref: str | None = None
-        auth_expired = False
+            if first is None:
+                raise not_found()
+            provider = first.provider
+            seen = (first.account_ref, list(first.scopes), first.connected_at)
+            if action == "sync" and status_of(first, self._clock())[0] != "connected":
+                raise conflict()
+        if action == "sync":
+            await self._sync(adapter, user_id, connection_id, provider, seen)
+            revoke_ref: str | None = None
+        else:
+            revoke_ref = await self._disconnect(user_id, connection_id, provider)
+        if revoke_ref is not None:
+            await self._revoke(adapter, provider, revoke_ref)
+        async with self._factory() as fresh:
+            return await self._snapshot(fresh, adapter, user_id, self._clock())
+
+    async def _sync(
+        self,
+        adapter: BrokerAdapter,
+        user_id: uuid.UUID,
+        connection_id: uuid.UUID,
+        provider: str,
+        seen: tuple[str, list[str], datetime],
+    ) -> None:
+        """The provider call holds no transaction and no lock. The write then
+        re-reads the row under the lock and keeps the result only if the same
+        authorization is still connected (a re-authorization or disconnect in
+        between makes this a conflict and discards the fetch)."""
+        account_ref, scopes, connected_at = seen
+        invalidated = False
+        data: PortfolioData | None = None
+        try:
+            async with asyncio.timeout(self._timeout):
+                data = await adapter.fetch_portfolio(
+                    provider, account_ref, cast(list[Capability], scopes), self._clock()
+                )
+            if data.account_ref != account_ref:
+                raise BrokerMalformedResponseError("account mismatch")
+        except BrokerAuthInvalidError:
+            invalidated = True
+        except (
+            BrokerUnavailableError,
+            BrokerRateLimitedError,
+            BrokerMalformedResponseError,
+            BrokerCapabilityUnsupportedError,
+        ) as exc:
+            logger.warning("broker_sync_failed", provider=provider, error=type(exc).__name__)
+            raise _provider_error(exc) from None
+        except TimeoutError:
+            logger.warning("broker_sync_timeout", provider=provider)
+            raise unavailable() from None
+        async with self._factory() as db:
+            async with db.begin():
+                await _lock(db, user_id, provider)
+                now = self._clock()
+                row = await _owned(db, user_id, connection_id)
+                if (
+                    row is None
+                    or row.connected_at != connected_at
+                    or row.account_ref != account_ref
+                    or status_of(row, now)[0] != "connected"
+                ):
+                    raise conflict()
+                if invalidated:
+                    # Keep the status change: commit it, then answer 409.
+                    row.status_reason = "AUTH_INVALIDATED"
+                    _record(db, user_id, row.id, provider, "expire", now)
+                    await alerts.record(
+                        db,
+                        user_id=user_id,
+                        kind="BROKER_CONNECTION_EXPIRED",
+                        dedupe_key=f"broker-invalidated:{row.id}:{now.isoformat()}",
+                        message=f"The demo {provider} sign-in was ended by the broker. "
+                        "Reconnect it to sync again.",
+                        at=now,
+                        link=("broker-connection", str(row.id)),
+                    )
+                elif data is not None:
+                    row.portfolio = _stored(data, scopes)
+                    row.last_synced_at = now
+                    _record(db, user_id, row.id, provider, "sync", now)
+        if invalidated:
+            raise _auth_expired()
+
+    async def _disconnect(self, user_id: uuid.UUID, connection_id: uuid.UUID, provider: str) -> str:
         async with self._factory() as db:
             async with db.begin():
                 await _lock(db, user_id, provider)
@@ -353,76 +433,23 @@ class BrokerConnectionService:
                 row = await _owned(db, user_id, connection_id)
                 if row is None:
                     raise not_found()
-                status, _ = status_of(row, now)
-                if action == "sync" and status != "connected":
-                    raise conflict()
-                if action == "sync":
-                    try:
-                        async with asyncio.timeout(self._timeout):
-                            data = await adapter.fetch_portfolio(
-                                provider,
-                                row.account_ref,
-                                cast(list[Capability], list(row.scopes)),
-                                now,
-                            )
-                        if data.account_ref != row.account_ref:
-                            raise BrokerMalformedResponseError("account mismatch")
-                    except BrokerAuthInvalidError:
-                        # Keep the status change: commit it, then answer 409.
-                        row.status_reason = "AUTH_INVALIDATED"
-                        _record(db, user_id, row.id, provider, "expire", now)
-                        await alerts.record(
-                            db,
-                            user_id=user_id,
-                            kind="BROKER_CONNECTION_EXPIRED",
-                            dedupe_key=f"broker-invalidated:{row.id}:{now.isoformat()}",
-                            message=f"The demo {provider} sign-in was ended by the broker. "
-                            "Reconnect it to sync again.",
-                            at=now,
-                            link=("broker-connection", str(row.id)),
-                        )
-                        auth_expired = True
-                    except (
-                        BrokerUnavailableError,
-                        BrokerRateLimitedError,
-                        BrokerMalformedResponseError,
-                        BrokerCapabilityUnsupportedError,
-                    ) as exc:
-                        logger.warning(
-                            "broker_sync_failed", provider=provider, error=type(exc).__name__
-                        )
-                        raise _provider_error(exc) from None
-                    except TimeoutError:
-                        logger.warning("broker_sync_timeout", provider=provider)
-                        raise unavailable() from None
-                    else:
-                        row.portfolio = _stored(data, list(row.scopes))
-                        row.last_synced_at = now
-                        _record(db, user_id, row.id, provider, "sync", now)
-                else:  # disconnect: status is connected or expired
-                    revoke_ref = row.account_ref
-                    event_id = _record(db, user_id, row.id, provider, "disconnect", now)
-                    await alerts.record(
-                        db,
-                        user_id=user_id,
-                        kind="BROKER_DISCONNECTED",
-                        dedupe_key=f"broker-disconnected:{event_id}",
-                        message=f"The demo {provider} connection was disconnected.",
-                        at=now,
-                        link=("broker-connection", str(row.id)),
+                account_ref = row.account_ref
+                event_id = _record(db, user_id, row.id, provider, "disconnect", now)
+                await alerts.record(
+                    db,
+                    user_id=user_id,
+                    kind="BROKER_DISCONNECTED",
+                    dedupe_key=f"broker-disconnected:{event_id}",
+                    message=f"The demo {provider} connection was disconnected.",
+                    at=now,
+                    link=("broker-connection", str(row.id)),
+                )
+                await db.execute(
+                    delete(BrokerConnection).where(
+                        BrokerConnection.user_id == user_id, BrokerConnection.id == row.id
                     )
-                    await db.execute(
-                        delete(BrokerConnection).where(
-                            BrokerConnection.user_id == user_id, BrokerConnection.id == row.id
-                        )
-                    )
-                await db.flush()
-        if auth_expired:
-            raise _auth_expired()
-        if revoke_ref is not None:
-            await self._revoke(adapter, provider, revoke_ref)
-        async with self._factory() as fresh:
-            return await self._snapshot(fresh, adapter, user_id, self._clock())
+                )
+        return account_ref
 
     async def _revoke(self, adapter: BrokerAdapter, provider: str, account_ref: str) -> None:
         """Best effort: a failed revoke is logged and never blocks a disconnect."""

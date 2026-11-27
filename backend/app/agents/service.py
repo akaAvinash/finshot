@@ -365,8 +365,9 @@ class AgentService:
                 .where(
                     PaperTrade.user_id == user_id,
                     PaperTrade.seq > memory.trade_seq,
-                    # Older than the retention purge: its advisory event may be gone.
-                    PaperTrade.filled_at > purged_floor(PaperTrade.user_id),
+                    # Recorded before the retention purge: its advisory event may be gone.
+                    # created_at, not filled_at: a replay fills at historical candle times.
+                    PaperTrade.created_at > purged_floor(PaperTrade.user_id),
                 )
                 .order_by(PaperTrade.seq)
             )

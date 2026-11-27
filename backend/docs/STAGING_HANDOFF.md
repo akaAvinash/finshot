@@ -4,7 +4,26 @@ Demo, sandbox and paper only. Staging is a private Tailscale host that cloud
 sessions cannot reach, so every step marked **on staging** runs through a Remote
 Control session on the owner's machine, with the owner's approval.
 
-## Pinned revision
+## Release 2026-11-27 (PR #56 fixes)
+
+Deployed by a Remote Control session on the owner's machine, with the owner's go-ahead.
+
+| Item | Value |
+|---|---|
+| Backend live on staging | main `c255b4be13d7bf671304b036c4b365dfa6d5eca1`, release dir `~/tradeo-staging/repo` (previous moved to `~/tradeo-staging/repo-c700c7e`) |
+| API image | `5cfec6ada510` (`tradeo-staging-api:local`); rollback `tradeo-staging-api:rollback-c700c7e` = `10570d619226` |
+| Frontend image | unchanged, `0c145a823849` (revision `17a409d`) |
+| Backup before deploy | `tradeo-staging-20261127T073059Z-aB8Xj0xm-v1.dump.gpg` (72,025 bytes, `.sha256` ok) |
+| Alembic head | `0012` before and after; no migration ran |
+| Checks | `/health/live` and `/health/ready` 200, `./ops verify` all pass, cryptography 50.0.2; a forced unhandled error returns 500 `INTERNAL_ERROR` with `X-Request-ID` and the security headers, and keep-alive survives (DEF-001) |
+
+Rollback (no migration, so no restore needed): move `repo` aside, move
+`repo-c700c7e` back to `repo`, `docker tag tradeo-staging-api:rollback-c700c7e tradeo-staging-api:local`,
+then `./ops compose up -d --wait --force-recreate api frontend ingress`. The
+frontend and ingress share the API's network namespace, so they are recreated
+with it; their images do not change.
+
+## Pinned revision (2026-11-25)
 
 Recorded 2026-11-25 by a read-only check on the staging host. Nothing was changed.
 

@@ -319,7 +319,21 @@ class AlertDeliveryService:
                 )
             ).all()
             day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            # The daily check and the attempt increment below must not interleave
+            # with another claimer for the same user and channel. Locks are taken
+            # in sorted key order so concurrent batches cannot deadlock.
+            for user_id, chan in sorted({(r.user_id, r.channel) for r in rows}, key=str):
+                await db.execute(
+                    select(
+                        func.pg_advisory_xact_lock(
+                            func.hashtextextended(f"alerts:{user_id}:{chan}", 0)
+                        )
+                    )
+                )
             for row in rows:
+                if row.attempts >= MAX_ATTEMPTS:  # an interrupted last attempt
+                    row.status = "failed"
+                    continue
                 channel: Channel = row.channel  # type: ignore[assignment]
                 provider = self._providers[channel]
                 destination = (await self._destinations(db, row.user_id))[channel]
@@ -336,7 +350,7 @@ class AlertDeliveryService:
                             AlertDelivery.user_id == row.user_id,
                             AlertDelivery.channel == channel,
                             AlertDelivery.attempts > 0,
-                            AlertDelivery.created_at >= day,
+                            AlertDelivery.last_attempt_at >= day,
                         )
                     )
                     if (used or 0) >= self._s.notify_daily_limit_per_channel:
@@ -347,13 +361,14 @@ class AlertDeliveryService:
                     continue
                 assert destination is not None  # noqa: S101 - checked by _availability
                 title, body = TEST_TITLE, TEST_BODY
-                if row.alert_id is not None:
-                    alert = await db.get(Alert, row.alert_id)
+                if row.kind == "alert":
+                    alert = await db.get(Alert, row.alert_id) if row.alert_id else None
                     if alert is None:  # purged meanwhile
                         row.status, row.status_reason = "skipped", "CHANNEL_DISABLED"
                         continue
                     title, body = alert.title, alert.message
                 row.attempts += 1
+                row.last_attempt_at = now
                 row.next_attempt_at = now + _BACKOFF[min(row.attempts, MAX_ATTEMPTS) - 1]
                 row.destination_masked = mask_destination(destination)
                 row.simulated = provider.simulated

@@ -26,6 +26,7 @@ from app.market.schemas import (
     MarketCandles,
     MarketOverview,
     MarketSession,
+    Source,
     Timeframe,
 )
 
@@ -284,6 +285,8 @@ class DemoMarketDataProvider:
     """Deterministic demo data. `scenario` mirrors the frontend mock:
     "ready" (latest snapshot), "stale" (previous session, freshness=stale),
     "empty" (known instruments, no candle history)."""
+
+    source: Source = "demo"
 
     def __init__(self, scenario: DemoScenario = "ready") -> None:
         self.scenario: DemoScenario = scenario

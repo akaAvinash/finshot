@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from app.market.schemas import Instrument, MarketCandles, MarketOverview, Timeframe
+from app.market.schemas import Instrument, MarketCandles, MarketOverview, Source, Timeframe
 
 
 class MarketDataUnavailableError(Exception):
@@ -22,6 +22,9 @@ class MarketDataUnavailableError(Exception):
 
 @runtime_checkable
 class MarketDataProvider(Protocol):
+    source: Source
+    """Where the data comes from. Reported as `source` on the instrument list."""
+
     async def list_instruments(self) -> Sequence[Instrument]:
         """The whole instrument catalog, in a stable order."""
         ...
@@ -40,6 +43,8 @@ class MarketDataProvider(Protocol):
 class DisabledMarketDataProvider:
     """Serves nothing: every call is unavailable. Selected by
     MARKET_DATA_PROVIDER=disabled."""
+
+    source: Source = "demo"
 
     async def list_instruments(self) -> Sequence[Instrument]:
         raise MarketDataUnavailableError("market data is disabled")

@@ -105,7 +105,7 @@ async def list_instruments(
     ] = None,
 ) -> InstrumentList:
     catalog = await _call(request, "list_instruments", provider.list_instruments(), _CATALOG)
-    return InstrumentList(instruments=search_instruments(catalog, query))
+    return InstrumentList(source=provider.source, instruments=search_instruments(catalog, query))
 
 
 @router.get(

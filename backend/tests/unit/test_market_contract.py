@@ -39,6 +39,26 @@ def market_operations(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+# Cross-cutting rules the contract states once (X-Request-ID, 500 INTERNAL_ERROR) and
+# every route follows through middleware, so the served schema need not repeat them.
+CROSS_CUTTING_RESPONSES = {"500"}
+REQUEST_ID_HEADER = "X-Request-ID"
+
+
+def resolved_parameters(
+    contract: dict[str, Any], operation: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The operation's parameters with `$ref`s resolved, minus the request-ID header."""
+    out: list[dict[str, Any]] = []
+    for parameter in operation.get("parameters", []):
+        if "$ref" in parameter:
+            parameter = contract["components"]["parameters"][parameter["$ref"].rsplit("/", 1)[-1]]
+        if parameter["in"] == "header" and parameter["name"] == REQUEST_ID_HEADER:
+            continue
+        out.append(parameter)
+    return out
+
+
 def declared(contract: dict[str, Any], path: str, status: int) -> dict[str, Any]:
     responses = market_operations(contract)[path]["responses"]
     assert str(status) in responses, f"{status} is not declared for {path}"
@@ -81,10 +101,11 @@ def test_every_market_operation_is_served(contract: dict[str, Any], client: Test
         assert {
             (p["name"], p["in"], p.get("required", False)) for p in mine.get("parameters", [])
         } == {
-            (p["name"], p["in"], p.get("required", False)) for p in operation.get("parameters", [])
+            (p["name"], p["in"], p.get("required", False))
+            for p in resolved_parameters(contract, operation)
         }
         documented = {code for code in mine["responses"] if code != "422"}
-        assert documented == set(operation["responses"]), path
+        assert documented == set(operation["responses"]) - CROSS_CUTTING_RESPONSES, path
 
 
 def test_success_responses_match_contract(contract: dict[str, Any], client: TestClient) -> None:

@@ -58,7 +58,7 @@ Vitest covers preview validation, API responses, search ranking, candle aggregat
 - `src/app/` holds Next.js App Router routes, the preview sign-in action and protected workspace layout.
 - `src/components/ui/` holds locally owned shadcn/ui-style primitives built on Radix where needed. Theme and typography tokens live in `src/app/globals.css`.
 - `src/lib/api/client.ts` is the single typed client factory. Market DTOs live in `src/lib/api/market-types.ts` and match the proposed [Markets OpenAPI contract](../contracts/openapi.yaml). The current implementation serves in-memory fixtures. An adapter can map a future generated client's responses and errors to the same interface.
-- `public/brand/` contains the supplied bull-and-bear artwork. The UI shows the emblem beside the FinShot wordmark.
+- `public/brand/finshot-gold-fin.png` is the FinShot mark used in the workspace and sign-in screens. The browser tab uses the matching `src/app/favicon.ico`.
 
 The preview contains only fixture records. Backend authentication requires staging mode. Broker connections, order execution, live market feeds and AI trading are outside the preview scope.
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type MouseEvent } from "react";
-import { Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { DataState } from "@/components/data-state";
 import { PageHeading } from "@/components/page-heading";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,9 @@ export function Markets({ mode = "preview" }: { mode?: MarketMode }) {
           <Button variant="outline" onClick={openSearch} disabled={!instruments.length}>
             <Search aria-hidden /> Find instrument
           </Button>
+          {mode === "staging" && <Button variant="outline" onClick={retry} disabled={snapshot.status !== "ready"}>
+            <RefreshCw aria-hidden /> Refresh market data
+          </Button>}
           {mode === "preview" && <MarketPreviewControls scenario={request.scenario} onApply={selectScenario} />}
         </>
       } />

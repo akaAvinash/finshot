@@ -2,7 +2,7 @@ const strategy = { id: "staging-strategy-id", name: "Staging ledger", version: 3
 const base = { replay: 4, strategy, instrument: "SBIN", quantity: 5, feesPaise: 50 };
 const journal = [
   { ...base, id: "staging-sell", date: "2026-11-13", side: "Sell", fillPaise: 50300,
-    pnlPaise: 6400, filledAt: "2026-11-13T09:30:00Z", reason: "signal-exit" },
+    pnlPaise: 6400, filledAt: "2026-11-13T09:30:00Z", reason: "take-profit" },
   { ...base, id: "staging-buy", date: "2026-11-12", side: "Buy", fillPaise: 49000,
     pnlPaise: 0, filledAt: "2026-11-12T04:00:00Z", reason: "entry" },
 ];

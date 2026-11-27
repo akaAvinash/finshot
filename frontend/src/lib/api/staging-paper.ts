@@ -2,12 +2,22 @@ import { isReportDate } from "@/lib/paper-reporting";
 import type { PaperEngineCommand, PaperSnapshot, PaperStrategy } from "./auto-trading-types";
 import { hasIntegers, hasStrings, isOneOf, isRecord, isSnapshot, isTimestamp, parseSnapshot, stagingRequest } from "./staging-client";
 
+const paperBlockedReasons = ["HALTED", "LOSS_LIMIT", "TRADE_LIMIT", "PROFIT_CAP", "CONSECUTIVE_LOSSES"] as const;
 type StagingPaperSnapshot = Pick<PaperSnapshot, "source" | "environment" | "asOf" | "engine" | "strategyId" | "agent" | "orders" | "trades" | "events"> & {
   strategies: readonly (PaperStrategy & { version: number })[];
-  risk: Pick<PaperSnapshot["risk"], "status" | "dailyLossPaise" | "lossLimitPaise" | "tradesToday" | "tradeLimit">;
+  risk: Pick<PaperSnapshot["risk"], "status" | "dailyLossPaise" | "lossLimitPaise" | "tradesToday" | "tradeLimit"> & {
+    blockedReason?: (typeof paperBlockedReasons)[number] | null; consecutiveLosses?: number; controlsRevision?: number;
+  };
   account: { capitalPaise: number; cashPaise: number; equityPaise: number; positionQuantity: number; perTradeRiskPaise: number };
   replay: { sessionDate: string | null; sessionsDone: number; sessionsTotal: number; finished: boolean };
 };
+
+function hasTradeControlsRisk(risk: Record<string, unknown>) {
+  // During rollout the earlier paper engine omits all three fields.
+  if (risk.blockedReason === undefined && risk.consecutiveLosses === undefined && risk.controlsRevision === undefined) return true;
+  return (risk.blockedReason === null || isOneOf(risk.blockedReason, paperBlockedReasons)) &&
+    [risk.consecutiveLosses, risk.controlsRevision].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+}
 
 function isPaperSnapshot(value: unknown): value is StagingPaperSnapshot {
   if (!isSnapshot(value, "PAPER") || !isOneOf(value.engine, ["idle", "running", "halted"]) ||
@@ -17,7 +27,7 @@ function isPaperSnapshot(value: unknown): value is StagingPaperSnapshot {
     hasStrings(row, ["id", "name", "instrument"]) && Number.isSafeInteger(row.version)) &&
     isRecord(agent) && typeof agent.name === "string" && typeof agent.ready === "boolean" &&
     isRecord(risk) && isOneOf(risk.status, ["approved", "blocked"]) &&
-    hasIntegers(risk, ["dailyLossPaise", "lossLimitPaise", "tradesToday", "tradeLimit"]) &&
+    hasTradeControlsRisk(risk) && hasIntegers(risk, ["dailyLossPaise", "lossLimitPaise", "tradesToday", "tradeLimit"]) &&
     isRecord(account) && hasIntegers(account, ["capitalPaise", "cashPaise", "equityPaise", "positionQuantity", "perTradeRiskPaise"]) &&
     isRecord(replay) && typeof replay.finished === "boolean" && hasIntegers(replay, ["sessionsDone", "sessionsTotal"]) &&
     (replay.sessionDate === null || (typeof replay.sessionDate === "string" && isReportDate(replay.sessionDate))) &&

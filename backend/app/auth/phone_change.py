@@ -195,14 +195,39 @@ class PhoneChangeService:
 
         try:
             async with auth._factory() as db, db.begin():
-                # Serialise every change to the same number, then take the account
-                # row. Read the clock only after both locks: waiting for them must
-                # not let an expired challenge or a closed step-up window through.
+                # Take every lock first, then read the clock: waiting for any of
+                # them must not let an expired challenge or a closed step-up window
+                # through. Order: number, account row, old invite, initiating session
+                # (the operator's revoke_invite takes the invite before sessions).
                 lock_key = func.hashtextextended(f"phone:{new_phone}", 0)
                 await db.execute(select(func.pg_advisory_xact_lock(lock_key)))
                 user = await db.scalar(
                     select(User).where(User.id == session.user_id).with_for_update()
                 )
+                if user is None or user.status != "active":
+                    raise code_invalid()
+                old_phone = user.phone_e164
+                old_invite = await db.scalar(
+                    select(Invite)
+                    .where(Invite.phone_e164 == old_phone, Invite.revoked_at.is_(None))
+                    .with_for_update()
+                )
+                # Lock the session without judging it yet: a logout already revoking
+                # it finishes first and is seen below; a later one waits for this commit.
+                live_row = (
+                    await db.execute(
+                        select(
+                            SessionRow.revoked_at,
+                            SessionRow.expires_at,
+                            SessionRow.step_up_until,
+                        )
+                        .where(
+                            SessionRow.id == session.session_id,
+                            SessionRow.user_id == session.user_id,
+                        )
+                        .with_for_update(read=True)
+                    )
+                ).first()
                 now = auth.clock()
                 consumed = await db.scalar(
                     update(PhoneChangeChallenge)
@@ -221,36 +246,15 @@ class PhoneChangeService:
                 ) or await db.scalar(
                     select(func.count()).select_from(Invite).where(Invite.phone_e164 == new_phone)
                 )
-                if taken:
+                if taken or old_invite is None or live_row is None:
                     raise code_invalid()
-                if user is None or user.status != "active":
-                    raise code_invalid()
-                old_phone = user.phone_e164
-                old_invite = await db.scalar(
-                    select(Invite)
-                    .where(Invite.phone_e164 == old_phone, Invite.revoked_at.is_(None))
-                    .with_for_update()
-                )
-                if old_invite is None:
-                    raise code_invalid()
-                # Lock order: number, account row, old invite, then this session (the
-                # operator's revoke_invite takes the invite before sessions).
-                # The initiating session must still be live and stepped up: another
-                # session may have ended it while this request waited.
-                live = await db.scalar(
-                    select(SessionRow.id)
-                    .where(
-                        SessionRow.id == session.session_id,
-                        SessionRow.user_id == session.user_id,
-                        SessionRow.revoked_at.is_(None),
-                        SessionRow.expires_at > now,
-                        SessionRow.step_up_until > now,
-                    )
-                    # Lock it: a logout already revoking this session finishes first
-                    # and is seen here; one that arrives later waits for this commit.
-                    .with_for_update(read=True)
-                )
-                if live is None:
+                revoked_at, expires_at, step_up_until = live_row
+                if (
+                    revoked_at is not None
+                    or expires_at <= now
+                    or step_up_until is None
+                    or step_up_until <= now
+                ):
                     raise code_invalid()
                 db.add(Invite(phone_e164=new_phone, email=old_invite.email, created_at=now))
                 old_invite.revoked_at = now

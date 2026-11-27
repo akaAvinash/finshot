@@ -174,7 +174,7 @@ function BrokerActionDialog({ intent, onClose, onUpdated, onExpired, onUnconfirm
       if (error instanceof AuthError && error.code === "STEP_UP_REQUIRED" && intent.kind === "authorize") { setStepUp(true); return; }
       if (intent.kind !== "authorize" && isUnconfirmedStagingWrite(error)) {
         setUnconfirmed(true);
-        setError("The action could not be confirmed. Broker connections are refreshing. Close this dialog to check the account.");
+        setError(stagingError(error, "The action could not be confirmed. Broker connections are refreshing. Close this dialog to check the account."));
         onUnconfirmed();
         return;
       }

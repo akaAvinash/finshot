@@ -235,19 +235,23 @@ test("an older backtest cannot approve a draft changed while the run was queued"
   await expect(page.getByText("Backtest · Unavailable")).toBeVisible();
 });
 
-test("reconciles a lost backtest response against the server queue before offering another run", async ({ page }) => {
+test("shows the request ID and reconciles an unconfirmed backtest before offering another run", async ({ page }) => {
   await signInStaging(page);
   await createDraft(page, "Lost reply test");
   await page.goto("/backtesting");
   await page.route("**/api/v1/backtests/preview/runs", async (route) => {
     const committed = await route.fetch();
     expect(committed.status()).toBe(202);
-    await route.abort();
-  });
+    await route.fulfill({ status: 500, headers: { "X-Request-ID": "fixture-backtest-write" }, json: {
+      code: "INTERNAL_ERROR", message: "The result could not be delivered.", requestId: "fixture-backtest-write",
+    } });
+  }, { times: 1 });
   const submit = page.getByRole("button", { name: "Run demo backtest" });
   await submit.click();
   await expect(submit).toBeDisabled();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("The submission could not be confirmed");
+  const error = page.getByRole("main").getByRole("alert");
+  await expect(error).toContainText("The submission could not be confirmed");
+  await expect(error).toContainText("Request ID fixture-backtest-write.");
   await page.getByRole("button", { name: "Check run queue" }).click();
   const queue = page.getByRole("region", { name: "Run queue" });
   await expect(queue.getByRole("listitem")).toHaveCount(1);

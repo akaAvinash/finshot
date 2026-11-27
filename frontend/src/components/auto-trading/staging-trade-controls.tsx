@@ -103,11 +103,11 @@ export function StagingTradeControls({ engineRunning, onSaved }: { engineRunning
       <Button variant="outline" onClick={reload}>Retry Trade Controls</Button></div>}
     {!settings && !error && <p role="status" className="text-sm text-muted-foreground">Loading paper limits…</p>}
     {settings && <TradeControlForm key={`${refresh}:${settings.revision}`} settings={settings} engineRunning={engineRunning}
-      onReload={reload} onSave={(next) => {
+      onReload={reload} onSave={(next, message = "Paper Trade Controls saved.") => {
         setSettings(next);
         setHistoryRefresh((value) => value + 1);
         onSaved();
-        notify("Paper Trade Controls saved.");
+        notify(message);
       }} />}
     <details className="rounded-lg border border-border p-3">
       <summary className="cursor-pointer text-sm font-semibold">Trade Controls history</summary>
@@ -128,7 +128,8 @@ export function StagingTradeControls({ engineRunning, onSaved }: { engineRunning
 }
 
 function TradeControlForm({ settings, engineRunning, onReload, onSave }: {
-  settings: TradeControlSettings; engineRunning: boolean; onReload: () => void; onSave: (settings: TradeControlSettings) => void;
+  settings: TradeControlSettings; engineRunning: boolean; onReload: () => void;
+  onSave: (settings: TradeControlSettings, message?: string) => void;
 }) {
   const [pendingValues, setPendingValues] = useState<TradeControlValues>();
   const [code, setCode] = useState("");
@@ -169,13 +170,13 @@ function TradeControlForm({ settings, engineRunning, onReload, onSave }: {
           const latest = await getTradeControlSettings(controller.signal);
           if (controller.signal.aborted) return;
           if (latest.revision >= settings.revision && tradeControlFields.every((field) => latest.controls[field] === draft.values[field])) {
-            onSave(latest);
+            onSave(latest, "Your changes match the current saved limits.");
             return;
           }
-          setError("The save could not be confirmed. Load the latest saved limits before trying again.");
+          setError(stagingError(reason, "The save could not be confirmed. Load the latest saved limits before trying again."));
         } catch {
           if (controller.signal.aborted) return;
-          setError("The save could not be confirmed and the server limits could not be checked. Load the latest saved limits before trying again.");
+          setError(stagingError(reason, "The save could not be confirmed and the server limits could not be checked. Load the latest saved limits before trying again."));
         }
         setRevisionConflict(true);
         return;

@@ -192,7 +192,7 @@ export function Backtesting({ mode = "preview" }: { mode?: "preview" | "staging"
       if (controller.signal.aborted) return;
       if (staging && isUnconfirmedStagingWrite(error)) {
         setUnconfirmed({ config, existingIds: new Set(result.data.runs.map(({ id }) => id)) });
-        setSubmitError("The submission could not be confirmed. Check the run queue before submitting again.");
+        setSubmitError(stagingError(error, "The submission could not be confirmed. Check the run queue before submitting again."));
       } else {
         const fallback = "The demo run could not be queued. Try again.";
         setSubmitError(staging ? stagingError(error, fallback) : error instanceof BacktestInputError ? error.message : fallback);

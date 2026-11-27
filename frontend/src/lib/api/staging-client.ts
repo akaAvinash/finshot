@@ -7,7 +7,9 @@ export async function stagingRequest<T>(path: string, parse: (value: unknown) =>
     : await writeAccount(url, "POST", body, signal);
   const value: unknown = await response.json().catch(() => undefined);
   const result = parse(value);
-  if (result === undefined) throw new AuthError(502, "INVALID_RESPONSE");
+  if (result === undefined) {
+    throw new AuthError(502, "INVALID_RESPONSE", undefined, undefined, response.headers.get("X-Request-ID") ?? undefined);
+  }
   return result;
 }
 

@@ -1673,12 +1673,13 @@ paths:
         every other session of the account has ended, and the response is the
         updated profile. A wrong, expired, used or foreign challenge or code,
         or a number that cannot be taken, returns
-        `400 PHONE_CHANGE_CODE_INVALID`; the account is unchanged. A
-        well-formed request naming an active challenge (the caller's, from
-        this session, unused, unexpired and with attempts left) uses one of
-        its attempts, whether the code is right or wrong; nothing else
-        changes. A malformed body (`400 INVALID_REQUEST`) is rejected before
-        any challenge is read and uses no attempt.
+        `400 PHONE_CHANGE_CODE_INVALID`. A well-formed request naming an
+        active challenge (the caller's, from this session, unused, unexpired
+        and with attempts left) uses one of its attempts, whether it then
+        succeeds or fails. A failed confirmation changes nothing else: the
+        account, its invite and its sessions are unchanged. A malformed body
+        (`400 INVALID_REQUEST`) is rejected before any challenge is read and
+        uses no attempt.
       security:
         - sessionCookie: []
           csrfHeader: []

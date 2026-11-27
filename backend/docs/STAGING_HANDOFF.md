@@ -4,6 +4,47 @@ Demo, sandbox and paper only. Staging is a private Tailscale host that cloud
 sessions cannot reach, so every step marked **on staging** runs through a Remote
 Control session on the owner's machine, with the owner's approval.
 
+## Release 2026-11-27 (208140c: Trade Controls, broker connections)
+
+Deployed 10:07-10:10 UTC by a Remote Control session on the owner's machine,
+with the owner's go-ahead. Backend only; the frontend image was not rebuilt.
+
+| Item | Value |
+|---|---|
+| Backend live on staging | main `208140ce642a5a2eca98649c69a92f701bcd76c0`, release dir `~/tradeo-staging/repo` (previous moved to `~/tradeo-staging/repo-6c193d8`) |
+| API image | `e1fe8a9f1eba` (`tradeo-staging-api:local`, also `:208140c...`); rollback `tradeo-staging-api:rollback-6c193d8` = `9e9c9f5c5a4d` |
+| Frontend image | unchanged, `0c145a823849` (revision `17a409d`); it has no proxy routes for trade-controls, broker-connections, backtests or agents until the frontend is redeployed |
+| Backup before the migration | `tradeo-staging-20261127T100751Z-bGLDWjaz-v1.dump.gpg` (80,110 bytes, `.sha256` ok), taken at `0012` |
+| Alembic head | `0012` before, `0014` after (`0013` Paper Trade Controls, `0014` Broker connections v2), run by the one-shot migrate job with api, frontend and ingress stopped |
+| Host-only staging files | `grants.sql`: `tradeo_app` row grants now include `broker_authorizations`, `trade_controls`, `trade_control_changes`. `ops verify` and `restore-check.sql` expect `0014`. Originals are in `repo-6c193d8/backend/staging` |
+| Checks | `/health/ready` 200, `./ops verify` all pass (`Alembic 0014, ...`), `verify_staging.py` signed out 0 failed |
+| Restore drill at `0014` | `tradeo-staging-20261127T101949Z-uuoKeGBT-v1.dump.gpg` restored into `tradeo_restore_20261127101949_uuokegbt`: `Alembic 0014`, synthetic sample check passed |
+| API QA (two synthetic accounts, calls inside the API container) | Trade Controls: save bumps the revision, stale revision 409 `TRADE_CONTROLS_REVISION_CONFLICT`, out of bounds 400 `TRADE_CONTROLS_OUT_OF_BOUNDS` with `fieldErrors`, save while running 409 `TRADE_CONTROLS_ENGINE_RUNNING`, per-user. Broker connections: two-step authorization, sync, portfolio, disconnect; events keep `connectionId`; another account gets 404 `BROKER_CONNECTION_NOT_FOUND` and cannot complete the authorization. Paper: a take-profit fill with `takeProfitBps` 50, halt, report and CSV list `take-profit`. Unknown route 404 `NOT_FOUND` envelope. |
+
+Rollback needs a database restore (the schema moved to `0014`): stop ingress,
+frontend and api; take a fresh `./ops backup`; restore the `100751Z` dump into
+`tradeo_staging`; move `repo` aside and `repo-6c193d8` back to `repo`;
+`docker tag tradeo-staging-api:rollback-6c193d8 tradeo-staging-api:local`; then
+from the restored release `./ops compose up -d --wait --force-recreate api frontend ingress`
+and `./ops verify` (its `0012` check matches again).
+
+### Earlier the same day: 6c193d8 (PR #63)
+
+Main `6c193d8` (404 `NOT_FOUND` / 405 `METHOD_NOT_ALLOWED` error envelope, no
+migration) ran from 09:58 to 10:09 UTC: API image `9e9c9f5c5a4d`, backup
+`tradeo-staging-20261127T095735Z-1F7ZO8bb-v1.dump.gpg`, rollback tag
+`tradeo-staging-api:rollback-c255b4b` = `5cfec6ada510`, release dir `repo-c255b4b`.
+
+### Synthetic QA accounts
+
+`OTP_STAGING_ALLOWLIST` in `~/.config/tradeo-staging/signin.env` gained two
+synthetic numbers (`+91******0002`, `+91******0003`) with the owner's approval;
+the previous file is `signin.env.bak-20261127`. Both are invited, sign up over
+`channel: sms` with the staging provider (codes only in the API container's
+tmpfs, read with `./ops admin staging-otp`) and have authenticators. Revert:
+copy the backup over `signin.env`, recreate api, frontend and ingress, and
+`./ops admin invite revoke` each number.
+
 ## Release 2026-11-27 (PR #56 fixes)
 
 Deployed by a Remote Control session on the owner's machine, with the owner's go-ahead.

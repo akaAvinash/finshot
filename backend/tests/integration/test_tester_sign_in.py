@@ -366,9 +366,9 @@ def test_database_caps_invites_at_15_minutes(client: TestClient, clock: FakeCloc
 # --------------------------------------------------------- the allowlist
 
 
-def test_allowlist_matches_the_contract_proposal() -> None:
-    proposal = yaml.safe_load((CONTRACT_DIR / "tester-sign-in.openapi.yaml").read_text())
-    assert set(proposal["x-tester-allowed-operations"]) == TESTER_ALLOWED_OPERATIONS
+def test_allowlist_matches_the_contract() -> None:
+    contract = yaml.safe_load((CONTRACT_DIR / "openapi.yaml").read_text())
+    assert set(contract["x-tester-allowed-operations"]) == TESTER_ALLOWED_OPERATIONS
     assert len(TESTER_ALLOWED_OPERATIONS) == 26
 
 

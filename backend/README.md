@@ -94,7 +94,7 @@ The code appears in that terminal as `OTP for +91******3210: 123456`, not in any
 
 ## Tester sign-in (off by default, demo and paper only)
 
-Invite-only access for designated testers, per `contracts/tester-sign-in.openapi.yaml`.
+Invite-only access for designated testers, per `redeemTesterInvite` and `x-tester-allowed-operations` in `contracts/openapi.yaml`.
 Set `TESTER_SIGN_IN_ENABLED=true` to turn it on; while it is off the route is 404 and
 every tester session is ended at startup. `TESTER_SESSION_TTL_SECONDS` (default and
 maximum 7200) and `TESTER_INVITE_TTL_SECONDS` (default and maximum 900) bound lifetimes.

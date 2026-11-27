@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Tradeo API Proposal
-  version: 0.11.0
+  version: 0.12.0
   description: |
     Proposed contract for Phase 2 market data (read-only), Phase A
     authentication, the demo broker workspace (no real broker access),
@@ -305,6 +305,18 @@ tags:
         the authenticator is lost, an operator removes it on the server and
         the user registers again with an emailed code.
 
+      A third, **off by default**, way in is for designated testers (see
+      `redeemTesterInvite`). An owner issues one single-use code for a dedicated
+      tester identity and a synthetic phone number through an operator command.
+      The code expires within 15 minutes and the session within two hours. A
+      tester session needs no authenticator, is limited to demo data and the
+      paper simulator, and can be ended by the owner at once. Only the
+      operations listed in `x-tester-allowed-operations` are available to it; any
+      other operation answers `403 TESTER_ACCESS_DENIED` (see the
+      `TesterAccessDenied` response), and a tester session never gets step-up
+      access. Tester identities cannot use the other sign-in endpoints. While
+      the feature is disabled, the tester endpoint answers `404 NOT_FOUND`.
+
       Every failure on these endpoints looks the same for every phone number.
 
       **Same-origin only.** The browser calls `/api/v1/*` on the web
@@ -466,6 +478,34 @@ tags:
 
       **Passkeys.** A WebAuthn module is planned behind a server-side
       interface. It adds no endpoint yet and nothing here depends on it.
+x-tester-allowed-operations:
+  - getCsrfToken
+  - getCurrentUser
+  - logout
+  - getMarketInstruments
+  - getMarketOverview
+  - getMarketCandles
+  - getBrokerConnections
+  - getBrokerPortfolio
+  - getStrategies
+  - sendStrategyCommand
+  - getBacktestWorkspace
+  - startBacktest
+  - getBacktestRun
+  - getPaperTrading
+  - sendPaperCommand
+  - getTradeControls
+  - getTradeControlsHistory
+  - getPaperReport
+  - exportPaperTrades
+  - listAgents
+  - getAgentHealth
+  - listAgentEvents
+  - listAlerts
+  - acknowledgeAlert
+  - getAlertPreferences
+  - updateAlertPreferences
+
 paths:
   /api/v1/market/instruments:
     get:
@@ -861,6 +901,84 @@ paths:
                 requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
         '403':
           $ref: '#/components/responses/AuthCsrfFailed'
+        '429':
+          $ref: '#/components/responses/AuthRateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/auth/login/tester:
+    post:
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      operationId: redeemTesterInvite
+      tags: [Auth]
+      summary: Redeem an invite for a demo and paper trading session
+      description: |
+        Off by default. Requires the same origin check and `pre_login` CSRF
+        proof as normal sign-in. Failures are throttled by IP and normalized
+        phone number, including unknown numbers. The code is matched against
+        the dedicated tester identity. The invite code is consumed and one
+        scoped session is created in the same transaction, so a concurrent or
+        later redemption cannot reuse it. Expired, revoked, used, mismatched
+        and unknown credentials all return the same 401 response.
+
+        The regular session and CSRF cookies are set as separate `Set-Cookie`
+        fields, and the new session-bound CSRF token is returned. The tester
+        session ends within two hours of redemption, and its idle deadline
+        cannot extend past that. The response carries `Cache-Control:
+        no-store`. The session reports `access: tester` here and on
+        `getCurrentUser`; `user.totpEnabled` stays false and
+        `session.stepUpUntil` is null.
+      security:
+        - csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TesterInviteRedemption'
+      responses:
+        '200':
+          description: Tester session created with session and CSRF cookies.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookieLogin'
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TesterSignInResponse'
+        '400':
+          $ref: '#/components/responses/AuthInvalidRequest'
+        '401':
+          description: The phone number or invite code is not valid.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+              example:
+                code: INVALID_CREDENTIALS
+                message: The phone number or code is not valid.
+                requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+        '403':
+          $ref: '#/components/responses/AuthCsrfFailed'
+        '404':
+          description: Tester sign-in is disabled. Returns the usual `NOT_FOUND` envelope.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiRoutingError'
         '429':
           $ref: '#/components/responses/AuthRateLimited'
         '500':
@@ -2888,6 +3006,10 @@ components:
           type: [string, 'null']
           format: date-time
           description: End of the step-up window on this session, or null when it is closed (see the Step-up tag).
+        access:
+          type: string
+          enum: [tester]
+          description: Present only on a tester session, and then always `tester`. Omitted on a regular session. Clients route on this server-reported value.
     AuthSession:
       type: object
       required: [user, session]
@@ -2912,6 +3034,33 @@ components:
             New `session` CSRF token bound to the session just created. It
             replaces the pre-login token, which stops working. Required: the
             client must send this value as `X-CSRF-Token` on its next write.
+    TesterInviteRedemption:
+      type: object
+      required: [phone, inviteCode]
+      additionalProperties: false
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        inviteCode:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{22}$'
+          description: An unpadded base64url code. Send only in the request body.
+    TesterSession:
+      allOf:
+        - $ref: '#/components/schemas/AuthSession'
+        - properties:
+            user:
+              properties:
+                totpEnabled: { const: false }
+            session:
+              required: [access]
+              properties:
+                access: { const: tester }
+                stepUpUntil: { type: 'null' }
+    TesterSignInResponse:
+      allOf:
+        - $ref: '#/components/schemas/OtpVerifyResponse'
+        - $ref: '#/components/schemas/TesterSession'
     TotpCode:
       type: object
       required: [code]
@@ -3072,6 +3221,7 @@ components:
             - TOTP_NOT_PENDING
             - SESSION_NOT_FOUND
             - CURRENT_SESSION
+            - TESTER_ACCESS_DENIED
             - INTERNAL_ERROR
         message:
           type: string
@@ -6503,6 +6653,24 @@ components:
                 code: TOTP_SETUP_REQUIRED
                 message: Set up your authenticator app to continue.
                 requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
+    TesterAccessDenied:
+      description: >
+        The session is a tester session and the operation is not in
+        `x-tester-allowed-operations`. Checked before CSRF and before the body
+        is read, for every operation that needs a session, so it never depends
+        on the request's contents. Any operation outside the allowlist,
+        including any added later, answers this way.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+          example:
+            code: TESTER_ACCESS_DENIED
+            message: This operation is not available in a tester session.
+            requestId: 3f2c9a7e5b1d4c8fa0e6b2d9c7a1f4e3
     AuthSessionNotFound:
       description: No active session with this id belongs to the caller.
       headers:

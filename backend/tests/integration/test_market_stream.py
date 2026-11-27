@@ -284,3 +284,14 @@ def test_refused_upgrade_does_not_renew_the_session(
         p=OTHER_PHONE,
     )[0]["last_seen_at"]
     assert after == before
+
+
+def test_refused_selection_does_not_renew_the_owner_session(
+    owner_stream: Callable[..., tuple[TestClient, Browser]], db_url: str, clock: FakeClock
+) -> None:
+    client, _ = owner_stream()
+    before = db_rows(db_url, "SELECT last_seen_at FROM sessions")[0]["last_seen_at"]
+    clock.advance(120)
+    assert denial(client, f"{PATH}?instrumentId=NSE:RELIANCE&timeframe=2m").status_code == 400
+    after = db_rows(db_url, "SELECT last_seen_at FROM sessions")[0]["last_seen_at"]
+    assert after == before

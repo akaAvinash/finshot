@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -410,46 +411,89 @@ def test_websockets_debug_records_are_suppressed(make_settings: SettingsFactory)
     assert logging.getLogger("websockets").getEffectiveLevel() >= logging.INFO
 
 
-async def test_stalled_send_ends_the_stream(make_settings: SettingsFactory) -> None:
+class StalledSocket:
+    """A client that never reads: every send blocks. Records close attempts."""
+
+    def __init__(self) -> None:
+        self.closed: list[int] = []
+
+    async def send_json(self, data: Any) -> None:
+        await asyncio.Event().wait()
+
+    async def receive(self) -> dict[str, Any]:
+        await asyncio.Event().wait()
+        return {}
+
+    async def close(self, code: int) -> None:
+        self.closed.append(code)
+
+
+class EndedSessions:
+    async def resolve_session(self, token: str, *, renew: bool = True) -> None:
+        return None
+
+
+def _snapshot_frame() -> tuple[MarketSnapshotFrame, Tick]:
+    tick = make_tick()
+    return (
+        MarketSnapshotFrame(
+            as_of=NOW,
+            quote=quote_from_tick(tick),
+            history=MarketCandles(
+                instrument_id="NSE:RELIANCE",
+                timeframe="5m",
+                source="market",
+                as_of=NOW,
+                freshness="fresh",
+                candles=[],
+            ),
+        ),
+        tick,
+    )
+
+
+async def _run_serve(settings: Any, socket: StalledSocket, auth: Any, checked_at: float) -> int:
     from app.api.routes.market_stream import _serve
 
-    class StalledSocket:
-        async def send_json(self, data: Any) -> None:
-            await asyncio.Event().wait()
-
-        async def receive(self) -> dict[str, Any]:
-            await asyncio.Event().wait()
-            return {}
-
-    settings = make_settings(market_stream_send_timeout_seconds=0.05)
-    source = ScriptedSource()
-    hub = MarketStreamHub(source, clock=Clock())
-    tick = make_tick()
-    snapshot = MarketSnapshotFrame(
-        as_of=NOW,
-        quote=quote_from_tick(tick),
-        history=MarketCandles(
-            instrument_id="NSE:RELIANCE",
-            timeframe="5m",
-            source="market",
-            as_of=NOW,
-            freshness="fresh",
-            candles=[],
-        ),
-    )
+    hub = MarketStreamHub(ScriptedSource(), clock=Clock())
+    snapshot, tick = _snapshot_frame()
     async with hub.subscribe("NSE:RELIANCE") as subscriber:
-        started_at = asyncio.get_running_loop().time()
-        with pytest.raises(TimeoutError):
-            async with asyncio.timeout(2):  # a backstop; the stream's deadline fires first
-                await _serve(
-                    StalledSocket(),  # type: ignore[arg-type]
-                    hub,
-                    subscriber,
-                    settings,
-                    None,  # type: ignore[arg-type]
-                    "token",
-                    snapshot,
-                    tick,
-                    "5m",
-                )
-        assert asyncio.get_running_loop().time() - started_at < 1
+        async with asyncio.timeout(5):  # backstop only
+            return await _serve(
+                socket,  # type: ignore[arg-type]
+                hub,
+                subscriber,
+                settings,
+                auth,
+                "token",
+                snapshot,
+                tick,
+                "5m",
+                checked_at,
+            )
+
+
+async def test_stalled_send_ends_the_stream_with_a_close_attempt(
+    make_settings: SettingsFactory,
+) -> None:
+    settings = make_settings(market_stream_send_timeout_seconds=0.05)
+    socket = StalledSocket()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    code = await _run_serve(settings, socket, None, loop.time() + 3600)
+    assert code == 1013 and socket.closed == [1013]
+    assert loop.time() - started_at < 1.5
+
+
+async def test_session_check_runs_while_a_send_is_stalled(make_settings: SettingsFactory) -> None:
+    """The send deadline is a minute; the due session check must not wait for it."""
+    settings = make_settings(
+        market_stream_send_timeout_seconds=60, market_stream_session_recheck_seconds=1
+    )
+    socket = StalledSocket()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    # The last check was 1 s ago, so the next one is due at once.
+    code = await _run_serve(settings, socket, EndedSessions(), time.monotonic() - 1)
+    assert code == 4401 and socket.closed == [4401]
+    assert loop.time() - started_at < 2.5

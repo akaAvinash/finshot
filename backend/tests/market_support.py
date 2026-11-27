@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from app.main import create_app
 from app.market.provider import MarketDataProvider, MarketDataUnavailableError
-from app.market.schemas import Instrument, MarketCandles, MarketOverview, Timeframe
+from app.market.schemas import Instrument, MarketCandles, MarketOverview, Source, Timeframe
 from tests.conftest import SettingsFactory
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "contracts" / "openapi.yaml"
@@ -51,6 +51,8 @@ def market_client(
 class FailingProvider:
     """Every call reports an outage, like a feed that is down."""
 
+    source: Source = "demo"
+
     async def list_instruments(self) -> Sequence[Instrument]:
         raise MarketDataUnavailableError("feed down")
 
@@ -63,6 +65,8 @@ class FailingProvider:
 
 class SlowProvider:
     """Never answers within the configured timeout."""
+
+    source: Source = "demo"
 
     async def _hang(self) -> Any:
         await asyncio.sleep(10)
@@ -91,6 +95,7 @@ class StubProvider:
         overview: Callable[[], MarketOverview] | None = None,
         candles: Callable[[str, Timeframe], MarketCandles | None] = lambda _i, _t: None,
     ) -> None:
+        self.source: Source = "demo"
         self._instruments = instruments
         self._overview = overview
         self._candles = candles

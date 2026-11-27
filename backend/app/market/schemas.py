@@ -53,6 +53,7 @@ class Instrument(_Wire):
 
 
 class InstrumentList(_Wire):
+    source: Source
     instruments: list[Instrument]
 
 

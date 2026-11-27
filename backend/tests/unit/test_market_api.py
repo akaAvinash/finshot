@@ -157,6 +157,21 @@ def test_query_length_limit(client: TestClient) -> None:
     )
 
 
+def test_length_limit_applies_to_the_raw_query_before_the_blank_rule(client: TestClient) -> None:
+    """Contract: 101 spaces is over the limit, so 400, not the whole catalog."""
+    assert_error(
+        client.get(f"{MARKET}/instruments", params={"query": " " * 101}), 400, "INVALID_REQUEST"
+    )
+
+
+@pytest.mark.parametrize("query", [None, "nifty", "!!", "zzzz"])
+def test_instrument_list_always_states_its_source(client: TestClient, query: str | None) -> None:
+    params = {} if query is None else {"query": query}
+    response = client.get(f"{MARKET}/instruments", params=params)
+    assert response.status_code == 200
+    assert response.json()["source"] == "demo"
+
+
 # --- Overview ----------------------------------------------------------------
 
 

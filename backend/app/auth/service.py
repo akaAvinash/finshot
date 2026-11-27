@@ -273,10 +273,9 @@ class AuthService:
 
     # ---------------------------------------------------------------- sessions
 
-    async def resolve_session(self, token: str | None, *, renew: bool = True) -> SessionInfo | None:
+    async def resolve_session(self, token: str | None) -> SessionInfo | None:
         """Return the session only if it exists and is unrevoked, within both its
-        idle and absolute expiry, and its user is active. `renew=False` checks
-        without counting as activity (the market stream's periodic recheck)."""
+        idle and absolute expiry, and its user is active."""
         if not token or len(token) > 256:
             return None
         now = self.clock()
@@ -325,7 +324,7 @@ class AuthService:
             # Throttle writes, but never beyond a quarter of the idle TTL, so a
             # short idle TTL can still be renewed by regular activity.
             resolution = min(_LAST_SEEN_RESOLUTION, idle / 4)
-            if renew and now - last_seen >= resolution:
+            if now - last_seen >= resolution:
                 # GREATEST: a concurrent renewal with a later timestamp must win.
                 renewed = await db.scalar(
                     update(SessionRow)

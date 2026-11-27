@@ -10,8 +10,9 @@ parameters, 503 when the feed cannot serve a snapshot or the connection cap
 is reached, or the session cannot be checked (database down).
 
 After the upgrade the server sends a snapshot, then updates and status
-frames. The session is checked again every MARKET_STREAM_SESSION_RECHECK_SECONDS
-without renewing it (an open chart is not activity): 4401 when it has ended,
+frames. The session is checked again every MARKET_STREAM_SESSION_RECHECK_SECONDS, and
+each check renews it (owner decision: an open chart keeps the session alive
+until its absolute expiry): 4401 when it has ended,
 4403 when the account is no longer eligible. A client that falls behind, or a
 recheck that cannot reach the database, is closed with 1013, and a client
 that sends any message with 1008."""
@@ -258,7 +259,7 @@ async def _serve(
             if now >= next_recheck:
                 next_recheck = now + settings.market_stream_session_recheck_seconds
                 try:
-                    session = await auth.resolve_session(token, renew=False)
+                    session = await auth.resolve_session(token)
                 except Exception as exc:
                     # Cannot confirm the session: close, and let the client
                     # retry with backoff (the next upgrade checks it again).

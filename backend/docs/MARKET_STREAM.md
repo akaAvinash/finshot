@@ -43,10 +43,10 @@ One upstream connection serves all owner connections. The REST market routes
 | 1013 | The client fell behind (`MARKET_STREAM_QUEUE_SIZE`, 256 ticks) | Reconnect with backoff. |
 | 1012 | Server restart (sent by the server process) | Reconnect with backoff. |
 
-The periodic session check does **not** renew the session: an open chart is not
-activity. A chart left open with no other API calls is closed with 4401 when the
-idle timeout (`SESSION_IDLE_TTL_SECONDS`, 30 minutes) passes. The upgrade itself
-counts as activity.
+Each periodic session check renews the session (owner decision, 2026-11-27): an
+open chart keeps the session alive, so it is not signed out by the idle timeout.
+The absolute expiry (`SESSION_ABSOLUTE_TTL_SECONDS`, 12 hours) still ends it with
+4401, as do sign-out and revocation.
 
 ## Configuration (server environment only)
 

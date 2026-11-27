@@ -227,9 +227,11 @@ def test_lost_authenticator_closes_4403(
         assert receive_until_close(ws) == 4403
 
 
-def test_recheck_does_not_renew_the_session(
+def test_open_stream_keeps_the_session_alive(
     owner_stream: Callable[..., tuple[TestClient, Browser]], db_url: str, clock: FakeClock
 ) -> None:
+    """Owner decision 2026-11-27: each recheck renews the session, so an open
+    chart is not signed out by the idle timeout (the absolute expiry still holds)."""
     client, _ = owner_stream(market_stream_session_recheck_seconds=1)
     with client.websocket_connect(URL, headers=HEADERS) as ws:
         ws.receive_json()
@@ -239,7 +241,7 @@ def test_recheck_does_not_renew_the_session(
         while time.monotonic() < deadline:
             ws.receive_json()
         after = db_rows(db_url, "SELECT last_seen_at FROM sessions")[0]["last_seen_at"]
-        assert after == before
+        assert after == clock.now and after > before
 
 
 def test_client_message_closes_1008(

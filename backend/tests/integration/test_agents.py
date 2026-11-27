@@ -883,11 +883,11 @@ def test_old_trades_respect_the_purge_floor(
         _db(),
         "INSERT INTO paper_trades (user_id, replay, instrument, side, quantity, fill_paise,"
         " fees_paise, pnl_paise, reason, filled_at, created_at)"
-        " SELECT user_id, replay, 'SBIN', 'Sell', 3, 80000, 72, -1500, 'stop-loss', now(),"
-        " now() FROM paper_accounts",
-    )
+        " SELECT user_id, replay, 'SBIN', 'Sell', 3, 80000, 72, -1500, 'stop-loss',"
+        " now() - interval '400 days', now() FROM paper_accounts",
+    )  # a replay fills at a historical time but is recorded now
     db_rows(_db(), "UPDATE paper_accounts SET updated_at = updated_at + interval '1 second'")
-    _floor("SELECT filled_at FROM paper_trades", shift=shift)
+    _floor("SELECT created_at FROM paper_trades", shift=shift)
     evaluate(client)
     stops = [e for e in all_events(browser, contract) if e["reasonCode"] == "STOP_LOSS_EXIT"]
     assert (len(stops) == 1) is explained
